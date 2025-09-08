@@ -1,0 +1,11 @@
+code,name,market,type
+BTCUSDT,BTC/USDT,Binance,Crypto
+ETHUSDT,ETH/USDT,Binance,Crypto
+BNBUSDT,BNB/USDT,Binance,Crypto
+SOLUSDT,SOL/USDT,Binance,Crypto
+ADAUSDT,ADA/USDT,Binance,Crypto
+DOTUSDT,DOT/USDT,Binance,Crypto
+LINKUSDT,LINK/USDT,Binance,Crypto
+DOGEUSDT,DOGE/USDT,Binance,Crypto
+XRPUSDT,XRP/USDT,Binance,Crypto
+AVAXUSDT,AVAX/USDT,Binance,Crypto
