@@ -1,0 +1,1 @@
+import { Card } from 'antd'; export default ()=> <Card title='Progress'>Progress page</Card>

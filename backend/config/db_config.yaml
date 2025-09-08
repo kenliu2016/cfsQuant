@@ -1,0 +1,6 @@
+postgres:
+  host: "localhost"
+  port: 5432
+  dbname: "quant"
+  user: "cfs"
+  password: "Aa520@cfs"

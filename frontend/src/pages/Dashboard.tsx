@@ -1,0 +1,1 @@
+import { Card } from 'antd'; export default ()=> <Card title='Dashboard'>欢迎使用 Trading Suite</Card>
