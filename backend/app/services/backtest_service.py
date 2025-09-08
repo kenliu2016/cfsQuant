@@ -51,14 +51,14 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     backtest_id = str(uuid.uuid4())
     df = _load_data(code, start, end)
     if df.empty:
-        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start': start, 'end': end, 'initial_capital': params.get('initial_capital', 100000.0), 'final_capital': params.get('initial_capital', 100000.0)}]), 'runs')
+        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': params.get('initial_capital', 100000.0), 'final_capital': params.get('initial_capital', 100000.0)}]), 'runs')
         return backtest_id
 
     # load strategy module
     try:
         mod = _load_strategy_module(strategy)
     except Exception as e:
-        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start': start, 'end': end, 'initial_capital': params.get('initial_capital', 100000.0), 'final_capital': params.get('initial_capital', 100000.0)}]), 'runs')
+        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': params.get('initial_capital', 100000.0), 'final_capital': params.get('initial_capital', 100000.0)}]), 'runs')
         raise
 
     # run strategy
@@ -106,7 +106,7 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     metrics, dd = _calc_metrics(equity)
 
     # persist run
-    run_row = {'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start': start, 'end': end, 'initial_capital': initial_capital, 'final_capital': float(equity.iloc[-1])}
+    run_row = {'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': initial_capital, 'final_capital': float(equity.iloc[-1])}
     to_sql(pd.DataFrame([run_row]), 'runs')
     # persist metrics
     mrows = [{'run_id': backtest_id, 'metric_name': k, 'metric_value': float(v)} for k, v in metrics.items()]

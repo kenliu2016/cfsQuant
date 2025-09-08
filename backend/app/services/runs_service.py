@@ -4,8 +4,8 @@ from ..db import fetch_df
 
 def recent_runs(limit: int = 20) -> pd.DataFrame:
     sql = """
-    SELECT run_id, strategy, code, start, end, initial_capital, final_capital
-    FROM runs ORDER BY start DESC LIMIT :limit
+    SELECT run_id, strategy, code, start_time, end_time, initial_capital, final_capital, created_at
+    FROM runs ORDER BY start_time DESC LIMIT :limit
     """
     return fetch_df(sql, limit=limit)
 

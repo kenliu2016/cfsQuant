@@ -13,16 +13,19 @@ CREATE TABLE IF NOT EXISTS public.runs (
   run_id varchar(64) PRIMARY KEY,
   strategy varchar(128) NOT NULL,
   code varchar(32) NOT NULL,
-  start timestamp without time zone NOT NULL,
-  end timestamp without time zone NOT NULL,
+  start_time timestamp without time zone NOT NULL,
+  end_time timestamp without time zone NOT NULL,
   initial_capital double precision NOT NULL,
   final_capital double precision NOT NULL,
   created_at timestamp without time zone DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_runs_code ON public.runs (code);
+CREATE INDEX IF NOT EXISTS idx_runs_strategy ON public.runs (strategy);
 CREATE TABLE IF NOT EXISTS public.metrics (
   run_id varchar(64) NOT NULL,
   metric_name varchar(64) NOT NULL,
-  metric_value double precision NOT NULL
+  metric_value double precision NOT NULL,
+  CONSTRAINT metrics_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_run ON public.metrics (run_id);
 CREATE TABLE IF NOT EXISTS public.equity (
@@ -40,6 +43,15 @@ CREATE TABLE IF NOT EXISTS public.trades (
   price double precision NOT NULL,
   qty double precision NOT NULL,
   amount double precision NOT NULL,
-  fee double precision NOT NULL
+  fee double precision NOT NULL,
+  CONSTRAINT trades_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_trades_run ON public.trades (run_id);
+
+-- 确保tuning_results表的外键约束正确
+-- CREATE TABLE IF NOT EXISTS public.tuning_results (
+--   id serial PRIMARY KEY,
+--   run_id varchar(64) NOT NULL,
+--   -- 其他字段...
+--   CONSTRAINT tuning_results_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+-- );

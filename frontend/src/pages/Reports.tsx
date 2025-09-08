@@ -31,14 +31,29 @@ export default function Reports(){
     setCompareData(all)
   }
 
+  // 时间格式化函数
+  const formatDateTime = (text: any) => {
+    if (!text) return '';
+    const date = new Date(text);
+    // 格式化时间为yyyy-MM-dd hh:mm:ss格式
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  };
+
   const columns = [
     { title:'Run ID', dataIndex:'run_id', key:'run_id' },
     { title:'Strategy', dataIndex:'strategy', key:'strategy' },
     { title:'Code', dataIndex:'code', key:'code' },
-    { title:'Start', dataIndex:'start', key:'start' },
-    { title:'End', dataIndex:'end', key:'end' },
-    { title:'Initial', dataIndex:'initial_capital', key:'initial_capital' },
-    { title:'Final', dataIndex:'final_capital', key:'final_capital' }
+    { title:'FromTime', dataIndex:'start_time', key:'start_time', render: formatDateTime },
+    { title:'ToTime', dataIndex:'end_time', key:'end_time', render: formatDateTime },
+    { title:'InitialCapital', dataIndex:'initial_capital', key:'initial_capital' },
+    { title:'FinalCapital', dataIndex:'final_capital', key:'final_capital' },
+    { title:'RunFinish', dataIndex:'created_at', key:'created_at', render: formatDateTime },
   ]
 
   return (<Card title='Reports'>
