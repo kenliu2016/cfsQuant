@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, Form, Input, DatePicker, Button, Tabs } from 'antd'
 import client from '../api/client'
 import dayjs from 'dayjs'
@@ -17,7 +17,7 @@ export default function Market() {
   useEffect(() => {
     const today = dayjs().startOf('day')
     form.setFieldsValue({
-      code: '000001.SZ',
+      code: 'BTCUSDT',
       dailyRange: [today.add(-6,'day').hour(0).minute(0), today.hour(23).minute(59)],
       intradayRange: [today, today.endOf('day')]
     })
@@ -63,17 +63,17 @@ export default function Market() {
   return (
     <Card title="Market 行情">
       <Form form={form} layout="inline">
-        <Form.Item name="code" label="标的" rules={[{required:true}]}><Input placeholder="e.g. 000001.SZ" style={{width:160}}/></Form.Item>
+        <Form.Item name="code" label="标的" rules={[{required:true}]}><Input placeholder="e.g. BTCUSDT" style={{width:160}}/></Form.Item>
         <Form.Item name="dailyRange" label="日线区间" rules={[{required:true}]}><RangePicker showTime /></Form.Item>
         <Form.Item><Button onClick={fetchDaily} type="primary">加载日线</Button></Form.Item>
-        <Form.Item name="intradayRange" label="实时区间" rules={[{required:true}]}><RangePicker showTime /></Form.Item>
-        <Form.Item><Button onClick={fetchIntraday}>加载实时</Button></Form.Item>
+        <Form.Item name="intradayRange" label="分时区间" rules={[{required:true}]}><RangePicker showTime /></Form.Item>
+        <Form.Item><Button onClick={fetchIntraday}>加载分时</Button></Form.Item>
       </Form>
 
       <div style={{ marginTop: 16 }}>
         <Tabs items={[
           { key:'daily', label:'日线(K线+量)', children:<ReactECharts option={candleOption} style={{height: 500}}/> },
-          { key:'rt', label:'实时(折线+量)', children:<ReactECharts option={lineOption} style={{height: 500}}/> }
+          { key:'rt', label:'分时(折线+量)', children:<ReactECharts option={lineOption} style={{height: 500}}/> }
         ]} />
       </div>
     </Card>

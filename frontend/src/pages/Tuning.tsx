@@ -5,8 +5,8 @@ import { useState, useEffect } from 'react'
 
 export default function Tuning(){
   const [form] = Form.useForm()
-  const [task, setTask] = useState(null)
-  const [status, setStatus] = useState(null)
+  const [task, setTask] = useState<string | null>(null)
+  const [status, setStatus] = useState<{status?: string, total?: number, finished?: number, runs?: any[]} | null>(null)
   const [timer, setTimer] = useState<any>(null)
 
   useEffect(()=>{
@@ -36,7 +36,7 @@ export default function Tuning(){
       <Form.Item label="策略" name="strategy" rules={[{required:true}]}><Input/></Form.Item>
       <Form.Item label="标的" name="code" rules={[{required:true}]}><Input/></Form.Item>
       <Form.Item label="区间" name="range" rules={[{required:true}]}><DatePicker.RangePicker showTime/></Form.Item>
-      <Form.Item label="参数范围(JSON)" name="params" tooltip="例如: {\"short\":[5,10], \"long\":[20,30]}"><Input.TextArea rows={4}/></Form.Item>
+      <Form.Item label="参数范围(JSON)" name="params" tooltip="例如: {'short':[5,10], 'long':[20,30]}"><Input.TextArea rows={4}/></Form.Item>
       <Button type="primary" onClick={onRun}>开始寻优</Button>
     </Form>
 
@@ -44,7 +44,7 @@ export default function Tuning(){
       <div style={{marginTop:16}}>
         <div>任务: {task}</div>
         <div>状态: {status.status}</div>
-        <Progress percent={ status.total ? Math.round((status.finished/status.total)*100) : 0 } />
+        <Progress percent={ status.total && status.finished ? Math.round((status.finished/status.total)*100) : 0 } />
         <List size="small" header={<div>已完成组合</div>} dataSource={status.runs || []} renderItem={item=> (<List.Item>{JSON.stringify(item)}</List.Item>)} style={{maxHeight:200, overflow:'auto'}} />
       </div>
     )}

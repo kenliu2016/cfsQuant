@@ -1,8 +1,7 @@
 
-import { Card, Table, Button, Space, message, Checkbox, Select } from 'antd'
+import { Card, Table, Button, Space, message, Select } from 'antd'
 import { useEffect, useState } from 'react'
 import client from '../api/client'
-import ReactECharts from 'echarts-for-react'
 
 export default function Reports(){
   const [runs, setRuns] = useState<any[]>([])
@@ -17,13 +16,8 @@ export default function Reports(){
     setRuns(res.data.rows || [])
   }
 
-  const onExport = async (id:string)=>{
-    const r = await client.get(`/runs/${id}`)
-    message.info('已加载结果')
-  }
-
   const onCompare = async ()=>{
-    if (selected.length < 2) return message.warn('请选择至少2个回测进行对比')
+    if (selected.length < 2) return message.warning('请选择至少2个回测进行对比')
     const all = []
     for (const id of selected){
       const r = await client.get(`/backtest/${id}/results`)

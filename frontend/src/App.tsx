@@ -18,7 +18,9 @@ export default function App(){
         <Menu theme='dark' mode='inline' onClick={({key})=>navigate(key)} items={[
           {key:'/dashboard',label:'Dashboard'},
           {key:'/market',label:'Market'},
-          {key:'/backtest',label:'Backtest'},
+          {key:'/strategy',label:'Strategy'},
+          {key:'/tuning',label:'Tuning'},
+          {key:'/monitor',label:'Monitor'},
           {key:'/reports',label:'Reports'},
           {key:'/progress',label:'Progress'}
         ]}/>
@@ -30,6 +32,9 @@ export default function App(){
             <Route path='/' element={<Dashboard/>}/>
             <Route path='/dashboard' element={<Dashboard/>}/>
             <Route path='/market' element={<Market/>}/>
+            <Route path='/strategy' element={<Strategy/>}/>
+            <Route path='/tuning' element={<Tuning/>}/>
+            <Route path='/monitor' element={<Monitor/>}/>
             <Route path='/backtest' element={<Backtest/>}/>
             <Route path='/reports' element={<Reports/>}/>
             <Route path='/progress' element={<Progress/>}/>

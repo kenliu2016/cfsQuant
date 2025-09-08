@@ -5,9 +5,9 @@ import { useState, useEffect } from 'react'
 
 export default function Monitor(){
   const [form] = Form.useForm()
-  const [monitorId, setMonitorId] = useState(null)
-  const [status, setStatus] = useState(null)
-  const [timer, setTimer] = useState(null)
+  const [monitorId, setMonitorId] = useState<string | null>(null)
+  const [status, setStatus] = useState<{status?: string, latest?: any, logs?: any[]} | null>(null)
+  const [timer, setTimer] = useState<any>(null)
 
   useEffect(()=>{ return ()=> { if (timer) clearInterval(timer) } }, [timer])
 
@@ -45,7 +45,7 @@ export default function Monitor(){
       <div style={{marginTop:16}}>
         <div>Monitor ID: {monitorId}</div>
         <div>Latest: {status.latest ? JSON.stringify(status.latest) : <Tag>尚无信号</Tag>}</div>
-        <div>Logs: <pre style={{maxHeight:200, overflow:'auto'}}>{JSON.stringify(status.logs.slice(-20), null, 2)}</pre></div>
+        <div>Logs: <pre style={{maxHeight:200, overflow:'auto'}}>{JSON.stringify(status.logs ? status.logs.slice(-20) : [], null, 2)}</pre></div>
       </div>
     )}
   </Card>)

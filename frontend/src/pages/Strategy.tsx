@@ -18,7 +18,7 @@ export default function StrategyPage(){
   const load = async () => {
     const res = await client.get('/strategies')
     const rows = res.data.rows || []
-    setTree(rows.map(r=>({ key: r.name, title: r.name })))
+    setTree(rows.map((r: {name: string})=>({ key: r.name, title: r.name })))
   }
 
   useEffect(() => { load() }, [])
@@ -49,7 +49,7 @@ export default function StrategyPage(){
   }
 
   const onNew = async () => {
-    if (!newName) return message.warn('请输入策略名')
+    if (!newName) return message.warning('请输入策略名')
     const r = await client.post('/api/strategies', { name: newName })
     if (r.data.status === 'ok') {
       message.success('已创建策略文件')
@@ -57,7 +57,7 @@ export default function StrategyPage(){
       setNewName('')
       load()
     } else if (r.data.status === 'exists') {
-      message.warn('策略已存在')
+      message.warning('策略已存在')
     }
   }
 
