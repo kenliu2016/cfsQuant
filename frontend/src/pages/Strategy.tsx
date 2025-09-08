@@ -1,27 +1,115 @@
 
-import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal } from 'antd'
+import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col } from 'antd'
 import { useEffect, useState } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
 
-const { Sider, Content } = Layout
+const { Content } = Layout
 
-export default function StrategyPage(){
-  const [form] = Form.useForm()
+// 策略树组件
+const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (keys: any[]) => void, onCreate: () => void, onRefresh?: number }) => {
   const [tree, setTree] = useState<any[]>([])
-  const [current, setCurrent] = useState<any | null>(null)
-  const [code, setCode] = useState<string>('')
-  const [showNew, setShowNew] = useState(false)
-  const [newName, setNewName] = useState('')
 
   const load = async () => {
     const res = await client.get('/strategies')
     const rows = res.data.rows || []
-    setTree(rows.map((r: {name: string})=>({ key: r.name, title: r.name })))
+    setTree(rows.map((r: {name: string, description?: string})=>({
+      key: r.name, 
+      title: (
+        <div>
+          <div style={{ fontWeight: 'bold' }}>{r.name}</div>
+          {r.description && <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{r.description}</div>}
+        </div>
+      )
+    })))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [onRefresh])
+
+  return (
+    <Card 
+      size="small" 
+      title="策略树" 
+      variant="outlined" 
+      styles={{body: {padding:8, height: '100%'}}} 
+      extra={<Button size="small" onClick={onCreate}>新建</Button>}
+    >
+      <Tree treeData={tree} onSelect={onSelect} />
+    </Card>
+  )
+}
+
+// 代码编辑器组件
+const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete }: any) => {
+  if (!current) {
+    return <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      请选择左侧的策略
+    </Card>
+  }
+
+  return (
+    <Card 
+      title={`策略: ${current.name}`} 
+      extra={
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <Button type="primary" onClick={onSave}>保存</Button>
+          <Button onClick={onSave}>上传/覆盖</Button>
+          <Button danger onClick={onDelete}>删除</Button>
+        </div>
+      }
+      style={{ height: '100%' }}
+      bodyStyle={{ height: 'calc(100% - 50px)', padding: 0, overflow: 'hidden' }}
+    >
+      <Editor 
+        height="100%" 
+        defaultLanguage="python" 
+        value={code} 
+        onChange={(v)=>onCodeChange(v||'')}
+      />
+    </Card>
+  )
+}
+
+// 用户操作区组件
+const UserOperationPanel = ({ form, current, onRun }: any) => {
+  if (!current) {
+    return <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      请选择策略后进行操作
+    </Card>
+  }
+
+  return (
+    <Card title="回测与操作" style={{ height: '100%' }}>
+      <Form 
+        form={form} 
+        layout="inline" 
+        initialValues={{ code: 'BTCUSDT', range: [dayjs().add(-7,'day'), dayjs()] }}
+      >
+        <Form.Item label="标的" name="code" rules={[{required:true}]}>
+          <Input style={{width:160}}/>
+        </Form.Item>
+        <Form.Item label="区间" name="range" rules={[{required:true}]}>
+          <DatePicker.RangePicker showTime />
+        </Form.Item>
+        <Button type="primary" onClick={onRun}>启动回测</Button>
+      </Form>
+    </Card>
+  )
+}
+
+export default function StrategyPage(){
+  const [form] = Form.useForm()
+  const [current, setCurrent] = useState<any | null>(null)
+  const [code, setCode] = useState<string>('')
+  const [showNew, setShowNew] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  
+  const refreshStrategyTree = () => {
+    setRefreshTrigger(prev => prev + 1)
+  }
 
   const onSelect = async (keys:any[]) => {
     if (!keys.length) return
@@ -50,14 +138,44 @@ export default function StrategyPage(){
 
   const onNew = async () => {
     if (!newName) return message.warning('请输入策略名')
-    const r = await client.post('/api/strategies', { name: newName })
-    if (r.data.status === 'ok') {
-      message.success('已创建策略文件')
+    try {
+      const r = await client.post('/strategies', { name: newName, description: newDescription })
+      if (r.data && r.data.status === 'ok') {
+        message.success('已创建策略文件')
+        setShowNew(false)
+        setNewName('')
+        setNewDescription('')
+        
+        // 触发策略树刷新
+        refreshStrategyTree()
+        
+        // 选择新创建的策略
+        setTimeout(async () => {
+          try {
+            const res = await client.get('/strategies')
+            const rows = res.data?.rows || []
+            const s = rows.find((x:any)=>x.name===newName)
+            if (s) {
+              setCurrent(s)
+              const codeRes = await client.get(`/strategies/${newName}/code`)
+              setCode(codeRes.data?.code || '')
+            }
+          } catch (error) {
+            console.error('选择新策略失败:', error)
+          }
+        }, 100)
+      } else if (r.data && r.data.status === 'exists') {
+        message.warning('策略已存在')
+      } else {
+        message.error('创建失败: 未知的响应状态')
+        // 即使响应不符合预期，也关闭窗口
+        setShowNew(false)
+      }
+    } catch (error) {
+      console.error('创建策略失败:', error)
+      message.error('创建策略时发生错误')
+      // 发生异常时也确保关闭窗口
       setShowNew(false)
-      setNewName('')
-      load()
-    } else if (r.data.status === 'exists') {
-      message.warning('策略已存在')
     }
   }
 
@@ -65,53 +183,48 @@ export default function StrategyPage(){
     if (!current) return
     Modal.confirm({
       title: '确认删除策略',
-      content: `将删除策略 ${current.name} 的文件（数据库记录请手动清理）。`,
+      content: `将删除策略 ${current.name} 的文件及其数据库记录。`,
       onOk: async ()=>{
         await client.delete(`/strategies/${current.name}`)
         message.success('已删除')
         setCurrent(null)
         setCode('')
-        load()
       }
     })
   }
 
-  const onUpload = async () => {
-    if (!current) return
-    await client.post(`/strategies/${current.name}/code`, { code })
-    message.success('已上传/覆盖策略代码')
-  }
-
   return (
-    <Layout style={{ background:'#fff' }}>
-      <Sider width={240} style={{ background:'#fff', borderRight:'1px solid #eee' }}>
-        <Card size="small" title="策略树" bordered={false} bodyStyle={{padding:8}} extra={<Button size="small" onClick={()=>setShowNew(true)}>新建</Button>}>
-          <Tree treeData={tree} onSelect={onSelect as any}/>
-        </Card>
-      </Sider>
-      <Content style={{ padding: 16 }}>
-        {current ? (
-          <>
-            <Card title={`策略: ${current.name}`} extra={<Button danger onClick={onDelete}>删除</Button>}>
-              <Editor height="300px" defaultLanguage="python" value={code} onChange={(v)=>setCode(v||'')}/>
-              <div style={{ marginTop: 8 }}>
-                <Button type="primary" onClick={onSaveCode} style={{marginRight:8}}>保存</Button>
-                <Button onClick={onUpload}>上传/覆盖</Button>
-              </div>
-            </Card>
-            <Card style={{ marginTop: 16 }} title="回测">
-              <Form form={form} layout="inline" initialValues={{ code: '000001.SZ', range: [dayjs().add(-7,'day'), dayjs()] }}>
-                <Form.Item label="标的" name="code" rules={[{required:true}]}><Input style={{width:160}}/></Form.Item>
-                <Form.Item label="区间" name="range" rules={[{required:true}]}><DatePicker.RangePicker showTime /></Form.Item>
-                <Button type="primary" onClick={onRun}>启动回测</Button>
-              </Form>
-            </Card>
-          </>
-        ) : <Card>请选择左侧的策略</Card>}
+    <Layout style={{ background:'#fff', height: '100vh' }}>
+      <Content style={{ padding: 16, height: '100%' }}>
+        {/* 上半部分：策略树和代码编辑器 */}
+        <Row gutter={[16, 16]} style={{ height: 'calc(80% - 8px)' }}>
+          <Col span={6}>
+            <StrategyTree onSelect={onSelect} onCreate={() => setShowNew(true)} onRefresh={refreshTrigger} />
+          </Col>
+          <Col span={18}>
+            <CodeEditor 
+              current={current} 
+              code={code} 
+              onCodeChange={setCode} 
+              onSave={onSaveCode} 
+              onDelete={onDelete} 
+            />
+          </Col>
+        </Row>
+        
+        {/* 下半部分：用户操作区 */}
+        <Row style={{ height: 'calc(20% - 8px)' }}>
+          <Col span={24}>
+            <UserOperationPanel form={form} current={current} onRun={onRun} />
+          </Col>
+        </Row>
       </Content>
 
       <Modal title="新建策略" open={showNew} onOk={onNew} onCancel={()=>setShowNew(false)}>
-        <Input placeholder="策略名 (例如 demo2)" value={newName} onChange={(e)=>setNewName(e.target.value)} />
+        <div style={{marginBottom: 12}}>
+          <Input placeholder="策略名 (例如 demo2)" value={newName} onChange={(e)=>setNewName(e.target.value)} />
+        </div>
+        <Input.TextArea placeholder="策略描述" value={newDescription} onChange={(e)=>setNewDescription(e.target.value)} rows={4} />
       </Modal>
     </Layout>
   )
