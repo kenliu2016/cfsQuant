@@ -101,6 +101,7 @@ public
 
 # Test files
 test_*.py
+test_*.js
 
 # TernJS port file
 .tern-port
