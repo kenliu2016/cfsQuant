@@ -99,6 +99,9 @@ public
 # DynamoDB Local files
 .dynamodb/
 
+# Test files
+test_*.py
+
 # TernJS port file
 .tern-port
 
