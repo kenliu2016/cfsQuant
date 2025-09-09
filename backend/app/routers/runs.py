@@ -7,5 +7,6 @@ async def runs(limit: int = 20):
     return {"rows": df.to_dict(orient="records")}
 @router.get("/runs/{run_id}")
 async def runs_detail(run_id: str):
-    df_m, df_e = run_detail(run_id)
-    return {"metrics": df_m.to_dict(orient="records"), "equity": df_e.to_dict(orient="records")}
+    # 现在run_detail函数直接返回包含四部分数据的字典
+    detail_data = run_detail(run_id)
+    return detail_data

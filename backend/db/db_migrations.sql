@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS public.metrics (
   CONSTRAINT metrics_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_run ON public.metrics (run_id);
+-- 注意：equity表已被equity_curve表全面取代，保留此定义仅为历史兼容性
 CREATE TABLE IF NOT EXISTS public.equity (
   run_id varchar(64) NOT NULL,
   datetime timestamp without time zone NOT NULL,
@@ -35,6 +36,15 @@ CREATE TABLE IF NOT EXISTS public.equity (
   drawdown double precision NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_equity_run ON public.equity (run_id);
+
+-- equity_curve表全面取代equity表
+CREATE TABLE IF NOT EXISTS public.equity_curve (
+  run_id varchar(64) NOT NULL,
+  datetime timestamp without time zone NOT NULL,
+  nav double precision NOT NULL,
+  drawdown double precision NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_equity_curve_run ON public.equity_curve (run_id);
 CREATE TABLE IF NOT EXISTS public.trades (
   run_id varchar(64) NOT NULL,
   datetime timestamp without time zone NOT NULL,

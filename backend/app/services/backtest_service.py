@@ -1,6 +1,8 @@
 import uuid
 import pandas as pd
 import numpy as np
+import uuid
+import json
 from datetime import datetime
 from ..db import fetch_df, execute, to_sql
 import importlib.util
@@ -51,18 +53,35 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     backtest_id = str(uuid.uuid4())
     df = _load_data(code, start, end)
     if df.empty:
-        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': params.get('initial_capital', 100000.0), 'final_capital': params.get('initial_capital', 100000.0)}]), 'runs')
+        # 即使数据为空，也应该尝试加载策略获取默认参数
+        try:
+            mod = _load_strategy_module(strategy)
+            default_params = getattr(mod, 'DEFAULT_PARAMS', {})
+            merged_params = {**default_params, **(params or {})}
+        except Exception:
+            # 如果加载策略失败，使用用户参数或空字典
+            merged_params = params or {}
+        
+        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': merged_params.get('initial_capital', 100000.0), 'final_capital': merged_params.get('initial_capital', 100000.0), 'paras': json.dumps(merged_params)}]), 'runs')
         return backtest_id
 
     # load strategy module
     try:
         mod = _load_strategy_module(strategy)
+        
+        # 获取策略的默认参数（如果存在）
+        default_params = getattr(mod, 'DEFAULT_PARAMS', {})
+        # 合并用户参数和默认参数，用户参数优先级更高
+        merged_params = {**default_params, **(params or {})}
+        
     except Exception as e:
-        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': params.get('initial_capital', 100000.0), 'final_capital': params.get('initial_capital', 100000.0)}]), 'runs')
+        # 在异常情况下，如果没有mod，使用用户参数或空字典
+        merged_params = params or {}
+        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': merged_params.get('initial_capital', 100000.0), 'final_capital': merged_params.get('initial_capital', 100000.0), 'paras': json.dumps(merged_params)}]), 'runs')
         raise
 
     # run strategy
-    strat_df = mod.run(df.copy(), params or {})
+    strat_df = mod.run(df.copy(), merged_params)
     if 'position' not in strat_df.columns:
         raise ValueError("Strategy must return a DataFrame with a 'position' column (fractional 0..1)")
 
@@ -71,10 +90,10 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     # ensure fractional position between 0 and 1
     data['position'] = data['position'].clip(0.0,1.0).astype(float)
 
-    # parameters
-    slippage = float(params.get('slippage', getattr(mod, 'DEFAULT_PARAMS', {}).get('slippage', 0.0)))
-    fee_rate = float(params.get('fee_rate', getattr(mod, 'DEFAULT_PARAMS', {}).get('fee_rate', 0.0005)))
-    initial_capital = float(params.get('initial_capital', getattr(mod, 'DEFAULT_PARAMS', {}).get('initial_capital', 100000.0)))
+    # parameters - 使用merged_params，它已经包含了默认参数和用户参数的合并结果
+    slippage = float(merged_params.get('slippage', 0.0))
+    fee_rate = float(merged_params.get('fee_rate', 0.0005))
+    initial_capital = float(merged_params.get('initial_capital', 100000.0))
 
     cash = initial_capital
     nav = []
@@ -106,7 +125,7 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     metrics, dd = _calc_metrics(equity)
 
     # persist run
-    run_row = {'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': initial_capital, 'final_capital': float(equity.iloc[-1])}
+    run_row = {'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': initial_capital, 'final_capital': float(equity.iloc[-1]), 'paras': json.dumps(merged_params)}
     to_sql(pd.DataFrame([run_row]), 'runs')
     # persist metrics
     mrows = [{'run_id': backtest_id, 'metric_name': k, 'metric_value': float(v)} for k, v in metrics.items()]
@@ -118,7 +137,8 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
         # pad/match lengths
         eq_datetimes = eq_datetimes[:len(equity)]
     erows = pd.DataFrame({'run_id': backtest_id, 'datetime': eq_datetimes, 'nav': equity.values, 'drawdown': dd.values})
-    to_sql(erows, 'equity')
+    # 只写入equity_curve表，equity_curve表全面取代equity表
+    to_sql(erows, 'equity_curve')
     # persist trades
     if trades:
         to_sql(pd.DataFrame(trades), 'trades')
@@ -128,5 +148,6 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
 def get_backtest_result(backtest_id: str):
     from ..db import fetch_df
     df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=backtest_id)
-    df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+    # 从equity_curve表读取数据，equity_curve表全面取代equity表
+    df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
     return {'metrics': df_m.to_dict(orient='records'), 'equity': df_e.to_dict(orient='records')}

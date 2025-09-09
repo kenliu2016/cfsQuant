@@ -373,7 +373,7 @@ export default function Market() {
     }
     
     // 生成graphic配置
-    const graphicElements = markLines.map((markLine, index) => ({
+    const graphicElements = markLines.map((markLine, _index) => ({
       type: 'line',
       shape: {
         x1: markLine.xAxis,
