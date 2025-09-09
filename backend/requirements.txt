@@ -1,8 +1,9 @@
 fastapi
 uvicorn[standard]
 pandas
-sqlalchemy
+sqlalchemy[asyncio]
 psycopg2-binary
+asyncpg
 PyYAML
 reportlab
 redis

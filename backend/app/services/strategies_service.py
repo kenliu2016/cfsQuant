@@ -2,15 +2,90 @@ from pathlib import Path
 from ..db import fetch_df, get_engine
 from sqlalchemy import text
 import json
+import time
+from pathlib import Path
+import logging
+
+# 配置日志
+logger = logging.getLogger(__name__)
+
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
+
+# 添加内存缓存机制
+_cached_strategies = None
+_cached_timestamp = 0
+CACHE_EXPIRE_TIME = 30  # 缓存过期时间，单位：秒（从5分钟缩短为30秒，提高新策略可见性）
+
+# 添加异步版本的列表策略函数，优化性能
+async def alist_strategies():
+    """异步获取策略列表，用于API调用"""
+    # 使用单独的异步实现，避免阻塞
+    import pandas as pd
+    from ..db import fetch_df_async
+    
+    # 全局变量声明
+    global _cached_strategies, _cached_timestamp
+    
+    # 先检查内存缓存
+    current_time = time.time()
+    if _cached_strategies is not None and current_time - _cached_timestamp < CACHE_EXPIRE_TIME:
+        logger.debug("使用内存缓存的策略列表")
+        return _cached_strategies.copy()  # 返回副本避免修改缓存数据
+    
+    try:
+        # 缓存过期或不存在，从数据库查询
+        logger.debug("从数据库查询策略列表")
+        sql = """SELECT id, name, description, params::text AS params FROM strategies ORDER BY id"""
+        df = await fetch_df_async(sql)
+        
+        # 更新内存缓存
+        _cached_strategies = df
+        _cached_timestamp = current_time
+        
+        return df
+    except Exception as e:
+        logger.error(f"获取策略列表失败: {e}")
+        # 出错时如果有缓存，返回缓存数据
+        if _cached_strategies is not None:
+            return _cached_strategies.copy()
+        # 否则返回空DataFrame
+        return pd.DataFrame(columns=['id', 'name', 'description', 'params'])
+
 def list_strategies():
-    sql = """SELECT id, name, description, params::text AS params FROM strategies ORDER BY id""" 
-    return fetch_df(sql)
+    """同步获取策略列表，用于非异步环境"""
+    global _cached_strategies, _cached_timestamp
+    
+    # 检查缓存是否有效
+    current_time = time.time()
+    if _cached_strategies is not None and current_time - _cached_timestamp < CACHE_EXPIRE_TIME:
+        logger.debug("使用内存缓存的策略列表")
+        return _cached_strategies.copy()  # 返回副本避免修改缓存数据
+    
+    # 缓存过期或不存在，从数据库查询
+    logger.debug("从数据库查询策略列表")
+    sql = """SELECT id, name, description, params::text AS params FROM strategies ORDER BY id"""
+    df = fetch_df(sql)
+    
+    # 更新缓存
+    _cached_strategies = df
+    _cached_timestamp = current_time
+    
+    return df
+
+# 提供清除缓存的函数，用于策略有变更时
+
+def clear_strategies_cache():
+    global _cached_strategies, _cached_timestamp
+    _cached_strategies = None
+    _cached_timestamp = 0
+
 def load_strategy_code(strategy_name: str) -> str:
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     if not file_path.exists():
         return f"# 文件不存在: {file_path}"
     return file_path.read_text(encoding="utf-8")
+
+
 def save_strategy_code(strategy_name: str, code: str):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -39,12 +114,11 @@ def save_strategy_code(strategy_name: str, code: str):
                         }
                     )
                     conn.commit()
-                print(f"成功: 策略参数已更新到数据库 - {strategy_name}")
             except Exception as e:
-                print(f"警告: 解析或更新参数失败 - {e}")
+                pass
     except Exception as e:
-        print(f"警告: 提取参数失败 - {e}")
-        
+        pass
+    
     return {"status": "ok", "path": str(file_path)}
 
 

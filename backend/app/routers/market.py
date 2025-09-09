@@ -1,11 +1,25 @@
 from fastapi import APIRouter, Query
-from ..services.market_service import get_candles
+from ..services.market_service import get_candles, aget_candles, aget_daily_candles, aget_intraday, arefresh_market_data_cache
+from datetime import datetime
 router = APIRouter(prefix="/api/market", tags=["market"])
 @router.get("/candles")
 async def candles(code: str = Query(...), start: str = Query(...), end: str = Query(...), interval: str = Query("1m"), 
                  page: int = Query(None, ge=1, description="页码，从1开始"), 
                  page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    result = get_candles(code, start, end, interval, page, page_size)
+    # 将字符串类型的日期时间转换为datetime对象
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        # 尝试其他常见格式
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")
+            end_dt = datetime.strptime(end, "%Y-%m-%d")
+        except ValueError:
+            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+            end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+            
+    result = await aget_candles(code, start_dt, end_dt, interval, page, page_size)
     
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
@@ -31,8 +45,20 @@ async def candles(code: str = Query(...), start: str = Query(...), end: str = Qu
 async def daily(code: str = Query(...), start: str = Query(...), end: str = Query(...),
                page: int = Query(None, ge=1, description="页码，从1开始"),
                page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    from ..services.market_service import get_daily_candles
-    result = get_daily_candles(code, start, end, page, page_size)
+    # 将字符串类型的日期时间转换为datetime对象
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        # 尝试其他常见格式
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")
+            end_dt = datetime.strptime(end, "%Y-%m-%d")
+        except ValueError:
+            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+            end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+            
+    result = await aget_daily_candles(code, start_dt, end_dt, page, page_size)
     
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
@@ -57,8 +83,20 @@ async def daily(code: str = Query(...), start: str = Query(...), end: str = Quer
 async def intraday(code: str = Query(...), start: str = Query(...), end: str = Query(...),
                   page: int = Query(None, ge=1, description="页码，从1开始"),
                   page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    from ..services.market_service import get_intraday
-    result = get_intraday(code, start, end, page, page_size)
+    # 将字符串类型的日期时间转换为datetime对象
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        # 尝试其他常见格式
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")
+            end_dt = datetime.strptime(end, "%Y-%m-%d")
+        except ValueError:
+            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+            end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+            
+    result = await aget_intraday(code, start_dt, end_dt, page, page_size)
     
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
