@@ -4,7 +4,7 @@ MACD Crossover Strategy
 """
 import pandas as pd
 
-DEFAULT_PARAMS = {"fast":12, "slow":26, "signal":9, "fee_rate":0.0005, "initial_capital":100000.0, "slippage":0.0}
+DEFAULT_PARAMS = {"fast":12, "slow":26, "signal":9, "fee_rate":0.0005, "initial_capital":1000000.0, "slippage":0.0}
 
 def run(df, params):
     p = DEFAULT_PARAMS.copy(); p.update(params or {})

@@ -4,11 +4,38 @@ import numpy as np
 import uuid
 import json
 from datetime import datetime
-from ..db import fetch_df, execute, to_sql
+from ..db import fetch_df, execute, to_sql, get_engine
 import importlib.util
 from pathlib import Path
+import logging
 
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
+DEFAULT_BACKTEST_PARAMS = {
+    "fee_rate": 0.0005,
+    "slippage": 0.0002,
+    "min_trade_amount": 100.0,       # 最小成交金额（货币单位）
+    "min_trade_qty": 0.001,          # 最小成交数量（标的单位，0 表示不启用）
+    "min_position_change": 0.01,     # 仓位变动门槛（绝对比例，例如 0.01 = 1%）
+    "lot_size": 0.00001,             # 交易单位（如 100 股，或最小下单单位；0 表示不启用）
+    "cooldown_bars": 530,           # 冷却期，单位 bar
+    "initial_capital": 100000.0
+}
+
+logging.basicConfig(
+    filename="backtest_trades_debug.log",
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+def log_trade_debug(action, price, qty, fee, slippage, position_cost, pnl=None):
+    """
+    打印每笔交易的详细信息到日志文件
+    """
+    logging.debug(
+        f"ACTION={action}, PRICE={price:.2f}, QTY={qty}, "
+        f"FEE={fee:.2f}, SLIPPAGE={slippage:.2f}, "
+        f"POSITION_COST={position_cost:.2f}, "
+        f"PNL={pnl if pnl is not None else 'N/A'}"
+    )
 
 def _load_data(code: str, start: str, end: str):
     sql = """
@@ -50,129 +77,243 @@ def _load_strategy_module(strategy_name: str):
 
 def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     """Pluggable strategy backtest with fractional position sizing, slippage and fees."""
+
     backtest_id = str(uuid.uuid4())
     df = _load_data(code, start, end)
     if df.empty:
-        # 即使数据为空，也应该尝试加载策略获取默认参数
-        try:
-            mod = _load_strategy_module(strategy)
-            default_params = getattr(mod, 'DEFAULT_PARAMS', {})
-            merged_params = {**default_params, **(params or {})}
-        except Exception:
-            # 如果加载策略失败，使用用户参数或空字典
-            merged_params = params or {}
-        
-        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': merged_params.get('initial_capital', 100000.0), 'final_capital': merged_params.get('initial_capital', 100000.0), 'paras': json.dumps(merged_params)}]), 'runs')
-        return backtest_id
+        return {
+            "run_id": backtest_id,
+            "code": code,
+            "start": start,
+            "end": end,
+            "strategy": strategy,
+            "params": params or {},
+            "nav": [],
+        }
 
-    # load strategy module
+    mod = _load_strategy_module(strategy)
+    default_params = getattr(mod, "DEFAULT_PARAMS", {})
+    merged_params = {**default_params, **DEFAULT_BACKTEST_PARAMS, **(params or {})}
+
+    fee_rate = float(merged_params.get("fee_rate", 0.0005))
+    slippage = float(merged_params.get("slippage", 0.0002))
+    min_trade_amount = float(merged_params.get("min_trade_amount", 100.0))
+    min_trade_qty = float(merged_params.get("min_trade_qty", 0.0))
+    min_position_change = float(merged_params.get("min_position_change", 0.01))
+    lot_size = float(merged_params.get("lot_size", 0.0))
+    cooldown_bars = int(merged_params.get("cooldown_bars", 0))
+    initial_capital = float(merged_params.get("initial_capital", 100000.0))
+
     try:
-        mod = _load_strategy_module(strategy)
-        
-        # 获取策略的默认参数（如果存在）
-        default_params = getattr(mod, 'DEFAULT_PARAMS', {})
-        # 合并用户参数和默认参数，用户参数优先级更高
-        merged_params = {**default_params, **(params or {})}
-        
+        df = mod.run(df, merged_params)
     except Exception as e:
-        # 在异常情况下，如果没有mod，使用用户参数或空字典
-        merged_params = params or {}
-        to_sql(pd.DataFrame([{'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': merged_params.get('initial_capital', 100000.0), 'final_capital': merged_params.get('initial_capital', 100000.0), 'paras': json.dumps(merged_params)}]), 'runs')
-        raise
+        raise RuntimeError(f"Strategy execution failed: {e}")
 
-    # run strategy
-    strat_df = mod.run(df.copy(), merged_params)
-    if 'position' not in strat_df.columns:
-        raise ValueError("Strategy must return a DataFrame with a 'position' column (fractional 0..1)")
+    if "position" not in df.columns:
+        raise ValueError("Strategy must output 'position' column")
 
-    data = strat_df.copy().sort_values("datetime").reset_index(drop=True)
-    data['ret'] = data['close'].pct_change().fillna(0.0)
-    # ensure fractional position between 0 and 1
-    data['position'] = data['position'].clip(0.0,1.0).astype(float)
-
-    # parameters - 使用merged_params，它已经包含了默认参数和用户参数的合并结果
-    slippage = float(merged_params.get('slippage', 0.0))
-    fee_rate = float(merged_params.get('fee_rate', 0.0005))
-    initial_capital = float(merged_params.get('initial_capital', 100000.0))
-
+    data = df.reset_index()
     cash = initial_capital
-    nav = []
+    current_pos_qty = 0.0
+    avg_price = 0.0
+
+    nav_list = []
     trades = []
-    current_pos_qty = 0.0  # number of shares held
-    # iterate each bar and adjust to target percent of CURRENT NAV
+    positions = []
+    equity_curve = []
+    last_trade_bar = -9999
+
     for i, row in data.iterrows():
-        price = float(row['close'])
-        target_frac = float(row['position'])
-        
-        # 计算当前净资产
+        dt = row["datetime"]
+        price = float(row["close"])
+        target_frac = float(row["position"])
+
         current_nav = cash + current_pos_qty * price
-        # 使用当前净资产计算目标仓位价值，而不是初始资金
         target_value = current_nav * target_frac
         target_qty = 0.0 if price <= 0 else (target_value / price)
         prev_qty = current_pos_qty
         delta_qty = target_qty - prev_qty
-        
-        # 确保不会尝试卖出超过实际持有的仓位
-        if delta_qty < 0 and abs(delta_qty) > current_pos_qty:
-            delta_qty = -current_pos_qty
-            target_qty = 0.0
-        
+
+        # 冷却期检查
+        if (i - last_trade_bar) <= cooldown_bars:
+            delta_qty = 0.0
+
+        # 仓位变动阈值检查
+        prev_frac = 0.0 if current_nav == 0 else (prev_qty * price) / current_nav
+        if abs(target_frac - prev_frac) < min_position_change:
+            delta_qty = 0.0
+
         if abs(delta_qty) > 0:
-            # apply slippage
-            exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
-            amount = exec_price * delta_qty
-            fee_amt = abs(amount) * fee_rate
-            
-            # 确保买入时资金充足
-            if delta_qty > 0 and (amount + fee_amt) > cash:
-                # 资金不足时，调整买入数量为可用资金能购买的最大数量
-                available_cash = cash - fee_amt
-                if available_cash <= 0:
-                    continue  # 没有可用资金，跳过此次交易
-                max_possible_qty = available_cash / exec_price
-                delta_qty = max_possible_qty
+                exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
+
+                # 买入
+                if delta_qty > 0:
+                    max_possible_qty = cash / (exec_price * (1 + fee_rate)) if exec_price > 0 else 0.0
+                    if delta_qty > max_possible_qty:
+                        delta_qty = max_possible_qty
+                # 卖出
+                else:
+                    if abs(delta_qty) > current_pos_qty:
+                        delta_qty = -current_pos_qty
+
+                # lot_size 四舍五入
+                if lot_size and lot_size > 0:
+                    if delta_qty > 0:
+                        delta_qty = (int(delta_qty / lot_size)) * lot_size
+                    else:
+                        delta_qty = - (int(abs(delta_qty) / lot_size)) * lot_size
+
                 amount = exec_price * delta_qty
                 fee_amt = abs(amount) * fee_rate
-                # 修复：在资金不足情况下也需要减少现金
-                cash -= amount + fee_amt
-                current_pos_qty = prev_qty + delta_qty
-            else:
-                # 正常买入或卖出
-                cash -= amount + fee_amt
-                current_pos_qty = target_qty
-            
-            trades.append({'run_id': backtest_id, 'datetime': row['datetime'].strftime('%Y-%m-%d %H:%M:%S'), 'code': code, 'side': 'BUY' if delta_qty>0 else 'SELL', 'price': exec_price, 'qty': float(delta_qty), 'amount': float(amount), 'fee': float(fee_amt)})
-        
-        # 更新净资产
+
+                # 最小订单金额/数量检查
+                if abs(amount) < min_trade_amount or (min_trade_qty and abs(delta_qty) < min_trade_qty):
+                    delta_qty = 0.0
+
+                if abs(delta_qty) > 0:
+                    # 扣款/入账
+                    cash -= (amount + fee_amt)
+
+                    realized_pnl = None
+                    side = "buy" if delta_qty > 0 else "sell"
+
+                    if delta_qty > 0:  # 买入
+                        total_cost = avg_price * current_pos_qty + exec_price * delta_qty
+                        current_pos_qty += delta_qty
+                        avg_price = total_cost / current_pos_qty if current_pos_qty > 0 else 0.0
+                    else:  # 卖出
+                        realized_pnl = (exec_price - avg_price) * abs(delta_qty) - fee_amt
+                        current_pos_qty += delta_qty
+                        # 卖出后即使仓位清零，也不修改 avg_price，保留卖出前的持仓均价
+
+                    nav_val = cash + current_pos_qty * price
+
+                    # === trades 表记录 ===
+                    trades.append({
+                        "run_id": backtest_id,
+                        "datetime": dt,
+                        "code": code,
+                        "side": side,
+                        "price": float(exec_price),
+                        "qty": float(delta_qty),
+                        "amount": float(amount),
+                        "fee": float(fee_amt),
+                        "avg_price": float(avg_price),
+                        "nav": float(nav_val),
+                        "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
+                    })
+
+                    # === 调试日志输出 ===
+                    log_trade_debug(
+                        action=side.upper(),
+                        price=exec_price,
+                        qty=delta_qty,
+                        fee=fee_amt,
+                        slippage=slippage,
+                        position_cost=avg_price,
+                        pnl=realized_pnl
+                    )
+
+                    last_trade_bar = i
+
+
+
+        # 每根 bar 记录持仓
+        positions.append({
+            "run_id": backtest_id,
+            "datetime": dt,
+            "code": code,
+            "qty": float(current_pos_qty),
+            "avg_price": float(avg_price),
+        })
+
+        # 更新净值曲线
         nav_val = cash + current_pos_qty * price
-        nav.append(nav_val)
+        nav_list.append(nav_val)
 
-    equity = pd.Series(nav)
-    if equity.empty:
-        equity = pd.Series([initial_capital])
+        peak = max(nav_list)
+        drawdown = nav_val / peak - 1 if peak > 0 else 0
+        equity_curve.append({
+            "run_id": backtest_id,
+            "datetime": dt,
+            "nav": float(nav_val),
+            "drawdown": float(drawdown),
+        })
 
-    metrics, dd = _calc_metrics(equity)
+    nav_series = pd.Series(nav_list, index=data["datetime"])
 
-    # persist run
-    run_row = {'run_id': backtest_id, 'strategy': strategy, 'code': code, 'start_time': start, 'end_time': end, 'initial_capital': initial_capital, 'final_capital': float(equity.iloc[-1]), 'paras': json.dumps(merged_params)}
-    to_sql(pd.DataFrame([run_row]), 'runs')
-    # persist metrics
-    mrows = [{'run_id': backtest_id, 'metric_name': k, 'metric_value': float(v)} for k, v in metrics.items()]
-    if mrows:
-        to_sql(pd.DataFrame(mrows), 'metrics')
-    # persist equity (align to data datetimes; if len mismatch use last known)
-    eq_datetimes = data['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
-    if len(eq_datetimes) != len(equity):
-        # pad/match lengths
-        eq_datetimes = eq_datetimes[:len(equity)]
-    erows = pd.DataFrame({'run_id': backtest_id, 'datetime': eq_datetimes, 'nav': equity.values, 'drawdown': dd.values})
-    # 只写入equity_curve表，equity_curve表全面取代equity表
-    to_sql(erows, 'equity_curve')
-    # persist trades
+    # ==== 保存到数据库 ====
+    engine = get_engine()
+    # 首先保存run_id到runs表，以满足外键约束
+    if nav_list:
+        final_capital = nav_list[-1]
+        # 使用to_sql方式插入数据
+        run_data = pd.DataFrame([{
+            'run_id': backtest_id,
+            'strategy': strategy,
+            'code': code,
+            'start_time': start,
+            'end_time': end,
+            'initial_capital': initial_capital,
+            'final_capital': final_capital,
+            'paras': json.dumps(merged_params)
+        }])
+        run_data.to_sql('runs', con=engine, if_exists='append', index=False)
+
     if trades:
-        to_sql(pd.DataFrame(trades), 'trades')
+        trades_df = pd.DataFrame(
+            trades,
+            columns=[
+                "run_id", "datetime", "code", "side", "price", "qty", "amount",
+                "fee", "avg_price", "nav", "realized_pnl"
+            ]
+        )
+        trades_df.to_sql("trades", con=engine, if_exists="append", index=False)
 
-    return backtest_id
+    
+    if positions:
+        pos_df = pd.DataFrame(positions, columns=["run_id", "datetime", "code", "qty", "avg_price"])
+        pos_df.to_sql("positions", con=engine, if_exists="append", index=False)
+    
+    if equity_curve:
+        eq_df = pd.DataFrame(equity_curve, columns=["run_id", "datetime", "nav", "drawdown"])
+        eq_df.to_sql("equity_curve", con=engine, if_exists="append", index=False)
+
+    # ==== 计算指标 metrics ====
+    metrics = []
+    if len(nav_list) > 1:
+        final_return = nav_list[-1] / initial_capital - 1
+        metrics.append({"run_id": backtest_id, "metric_name": "final_return", "metric_value": final_return})
+
+        # 年化收益率
+        days = (data["datetime"].iloc[-1] - data["datetime"].iloc[0]).days
+        if days > 0:
+            ann_return = (1 + final_return) ** (365.0 / days) - 1
+            metrics.append({"run_id": backtest_id, "metric_name": "annual_return", "metric_value": ann_return})
+
+        # 最大回撤
+        dd = min([ec["drawdown"] for ec in equity_curve])
+        metrics.append({"run_id": backtest_id, "metric_name": "max_drawdown", "metric_value": dd})
+
+        # 夏普比率
+        nav_series = pd.Series(nav_list).pct_change().dropna()
+        if not nav_series.empty and nav_series.std() > 0:
+            sharpe = np.sqrt(252) * nav_series.mean() / nav_series.std()
+            metrics.append({"run_id": backtest_id, "metric_name": "sharpe", "metric_value": sharpe})
+
+    if metrics:
+        metrics_df = pd.DataFrame(metrics, columns=["run_id", "metric_name", "metric_value"])
+        metrics_df.to_sql("metrics", con=engine, if_exists="append", index=False)
+
+    return {
+        "run_id": backtest_id,
+        "code": code,
+        "start": start,
+        "end": end,
+        "strategy": strategy,
+        "params": merged_params,
+        "nav": nav_series,
+    }
 
 def get_backtest_result(backtest_id: str):
     from ..db import fetch_df

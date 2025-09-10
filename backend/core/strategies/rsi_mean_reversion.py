@@ -4,7 +4,7 @@ RSI Mean Reversion
 """
 import pandas as pd
 
-DEFAULT_PARAMS = {"window":14, "upper":70, "lower":30, "fee_rate":0.0005, "initial_capital":100000.0, "slippage":0.0}
+DEFAULT_PARAMS = {"window":14, "upper":70, "lower":30, "fee_rate":0.0005, "initial_capital":1000000.0, "slippage":0.0}
 
 def _rsi(series, window=14):
     delta = series.diff()
