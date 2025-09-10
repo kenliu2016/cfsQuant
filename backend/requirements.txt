@@ -7,3 +7,4 @@ asyncpg
 PyYAML
 reportlab
 redis
+rq
