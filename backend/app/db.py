@@ -266,7 +266,6 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
     
     if not HAS_ASYNC:
         # 如果没有异步支持，降级为同步查询
-        logger.info("没有异步支持，降级为同步查询")
         return fetch_df(query, config_path, **kwargs)
     
     try:
@@ -276,79 +275,42 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
         raise ImportError("未安装必要的包，请先执行: pip install pandas sqlalchemy")
     
     try:
-        logger.info(f"开始异步查询: {query[:100]}...")
+        # 获取异步引擎
+        engine = await get_async_engine(config_path)
         
-        # 确保获取的是异步引擎对象
-        logger.info("调用get_async_engine")
-        try:
-            engine = await get_async_engine(config_path)
-            logger.info(f"获取引擎成功，类型: {type(engine)}")
-            
-            # 添加额外的类型检查
-            if engine is None:
-                raise ValueError("未能获取有效的异步引擎 - engine为None")
-            
-            # 检查engine是否具有connect方法
-            if not hasattr(engine, 'connect'):
-                raise ValueError(f"引擎对象不具有connect方法，类型: {type(engine)}")
-            
-            # 检查connect方法是否是可等待的
-            connect_method = engine.connect
-            if inspect.iscoroutinefunction(connect_method):
-                logger.info("connect方法是协程函数")
-            else:
-                logger.warning(f"connect方法不是协程函数，类型: {type(connect_method)}")
-        except Exception as e:
-            logger.error(f"获取异步引擎失败: {type(e).__name__}: {e}")
-            raise
+        # 添加基本的类型检查
+        if engine is None:
+            raise ValueError("未能获取有效的异步引擎 - engine为None")
+        if not hasattr(engine, 'connect'):
+            raise ValueError(f"引擎对象不具有connect方法，类型: {type(engine)}")
         
         # 使用异步连接执行查询并读取结果
-        logger.info("创建异步连接")
-        result = None  # 提前定义result变量，避免finally块中的引用错误
+        result = None
         try:
             async with engine.connect() as conn:
-                logger.info(f"连接创建成功，类型: {type(conn)}")
-                try:
-                    if kwargs:
-                        logger.info(f"执行参数化查询，参数: {kwargs}")
-                        result = await conn.execute(text(query), kwargs)
-                    else:
-                        logger.info("执行非参数化查询")
-                        result = await conn.execute(text(query))
+                # 执行查询
+                if kwargs:
+                    result = await conn.execute(text(query), kwargs)
+                else:
+                    result = await conn.execute(text(query))
 
-                    logger.info(f"查询执行成功，结果类型: {type(result)}")
+                # 获取列名
+                columns = result.keys()
 
-                    # 获取列名
-                    columns = result.keys()
-                    logger.info(f"获取列名成功: {columns}")
+                # 分批获取数据
+                batch_size = 10000
+                chunks = []
 
-                    # 对于大数据集，实现流式处理以减少内存使用
-                    batch_size = 10000  # 每批处理的行数
-                    chunks = []
-                    rows_fetched = 0
-
-                    # 分批获取数据
-                    while True:
-                        logger.info(f"获取下一批数据，批次大小: {batch_size}")
-                        try:
-                            batch = result.fetchmany(batch_size)  # 注意：这里不使用await，因为fetchmany不是协程方法
-                            logger.info(f"批次获取结果类型: {type(batch)}")
-                        except Exception as e:
-                            logger.error(f"获取批次数据失败: {type(e).__name__}: {e}")
-                            raise
-
-                        if not batch:
-                            logger.info("没有更多数据")
-                            break
-
-                        # 优化：避免频繁创建小DataFrame
-                        logger.info(f"获取批次成功，行数: {len(batch)}")
-                        chunks.append(pd.DataFrame(batch, columns=columns))
-                        rows_fetched += len(batch)
+                # 分批获取数据
+                while True:
+                    batch = result.fetchmany(batch_size)
+                    if not batch:
+                        break
+                    chunks.append(pd.DataFrame(batch, columns=columns))
 
                     # 如果没有数据，返回空DataFrame
                     if not chunks:
-                        logger.info("没有获取到数据，返回空DataFrame")
+                        logger.debug("没有获取到数据，返回空DataFrame")
                         return pd.DataFrame(columns=columns)
 
                     # 优化：合并所有批次的数据，避免过多的内存复制
@@ -401,9 +363,9 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
                     # 确保结果集被关闭 - 直接检查result是否不为None
                     if result is not None:
                         try:
-                            logger.info(f"关闭结果集，类型: {type(result)}")
+                            logger.debug(f"关闭结果集，类型: {type(result)}")
                             result.close()  # 注意：这里不使用await，因为close不是协程方法
-                            logger.info("结果集关闭成功")
+                            logger.debug("结果集关闭成功")
                         except Exception as close_e:
                             logger.warning(f"关闭结果集时出错: {type(close_e).__name__}: {close_e}")
         except Exception as e:

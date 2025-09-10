@@ -93,7 +93,7 @@ def run_detail(run_id: str):
         if 'datetime' in df_t.columns:
             df_t['datetime'] = df_t['datetime'].astype(str)
     
-    logger.info(f"成功获取回测详情，run_id: {run_id}, 策略: {run_info.get('strategy', '未知')}")
+    logger.debug(f"成功获取回测详情，run_id: {run_id}, 策略: {run_info.get('strategy', '未知')}")
     
     # 统一返回四部分数据：基本信息、指标数据、equity数据和交易数据
     return {

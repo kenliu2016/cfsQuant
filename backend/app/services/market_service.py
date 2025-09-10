@@ -382,11 +382,11 @@ def update_market_data_and_refresh_cache(data, table_name, code=None):
     try:
         # 写入数据到数据库
         to_sql(data, table_name)
-        logger.info(f"成功更新市场数据到表 {table_name}")
+        # 成功更新市场数据到表 {table_name}的信息已省略，以减少日志输出
         
         # 刷新相关缓存
         refresh_market_data_cache(code)
-        logger.info(f"成功刷新市场数据缓存，代码: {code}")
+        # 成功刷新市场数据缓存，代码: {code}的信息已省略，以减少日志输出
         
         return True
     except Exception as e:
@@ -528,11 +528,11 @@ async def aupdate_market_data_and_refresh_cache(data, table_name, code=None):
     try:
         # 异步写入数据到数据库
         await to_sql_async(data, table_name)
-        logger.info(f"成功更新市场数据到表 {table_name}")
+        # 成功更新市场数据到表 {table_name}的信息已省略，以减少日志输出
         
         # 异步刷新相关缓存
         await arefresh_market_data_cache(code)
-        logger.info(f"成功刷新市场数据缓存，代码: {code}")
+        # 成功刷新市场数据缓存，代码: {code}的信息已省略，以减少日志输出
         
         return True
     except Exception as e:

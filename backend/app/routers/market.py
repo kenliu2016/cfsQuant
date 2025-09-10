@@ -136,7 +136,7 @@ async def refresh_market_cache(code: str = Query(None, description="可选的股
     
     try:
         refresh_market_data_cache(code)
-        logger.info(f"成功刷新市场数据缓存，代码: {code}")
+        # 成功刷新市场数据缓存的信息已省略，以减少日志输出
         return {"status": "success", "message": f"市场数据缓存已刷新"}
     except Exception as e:
         logger.error(f"刷新市场数据缓存失败: {e}")

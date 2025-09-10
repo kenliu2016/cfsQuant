@@ -43,7 +43,7 @@ class RedisManager:
             self.client = redis.Redis(connection_pool=pool)
             self.client.ping()
             self.is_redis_available = True
-            logger.info("Redis连接成功")
+            # Redis连接成功的信息已省略，以减少日志输出
         except Exception as e:
             self.client = {}
             self.is_redis_available = False
@@ -508,11 +508,11 @@ async def async_update_market_data_and_refresh_cache(data, table_name, code=None
     try:
         # 异步写入数据到数据库
         await to_sql_async(data, table_name)
-        logger.info(f"成功更新市场数据到表 {table_name}")
+        # 成功更新市场数据到表的信息已省略，以减少日志输出
         
         # 异步刷新相关缓存
         await async_clear_market_data_cache(code)
-        logger.info(f"成功刷新市场数据缓存，代码: {code}")
+        # 成功刷新市场数据缓存的信息已省略，以减少日志输出
         
         return True
     except Exception as e:

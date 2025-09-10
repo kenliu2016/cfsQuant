@@ -18,21 +18,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     # 应用启动时
-    logger.info("应用启动中，开始执行初始化任务...")
-    start_time = time.time()
-    
     # 启动缓存预热任务（作为后台任务，不阻塞应用启动）
     asyncio.create_task(prewarm_market_cache())
-    
-    startup_time = time.time() - start_time
-    logger.info(f"应用启动完成，耗时: {startup_time:.2f}秒")
     
     yield  # 应用运行中
     
     # 应用关闭时
-    logger.info("应用正在关闭，执行清理任务...")
     # 可以在这里添加关闭时的清理代码
-    logger.info("应用关闭完成")
+    pass
 
 app = FastAPI(title="Trading API", version="0.1.0", lifespan=app_lifespan)
 
@@ -124,7 +117,7 @@ async def prewarm_market_cache():
         start_str = start_date.strftime("%Y-%m-%d")
         end_str = end_date.strftime("%Y-%m-%d")
         
-        logger.info(f"开始预热市场数据缓存，代码: {', '.join(hot_codes)}")
+        logger.debug(f"开始预热市场数据缓存，代码: {', '.join(hot_codes)}")
         
         # 创建预热任务
         tasks = []
@@ -146,6 +139,6 @@ async def prewarm_market_cache():
             else:
                 logger.error(f"预热 {hot_codes[i]} 的市场数据缓存失败: {result}")
         
-        logger.info(f"市场数据缓存预热完成，成功: {success_count}/{len(hot_codes)}")
+        logger.debug(f"市场数据缓存预热完成，成功: {success_count}/{len(hot_codes)}")
     except Exception as e:
         logger.error(f"执行缓存预热过程中发生错误: {e}")
