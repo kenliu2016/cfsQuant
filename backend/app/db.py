@@ -297,7 +297,6 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
                 # 获取列名
                 columns = result.keys()
 
-                # 分批获取数据
                 batch_size = 10000
                 chunks = []
 
@@ -308,69 +307,69 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
                         break
                     chunks.append(pd.DataFrame(batch, columns=columns))
 
-                    # 如果没有数据，返回空DataFrame
-                    if not chunks:
-                        logger.debug("没有获取到数据，返回空DataFrame")
-                        return pd.DataFrame(columns=columns)
+                # 如果没有数据，返回空DataFrame
+                if not chunks:
+                    logger.debug("没有获取到数据，返回空DataFrame")
+                    return pd.DataFrame(columns=columns)
 
-                    # 优化：合并所有批次的数据，避免过多的内存复制
-                    if len(chunks) == 1:
-                        logger.debug("只有一个批次，直接复制")
-                        df = chunks[0].copy()
-                    else:
-                        logger.debug(f"合并 {len(chunks)} 个批次")
-                        # 使用ignore_index=True避免索引冲突
-                        df = pd.concat(chunks, ignore_index=True)
-                        # 释放中间数据占用的内存
-                        del chunks
+                # 优化：合并所有批次的数据，避免过多的内存复制
+                if len(chunks) == 1:
+                    logger.debug("只有一个批次，直接复制")
+                    df = chunks[0].copy()
+                else:
+                    logger.debug(f"合并 {len(chunks)} 个批次")
+                    # 使用ignore_index=True避免索引冲突
+                    df = pd.concat(chunks, ignore_index=True)
+                    # 释放中间数据占用的内存
+                    del chunks
 
-                    # 优化：数据类型转换，减少内存使用
-                    for col in df.columns:
-                        # 尝试将数值列转换为更高效的数据类型
-                        if pd.api.types.is_integer_dtype(df[col]):
-                            # 检查是否存在NA值，如果不存在可以使用更高效的类型
-                            if not df[col].isna().any():
-                                df[col] = df[col].astype('int32')  # 使用更小的整数类型
-                        elif pd.api.types.is_float_dtype(df[col]):
-                            # 对于浮点数，可以使用float32来减少内存使用
-                            df[col] = df[col].astype('float32')
-                        elif pd.api.types.is_object_dtype(df[col]):
-                            # 尝试推断并转换对象列
-                            try:
-                                # 尝试使用通用格式解析日期时间
-                                # 先检查是否包含时间信息
-                                if df[col].str.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', na=False).any():
-                                    # 包含时间，使用带时间的格式
-                                    df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
-                                elif df[col].str.match(r'\d{4}-\d{2}-\d{2}', na=False).any():
-                                    # 只有日期，使用日期格式
-                                    df[col] = pd.to_datetime(df[col], format='%Y-%m-%d', errors='coerce')
-                                else:
-                                    # 其他格式，不需要尝试解析，因为注释说明不会修改原数据
-                                    # 已移除不必要的pd.to_datetime调用，避免警告
-                                    pass  # 空语句，确保代码块不为空
-                            except (ValueError, TypeError, AttributeError):
-                                # 不能转换为datetime，检查是否可以转换为分类类型以减少内存使用
-                                if len(df[col].unique()) < len(df) * 0.5:
-                                    df[col] = df[col].astype('category')
-
-                    logger.debug(f"成功获取数据: {len(df)} 行，{len(df.columns)} 列")
-                    return df
-                except Exception as e:
-                    logger.error(f"查询执行失败: {type(e).__name__}: {e}")
-                    raise
-                finally:
-                    # 确保结果集被关闭 - 直接检查result是否不为None
-                    if result is not None:
+                # 优化：数据类型转换，减少内存使用
+                for col in df.columns:
+                    # 尝试将数值列转换为更高效的数据类型
+                    if pd.api.types.is_integer_dtype(df[col]):
+                        # 检查是否存在NA值，如果不存在可以使用更高效的类型
+                        if not df[col].isna().any():
+                            df[col] = df[col].astype('int32')  # 使用更小的整数类型
+                    elif pd.api.types.is_float_dtype(df[col]):
+                        # 对于浮点数，可以使用float32来减少内存使用
+                        df[col] = df[col].astype('float32')
+                    elif pd.api.types.is_object_dtype(df[col]):
+                        # 尝试推断并转换对象列
                         try:
-                            logger.debug(f"关闭结果集，类型: {type(result)}")
-                            result.close()  # 注意：这里不使用await，因为close不是协程方法
-                            logger.debug("结果集关闭成功")
-                        except Exception as close_e:
-                            logger.warning(f"关闭结果集时出错: {type(close_e).__name__}: {close_e}")
+                            # 尝试使用通用格式解析日期时间
+                            # 先检查是否包含时间信息
+                            if df[col].str.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', na=False).any():
+                                # 包含时间，使用带时间的格式
+                                df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+                            elif df[col].str.match(r'\d{4}-\d{2}-\d{2}', na=False).any():
+                                # 只有日期，使用日期格式
+                                df[col] = pd.to_datetime(df[col], format='%Y-%m-%d', errors='coerce')
+                            else:
+                                # 其他格式，不需要尝试解析，因为注释说明不会修改原数据
+                                # 已移除不必要的pd.to_datetime调用，避免警告
+                                pass  # 空语句，确保代码块不为空
+                        except (ValueError, TypeError, AttributeError):
+                            # 不能转换为datetime，检查是否可以转换为分类类型以减少内存使用
+                            if len(df[col].unique()) < len(df) * 0.5:
+                                df[col] = df[col].astype('category')
+
+                logger.debug(f"成功获取数据: {len(df)} 行，{len(df.columns)} 列")
+                return df
         except Exception as e:
-            logger.error(f"连接数据库失败: {type(e).__name__}: {e}")
+            logger.error(f"查询执行失败: {type(e).__name__}: {e}")
             raise
+        finally:
+            # 确保结果集被关闭 - 直接检查result是否不为None
+            if result is not None:
+                try:
+                    logger.debug(f"关闭结果集，类型: {type(result)}")
+                    result.close()
+                    logger.debug("结果集关闭成功")
+                except Exception as close_e:
+                    logger.warning(f"关闭结果集时出错: {type(close_e).__name__}: {close_e}")
+    except Exception as e:
+        logger.error(f"连接数据库失败: {type(e).__name__}: {e}")
+        raise
     except Exception as e:
         logger.error(f"数据库操作总失败: {type(e).__name__}: {e}")
         raise

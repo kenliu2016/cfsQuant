@@ -99,22 +99,51 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     nav = []
     trades = []
     current_pos_qty = 0.0  # number of shares held
-    # iterate each bar and adjust to target percent of INITIAL capital
+    # iterate each bar and adjust to target percent of CURRENT NAV
     for i, row in data.iterrows():
         price = float(row['close'])
         target_frac = float(row['position'])
-        target_value = initial_capital * target_frac
+        
+        # 计算当前净资产
+        current_nav = cash + current_pos_qty * price
+        # 使用当前净资产计算目标仓位价值，而不是初始资金
+        target_value = current_nav * target_frac
         target_qty = 0.0 if price <= 0 else (target_value / price)
         prev_qty = current_pos_qty
         delta_qty = target_qty - prev_qty
+        
+        # 确保不会尝试卖出超过实际持有的仓位
+        if delta_qty < 0 and abs(delta_qty) > current_pos_qty:
+            delta_qty = -current_pos_qty
+            target_qty = 0.0
+        
         if abs(delta_qty) > 0:
             # apply slippage
             exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
             amount = exec_price * delta_qty
             fee_amt = abs(amount) * fee_rate
-            cash -= amount + fee_amt
-            current_pos_qty = target_qty
+            
+            # 确保买入时资金充足
+            if delta_qty > 0 and (amount + fee_amt) > cash:
+                # 资金不足时，调整买入数量为可用资金能购买的最大数量
+                available_cash = cash - fee_amt
+                if available_cash <= 0:
+                    continue  # 没有可用资金，跳过此次交易
+                max_possible_qty = available_cash / exec_price
+                delta_qty = max_possible_qty
+                amount = exec_price * delta_qty
+                fee_amt = abs(amount) * fee_rate
+                # 修复：在资金不足情况下也需要减少现金
+                cash -= amount + fee_amt
+                current_pos_qty = prev_qty + delta_qty
+            else:
+                # 正常买入或卖出
+                cash -= amount + fee_amt
+                current_pos_qty = target_qty
+            
             trades.append({'run_id': backtest_id, 'datetime': row['datetime'].strftime('%Y-%m-%d %H:%M:%S'), 'code': code, 'side': 'BUY' if delta_qty>0 else 'SELL', 'price': exec_price, 'qty': float(delta_qty), 'amount': float(amount), 'fee': float(fee_amt)})
+        
+        # 更新净资产
         nav_val = cash + current_pos_qty * price
         nav.append(nav_val)
 
