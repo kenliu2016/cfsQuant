@@ -93,7 +93,7 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
 
     mod = _load_strategy_module(strategy)
     default_params = getattr(mod, "DEFAULT_PARAMS", {})
-    merged_params = {**default_params, **DEFAULT_BACKTEST_PARAMS, **(params or {})}
+    merged_params = {**DEFAULT_BACKTEST_PARAMS, **default_params, **(params or {})}
 
     fee_rate = float(merged_params.get("fee_rate", 0.0005))
     slippage = float(merged_params.get("slippage", 0.0002))

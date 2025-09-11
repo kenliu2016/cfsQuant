@@ -1,6 +1,6 @@
 
 import { Card, Table, Button, Space, message, Select, Modal, Tabs, Statistic } from 'antd'
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import client from '../api/client'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
@@ -11,123 +11,71 @@ const formatDateTime = (dateString: string) => {
   return dayjs(dateString).format('YYYY-MM-DD HH:mm:ss')
 }
 
-export default function Reports(){
+const Reports = () => {
   const [runs, setRuns] = useState<any[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [compareData, setCompareData] = useState<any[]>([])
-  const [sortMetric, _setSortMetric] = useState<string>('sharpe')
-  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([])
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
-  const [searchText, setSearchText] = useState<string | undefined>(undefined)
-  const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([])
-  const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
-  const [strategySearchText, setStrategySearchText] = useState<string | undefined>(undefined)
-  
-  // 详情弹窗状态
   const [detailModalVisible, setDetailModalVisible] = useState(false)
-  const [currentRunDetail, setCurrentRunDetail] = useState<any>(null)
+  const [currentRunDetail, setCurrentRunDetail] = useState<any>({})
   const [currentRunEquity, setCurrentRunEquity] = useState<any[]>([])
   const [currentRunTrades, setCurrentRunTrades] = useState<any[]>([])
+  const [searchText, setSearchText] = useState<string>('')
+  const [strategySearchText, setStrategySearchText] = useState<string>('')
+  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
+  const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
+  const [sortMetric] = useState('sharpe')
+  const [currentRunKlineData, setCurrentRunKlineData] = useState<any[]>([])
 
-  // 解析CSV文件加载标的数据
-  const loadSymbols = async () => {
+  // 加载回测列表
+  const loadRuns = async () => {
     try {
-      const response = await fetch('/src/assets/symbols.csv');
-      const csvText = await response.text();
+      const res = await client.get('/runs')
+      setRuns(res.data.rows || [])
       
-      // 解析CSV
-      const lines = csvText.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
+      // 提取唯一的标的和策略
+      const symbols: string[] = Array.from(new Set(res.data.rows.map((run: any) => run.code)))
+      const strategies: string[] = Array.from(new Set(res.data.rows.map((run: any) => run.strategy)))
       
-      const symbolData = [];
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
-        const symbolObj = headers.reduce((obj, header, index) => {
-          obj[header] = values[index]?.trim();
-          return obj;
-        }, {} as any);
-        
-        // 将code和name格式化为Select组件需要的格式
-        symbolData.push({
-          value: symbolObj.code,
-          label: `${symbolObj.code} - ${symbolObj.name}`
-        });
-      }
-      
-      setSymbols(symbolData);
-      setFilteredSymbols(symbolData);
+      setFilteredSymbols(symbols.map((s) => ({ value: s, label: s })))
+      setFilteredStrategies(strategies.map((s) => ({ value: s, label: s })))
     } catch (error) {
-      console.error('加载标的数据失败:', error);
+      console.error('加载回测列表失败:', error)
+      message.error('加载回测列表失败')
     }
-  }
-
-  // 从后端加载策略数据
-  const loadStrategies = async () => {
-    try {
-      const response = await client.get('/strategies');
-      const strategyList = response.data.rows || [];
-      
-      // 格式化策略数据为Select组件需要的格式
-      const formattedStrategies = strategyList.map((s: any) => ({
-        value: s.name,
-        label: s.name
-      }));
-      
-      setStrategies(formattedStrategies);
-      setFilteredStrategies(formattedStrategies);
-    } catch (error) {
-      console.error('加载策略数据失败:', error);
-    }
-  }
-
-  useEffect(() => {
-    loadSymbols();
-    loadStrategies();
-    loadRuns();
-  }, [])
-
-  const loadRuns = async ()=>{
-    const res = await client.get('/runs?limit=200')
-    setRuns(res.data.rows || [])
   }
 
   // 加载回测详情
   const loadRunDetail = async (runId: string) => {
     try {
-      console.log('加载回测详情，runId:', runId)
-      
-      // 先显示弹窗，防止因为API调用失败而不显示
+      const res = await client.get(`/runs/${runId}`)
+      setCurrentRunDetail(res.data.info || {})
+      setCurrentRunEquity(res.data.equity || [])
+      setCurrentRunTrades(res.data.trades || [])
       setDetailModalVisible(true)
       
-      // 只调用一个API端点获取所有回测详情数据
-      try {
-        const runResponse = await client.get(`/runs/${runId}`)
-        const detailData = runResponse.data
-        
-        // 提取并设置回测基本信息
-        setCurrentRunDetail(detailData.info || {})
-        
-        // 提取并设置回测equity数据
-        setCurrentRunEquity(detailData.equity || [])
-        
-        // 提取并设置交易记录数据
-        setCurrentRunTrades(detailData.trades || [])
-        
-        console.log('成功加载回测详情数据')
-      } catch (error) {
-        console.error('加载回测详情数据失败:', error)
-        message.error('加载回测详情失败')
-        
-        // 设置默认空数据，避免显示错误
-        setCurrentRunDetail({})
-        setCurrentRunEquity([])
-        setCurrentRunTrades([])
+      // 同时加载K线数据
+      if (res.data.info && res.data.info.code) {
+        await loadKlineData(res.data.info.code, res.data.info.start_time, res.data.info.end_time)
       }
     } catch (error) {
       console.error('加载回测详情失败:', error)
       message.error('加载回测详情失败')
-      // 确保弹窗显示
-      setDetailModalVisible(true)
+    }
+  }
+
+  // 加载K线数据（分时图）
+  const loadKlineData = async (code: string, startTime: string, endTime: string) => {
+    try {
+      const res = await client.get('/market/intraday', {
+        params: {
+          code: code,
+          start: startTime,
+          end: endTime
+        }
+      })
+      setCurrentRunKlineData(res.data.rows || [])
+    } catch (error) {
+      console.error('加载K线数据失败:', error)
     }
   }
 
@@ -205,13 +153,224 @@ export default function Reports(){
     }
   }, [currentRunEquity])
 
+  // 准备带有买卖点的K线图数据
+  const prepareKlineWithTradesData = useMemo(() => {
+    if (!currentRunKlineData || currentRunKlineData.length === 0) {
+      return null
+    }
+
+    const dateTimes: string[] = []
+    const candlestickData: number[][] = []
+    const volumeData: number[] = []
+    const buyPoints: any[] = []
+    const sellPoints: any[] = []
+
+    // 处理K线数据
+    for (let i = 0; i < currentRunKlineData.length; i++) {
+      const row = currentRunKlineData[i]
+      dateTimes.push(row.datetime)
+      candlestickData.push([row.open, row.close, row.low, row.high])
+      volumeData.push(row.volume)
+    }
+
+    // 处理交易点数据
+    if (currentRunTrades && currentRunTrades.length > 0) {
+      for (let i = 0; i < currentRunTrades.length; i++) {
+        const trade = currentRunTrades[i]
+        const index = dateTimes.indexOf(trade.datetime)
+        
+        if (index !== -1) {
+          if (trade.side === 'buy') {
+            buyPoints.push({
+              name: '买入',
+              value: [index, trade.price],
+              itemStyle: {
+                color: '#52c41a' // 绿色表示买入
+              }
+            })
+          } else if (trade.side === 'sell') {
+            sellPoints.push({
+              name: '卖出',
+              value: [index, trade.price],
+              itemStyle: {
+                color: '#f5222d' // 红色表示卖出
+              }
+            })
+          }
+        }
+      }
+    }
+
+    return {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'cross'
+        },
+        formatter: (params: any[]) => {
+          let result = `${dayjs(dateTimes[params[0].axisValue]).format('YYYY-MM-DD HH:mm')}<br/>`
+          params.forEach(param => {
+            if (param.seriesType === 'candlestick') {
+              result += `开: ${param.data[0]}<br/>`
+              result += `收: ${param.data[1]}<br/>`
+              result += `低: ${param.data[2]}<br/>`
+              result += `高: ${param.data[3]}<br/>`
+            } else if (param.seriesType === 'scatter') {
+              result += `${param.seriesName}: ${param.value[1]}<br/>`
+              // 查找对应的交易详情
+              const tradeIndex = dateTimes.indexOf(dateTimes[param.value[0]])
+              if (tradeIndex !== -1) {
+                const trade = currentRunTrades.find(t => t.datetime === dateTimes[tradeIndex])
+                if (trade) {
+                  result += `数量: ${Math.abs(trade.qty)}<br/>`
+                  if (trade.realized_pnl !== null && trade.realized_pnl !== undefined) {
+                    result += `盈亏: ${trade.realized_pnl.toFixed(2)}<br/>`
+                  }
+                }
+              }
+            }
+          })
+          return result
+        }
+      },
+      legend: {
+        data: ['K线', '买入', '卖出']
+      },
+      xAxis: [
+        {
+          type: 'category', 
+          data: dateTimes,
+          scale: true,
+          axisLabel: {
+            formatter: (value: string) => {
+              return dayjs(value).format('MM-DD');
+            },
+            show: true,
+            color: '#333',
+            rotate: 45,
+            interval: (_index: number) => {
+              const totalPoints = dateTimes.length;
+              if (totalPoints === 0) return false;
+              if (totalPoints <= 10) return 0;
+              if (totalPoints <= 30) return Math.floor(totalPoints / 10);
+              if (totalPoints <= 60) return Math.floor(totalPoints / 20);
+              return Math.floor(totalPoints / 30);
+            }
+          },
+          axisLine: { show: true },
+          axisTick: { show: true }
+        },
+        {
+          type:'category',
+          gridIndex:1,
+          data: dateTimes,
+          axisLabel:{show:false}
+        }
+      ],
+      yAxis: [
+        {
+          type: 'value',
+          scale: true,
+          axisLabel: {
+            formatter: (value: number) => {
+              if (value >= 1000000) {
+                return Math.round(value / 1000000) + 'M';
+              } else if (value >= 1000) {
+                return Math.round(value / 1000) + 'K';
+              } else {
+                return Math.round(value).toString();
+              }
+            },
+            interval: 'auto'
+          }
+        },
+        {
+          gridIndex:1,
+          axisLabel: {
+            formatter: (value: number) => {
+              if (value >= 1000000) {
+                return Math.round(value / 1000000) + 'M';
+              } else if (value >= 1000) {
+                return Math.round(value / 1000) + 'K';
+              } else {
+                return Math.round(value).toString();
+              }
+            },
+            interval: 'auto'
+          }
+        }
+      ],
+      grid:[{ left:40, right:20, height: '55%' }, { left:40, right:20, top: '65%', height: '20%' }],
+      series: [
+        {
+          name: 'K线',
+          type: 'candlestick',
+          data: candlestickData
+        },
+        {
+          name: '买入',
+          type: 'scatter',
+          data: buyPoints,
+          symbolSize: 15,
+          symbol: 'triangle',
+          itemStyle: {
+            color: '#52c41a'
+          }
+        },
+        {
+          name: '卖出',
+          type: 'scatter',
+          data: sellPoints,
+          symbolSize: 15,
+          symbol: 'triangleDown',
+          itemStyle: {
+            color: '#f5222d'
+          }
+        },
+        {
+          type: 'bar',
+          name: '成交量',
+          xAxisIndex: 1,
+          yAxisIndex: 1,
+          data: volumeData,
+          itemStyle: {
+            color: (params: any) => {
+              // 根据收盘价与开盘价的关系设置成交量柱子颜色
+              const open = candlestickData[params.dataIndex][0]
+              const close = candlestickData[params.dataIndex][1]
+              return close >= open ? '#52c41a' : '#f5222d'
+            }
+          }
+        }
+      ]
+    }
+  }, [currentRunKlineData, currentRunTrades])
+
+  // 标的搜索处理
+  const handleSymbolSearch = async (value: string) => {
+    // 这里可以实现异步搜索，现在简单处理
+    const filtered = filteredSymbols.filter(option => 
+      option.label.toLowerCase().includes(value.toLowerCase())
+    );
+    setFilteredSymbols(filtered);
+  }
+
+  // 策略搜索处理
+  const handleStrategySearch = async (value: string) => {
+    // 这里可以实现异步搜索，现在简单处理
+    const filtered = filteredStrategies.filter(option => 
+      option.label.toLowerCase().includes(value.toLowerCase())
+    );
+    setFilteredStrategies(filtered);
+  }
+
   const onCompare = async ()=>{
     if (selected.length < 2) return message.warning('请选择至少2个回测进行对比')
     const all = []
     for (const id of selected){
       const r = await client.get(`/backtest/${id}/results`)
       const metrics = r.data.metrics || []
-      const mobj:any = {}
+      const mobj:any = {} 
       metrics.forEach((m:any)=> mobj[m.metric_name]=m.metric_value)
       all.push({ id, metrics: mobj })
     }
@@ -220,54 +379,19 @@ export default function Reports(){
     setCompareData(all)
   }
 
-  // 使用useCallback缓存标的搜索函数
-  const handleSymbolSearch = useCallback((inputValue: string) => {
-    if (!inputValue) {
-      setFilteredSymbols(symbols);
-      return;
-    }
-    
-    const lowerInput = inputValue.toLowerCase();
-    // 优化：预先转换输入值为小写，避免重复调用toLowerCase
-    const filtered = symbols.filter(symbol => 
-      symbol.value.toLowerCase().includes(lowerInput) ||
-      symbol.label.toLowerCase().includes(lowerInput)
-    );
-    setFilteredSymbols(filtered);
-  }, [symbols])
-
-  // 使用useCallback缓存策略搜索函数
-  const handleStrategySearch = useCallback((inputValue: string) => {
-    if (!inputValue) {
-      setFilteredStrategies(strategies);
-      return;
-    }
-    
-    const lowerInput = inputValue.toLowerCase();
-    const filtered = strategies.filter(strategy => 
-      strategy.value.toLowerCase().includes(lowerInput) ||
-      strategy.label.toLowerCase().includes(lowerInput)
-    );
-    setFilteredStrategies(filtered);
-  }, [strategies])
-
-  // 使用useMemo缓存过滤后的运行数据
+  // 过滤回测列表
   const filteredRuns = useMemo(() => {
-    let filtered = runs;
+    let filtered = [...runs];
     
-    // 根据标的搜索过滤
     if (searchText) {
-      const lowerSearch = searchText.toLowerCase();
       filtered = filtered.filter(run => 
-        run.code.toLowerCase().includes(lowerSearch)
+        run.code.toLowerCase().includes(searchText.toLowerCase())
       );
     }
     
-    // 根据策略搜索过滤
     if (strategySearchText) {
-      const lowerStrategySearch = strategySearchText.toLowerCase();
       filtered = filtered.filter(run => 
-        run.strategy.toLowerCase().includes(lowerStrategySearch)
+        run.strategy.toLowerCase().includes(strategySearchText.toLowerCase())
       );
     }
     
@@ -282,9 +406,9 @@ export default function Reports(){
     { title:'InitialCapital', dataIndex:'initial_capital', key:'initial_capital' },
     { title:'FinalCapital', dataIndex:'final_capital', key:'final_capital' },
     { title:'RunFinish', dataIndex:'created_at', key:'created_at', render: formatDateTime },
-    { 
-      title:'详情', 
-      key:'detail', 
+    {
+      title:'详情',
+      key:'detail',
       render: (_: any, record: { run_id: string }) => (
         <Button 
           type="link" 
@@ -295,6 +419,10 @@ export default function Reports(){
       )
     }
   ]
+
+  useEffect(() => {
+    loadRuns()
+  }, [])
 
   return (
     <>
@@ -325,8 +453,8 @@ export default function Reports(){
           <Button onClick={onCompare}>比较所选</Button>
           <Button onClick={loadRuns}>刷新</Button>
         </Space>
-        <Table rowKey="run_id" dataSource={filteredRuns} columns={columns} rowSelection={{
-          selectedRowKeys: selected,
+        <Table rowKey="run_id" dataSource={filteredRuns} columns={columns} rowSelection={{ 
+          selectedRowKeys: selected, 
           onChange: (keys)=> setSelected(keys as string[])
         }} pagination={{pageSize:20}} />
 
@@ -347,36 +475,38 @@ export default function Reports(){
         open={detailModalVisible}
         onCancel={handleCloseDetailModal}
         footer={null}
-        width={1000}
+        width={900}
+        style={{ maxHeight: '90vh' }}
+        styles={{ body: { overflowY: 'auto' } }}
       >
         {currentRunDetail && (
-          <Tabs defaultActiveKey="1">
-            {/* 回测参数 */}
-            <Tabs.TabPane tab="回测参数" key="1">
+          <Tabs>
+            {/* 基本信息 */}
+            <Tabs.TabPane tab="基本信息" key="1">
               <div style={{padding: 16}}>
-                <div style={{marginBottom: 12}}>
-                  <strong>策略:</strong> {currentRunDetail.strategy}
-                </div>
-                <div style={{marginBottom: 12}}>
-                  <strong>标的:</strong> {currentRunDetail.code}
-                </div>
-                <div style={{marginBottom: 12}}>
-                  <strong>数据区间:</strong> {formatDateTime(currentRunDetail.start_time)} - {formatDateTime(currentRunDetail.end_time)}
-                </div>
-                <div>
-                  <strong>执行参数:</strong>
-                  {currentRunDetail.paras && typeof currentRunDetail.paras === 'object' && Object.keys(currentRunDetail.paras).length > 0 ? (
-                    <ul>
-                      {Object.entries(currentRunDetail.paras as Record<string, any>).map(([key, value]) => (
-                        <li key={key}>
-                          {key}: {typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>暂无执行参数</p>
-                  )}
-                </div>
+                <Space direction="vertical" style={{width: '100%'}}>
+                  <div>
+                    <strong>策略名称:</strong> {currentRunDetail.strategy}
+                  </div>
+                  <div>
+                    <strong>标的代码:</strong> {currentRunDetail.code}
+                  </div>
+                  <div>
+                    <strong>回测时间范围:</strong> {formatDateTime(currentRunDetail.start_time)} 至 {formatDateTime(currentRunDetail.end_time)}
+                  </div>
+                  <div>
+                    <strong>初始资金:</strong> {currentRunDetail.initial_capital}
+                  </div>
+                  <div>
+                    <strong>最终资金:</strong> {currentRunDetail.final_capital}
+                  </div>
+                  <div>
+                    <strong>运行ID:</strong> {currentRunDetail.run_id}
+                  </div>
+                  <div>
+                    <strong>创建时间:</strong> {formatDateTime(currentRunDetail.created_at)}
+                  </div>
+                </Space>
               </div>
             </Tabs.TabPane>
 
@@ -392,19 +522,10 @@ export default function Reports(){
                   {currentRunEquity.length > 0 && (
                     <Space style={{width: '100%', justifyContent: 'space-between'}}>
                       <Statistic 
-                        title="年化收益率" 
-                        value={(() => {
-                          // 计算年化收益率（简单计算）
-                          const days = (new Date(currentRunDetail.end_time).getTime() - new Date(currentRunDetail.start_time).getTime()) / (1000 * 60 * 60 * 24)
-                          const annualizedReturn = ((currentRunDetail.final_capital / currentRunDetail.initial_capital) ** (365 / days) - 1) * 100
-                          return annualizedReturn.toFixed(2)
-                        })()}
-                        suffix="%" 
-                      />
-                      <Statistic 
                         title="最大回撤" 
-                        value={Math.min(...currentRunEquity.map((item: any) => item.drawdown)).toFixed(2)}
+                        value={(currentRunEquity.reduce((max, item) => Math.min(max, item.drawdown), 0) * 100).toFixed(2)} 
                         suffix="%" 
+                        valueStyle={{ color: '#f5222d' }}
                       />
                       <Statistic 
                         title="夏普率" 
@@ -442,22 +563,40 @@ export default function Reports(){
               </div>
             </Tabs.TabPane>
 
+            {/* 交易图表 */}
+            <Tabs.TabPane tab="K线交易图" key="5">
+              <div style={{padding: 16, height: 500}}>
+                {prepareKlineWithTradesData ? (
+                  <ReactECharts option={prepareKlineWithTradesData} style={{height: '100%'}} />
+                ) : (
+                  <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}>
+                    正在加载K线数据...
+                  </div>
+                )}
+              </div>
+            </Tabs.TabPane>
+
             {/* 模拟交易记录 */}
             <Tabs.TabPane tab="交易记录" key="4">
-              <Table 
-                dataSource={currentRunTrades}
-                rowKey={(record: any) => `${record.datetime}-${record.side}`}
-                pagination={{pageSize: 10}}
-                columns={[
-                  {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime},
-                  {title: '标的', dataIndex: 'code', key: 'code'},
-                  {title: '方向', dataIndex: 'side', key: 'side'},
-                  {title: '价格', dataIndex: 'price', key: 'price'},
-                  {title: '数量', dataIndex: 'qty', key: 'qty'},
-                  {title: '金额', dataIndex: 'amount', key: 'amount'},
-                  {title: '费用', dataIndex: 'fee', key: 'fee'}
-                ]}
-              />
+              <div style={{ padding: '8px 0', maxHeight: '600px', overflow: 'auto' }}>
+                <Table 
+                  dataSource={currentRunTrades}
+                  rowKey={(record: any) => `${record.datetime}-${record.side}`}
+                  pagination={{pageSize: 10}}
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160},
+                    {title: '标的', dataIndex: 'code', key: 'code', width: 100},
+                    {title: '方向', dataIndex: 'side', key: 'side', width: 80},
+                    {title: '价格', dataIndex: 'price', key: 'price', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
+                    {title: '数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
+                    {title: '金额', dataIndex: 'amount', key: 'amount', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
+                    {title: '费用', dataIndex: 'fee', key: 'fee', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
+                    {title: '盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-'},
+                    {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-'}
+                  ]}
+                />
+              </div>
             </Tabs.TabPane>
           </Tabs>
         )}
@@ -465,3 +604,5 @@ export default function Reports(){
     </>
   )
 }
+
+export default Reports

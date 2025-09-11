@@ -50,7 +50,7 @@ def run_detail(run_id: str):
     df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=run_id)
     # 获取交易记录数据
     df_t = fetch_df("""
-        SELECT run_id, datetime, code, side, price, qty, amount, fee
+        SELECT run_id, datetime, code, side, price, qty, amount, fee, realized_pnl, nav
         FROM trades
         WHERE run_id = :rid
         ORDER BY datetime
@@ -87,11 +87,48 @@ def run_detail(run_id: str):
             # 如果解析失败，设置为空字典
             run_info['paras'] = {}
     
-    # 处理交易记录中的datetime类型
+    # 处理equity数据中的datetime类型和特殊浮点值
+    if not df_e.empty:
+        # 确保datetime列是字符串类型
+        if 'datetime' in df_e.columns:
+            df_e['datetime'] = df_e['datetime'].astype(str)
+        
+        # 处理equity数据中的数值列
+        numeric_columns_e = df_e.select_dtypes(include=['float64']).columns
+        for col in numeric_columns_e:
+            # 将NaN替换为0
+            df_e[col] = df_e[col].fillna(0)
+            # 将Infinity和-Infinity替换为0
+            df_e[col] = df_e[col].replace([float('inf'), float('-inf')], 0)
+            # 确保所有值都是可JSON序列化的float类型
+            df_e[col] = df_e[col].astype(float)
+    
+    # 处理metrics数据中的特殊浮点值
+    if not df_m.empty:
+        # 处理metric_value列
+        if 'metric_value' in df_m.columns:
+            # 将NaN替换为0
+            df_m['metric_value'] = df_m['metric_value'].fillna(0)
+            # 将Infinity和-Infinity替换为0
+            df_m['metric_value'] = df_m['metric_value'].replace([float('inf'), float('-inf')], 0)
+            # 确保所有值都是可JSON序列化的float类型
+            df_m['metric_value'] = df_m['metric_value'].astype(float)
+    
+    # 处理交易记录中的datetime类型和特殊浮点值
     if not df_t.empty:
         # 确保datetime列是字符串类型
         if 'datetime' in df_t.columns:
             df_t['datetime'] = df_t['datetime'].astype(str)
+        
+        # 处理数值列中的NaN、Infinity和-Infinity等特殊浮点值
+        numeric_columns = df_t.select_dtypes(include=['float64']).columns
+        for col in numeric_columns:
+            # 将NaN替换为0
+            df_t[col] = df_t[col].fillna(0)
+            # 将Infinity和-Infinity替换为0
+            df_t[col] = df_t[col].replace([float('inf'), float('-inf')], 0)
+            # 确保所有值都是可JSON序列化的float类型
+            df_t[col] = df_t[col].astype(float)
     
     logger.debug(f"成功获取回测详情，run_id: {run_id}, 策略: {run_info.get('strategy', '未知')}")
     

@@ -10,8 +10,6 @@ import { Card } from 'antd'
 import { List } from 'antd'
 import { Progress } from 'antd'
 import { Input } from 'antd'
-import { Row } from 'antd'
-import { Col } from 'antd'
 import { message } from 'antd'
 import { DatePicker } from 'antd'
 
