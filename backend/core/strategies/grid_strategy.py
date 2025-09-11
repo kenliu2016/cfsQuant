@@ -7,27 +7,27 @@ import pandas as pd
 import numpy as np
 
 DEFAULT_PARAMS = {
-    "grid_num": 10,
-    "lookback": 30,             # 动态边界回溯天数
-    "initial_capital": 1000000.0,
-    "used_capital_ratio": 0.5,  # 初始投入资金比例，留一部分保证金
-    "cooldown_bars": 2,               # 冷却周期（单位bar）
-    "signal_threshold": 0.05,    # 仓位变化阈值，低于此不触发交易
-    "stop_loss_pct": 0.1,        # 跌破下限百分比止损
-    "take_profit_pct": 0.2,      # 超过收益百分比止盈
-    "trend_window": 20,          # 趋势窗口
-    "trend_filter": True         # 是否启用趋势过滤
+    "initial_capital": 1000000.0, # (引擎参数)初始资金
+    "min_trade_amount": 100.0,    # (引擎参数)最小成交金额（货币单位）
+    "min_trade_qty": 0.001,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
+    "cooldown_bars": 2,           # (引擎参数)冷却周期（单位bar）
+    "lot_size": 0.00001,          # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
+    "min_position_change": 0.02,  # (引擎参数)低于仓位变动门槛不出发交易（1%）
+    "grid_num": 10,               # (策略参数)网格数量
+    "lookback": 30,               # (策略参数)动态边界回溯窗口
+    "trend_window": 20,           # (策略参数)趋势窗口
+    "used_capital_ratio": 0.5,    # (策略参数)初始投入资金比例，留一部分保证金
+    "stop_loss_pct": 0.1,         # (策略参数)跌破下限百分比止损
+    "take_profit_pct": 0.2,       # (策略参数)超过收益百分比止盈
+    "trend_filter": True          # (策略参数)是否启用趋势过滤
 }
 
 def run(df: pd.DataFrame, params: dict):
     """
-    全功能增强网格策略：
+    网格策略（只输出目标仓位）：
     - 动态边界 + 非线性仓位
-    - 冷却时间限制
-    - 仓位变化阈值过滤
+    - 趋势过滤
     - 止损止盈
-    - 资金动态分配
-    - 趋势行情过滤
     """
     p = DEFAULT_PARAMS.copy()
     p.update(params or {})
@@ -53,14 +53,8 @@ def run(df: pd.DataFrame, params: dict):
         data["trend_dir"] = 1  # 不过滤
 
     position = 0.0
-    last_signal_index = -p["cooldown_bars"]  # 用于冷却周期
-    used_capital = p["initial_capital"] * p["used_capital_ratio"]
     entry_price = None
-    signals = []
-
     positions = []
-    buy_signal = []
-    sell_signal = []
 
     for i in range(n):
         price = data.at[i, "close"]
@@ -70,46 +64,23 @@ def run(df: pd.DataFrame, params: dict):
         # 趋势过滤：只允许顺势开仓
         target_pos = target_pos if trend_dir > 0 else position
 
-        # 仓位变化阈值
-        if abs(target_pos - position) < p["signal_threshold"]:
-            target_pos = position
-
-        # 冷却判断
-        if (i - last_signal_index) < p["cooldown_bars"]:
-            target_pos = position
-
-        signal = 0
-        # 买卖信号判断
-        if target_pos > position:
-            signal = 1
-            last_signal_index = i
-            entry_price = price if entry_price is None else entry_price
-        elif target_pos < position:
-            signal = -1
-            last_signal_index = i
-
         # 止损止盈
         if entry_price is not None:
             drawdown = (entry_price - price) / entry_price
             profit = (price - entry_price) / entry_price
             if drawdown >= p["stop_loss_pct"]:
                 target_pos = 0.0
-                signal = -1
             elif profit >= p["take_profit_pct"]:
                 # 锁定部分利润
                 target_pos = max(position * 0.5, target_pos)
-                if target_pos < position:
-                    signal = -1
 
+        # 更新仓位
+        if target_pos != position:
+            if position == 0 and target_pos > 0:
+                entry_price = price
         position = target_pos
         positions.append(position)
-        signals.append(signal)
-        buy_signal.append(1 if signal == 1 else 0)
-        sell_signal.append(1 if signal == -1 else 0)
 
     data["position"] = positions
-    data["signal"] = signals
-    data["buy_signal"] = buy_signal
-    data["sell_signal"] = sell_signal
 
-    return data[["datetime", "close", "position", "signal", "buy_signal", "sell_signal"]]
+    return data[["datetime", "close", "position"]]

@@ -17,7 +17,7 @@ DEFAULT_BACKTEST_PARAMS = {
     "min_trade_qty": 0.001,          # 最小成交数量（标的单位，0 表示不启用）
     "min_position_change": 0.01,     # 仓位变动门槛（绝对比例，例如 0.01 = 1%）
     "lot_size": 0.00001,             # 交易单位（如 100 股，或最小下单单位；0 表示不启用）
-    "cooldown_bars": 530,           # 冷却期，单位 bar
+    "cooldown_bars": 20,             # 冷却期，单位 bar
     "initial_capital": 100000.0
 }
 
