@@ -113,6 +113,7 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
         raise ValueError("Strategy must output 'position' column")
 
     data = df.reset_index()
+    # 初始化变量
     cash = initial_capital
     current_pos_qty = 0.0
     avg_price = 0.0
@@ -121,7 +122,10 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     trades = []
     positions = []
     equity_curve = []
+
     last_trade_bar = -9999
+    last_nav_val = None
+    last_pos_qty = None
 
     for i, row in data.iterrows():
         dt = row["datetime"]
@@ -131,114 +135,111 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
         current_nav = cash + current_pos_qty * price
         target_value = current_nav * target_frac
         target_qty = 0.0 if price <= 0 else (target_value / price)
-        prev_qty = current_pos_qty
-        delta_qty = target_qty - prev_qty
+        delta_qty = target_qty - current_pos_qty
 
         # 冷却期检查
         if (i - last_trade_bar) <= cooldown_bars:
             delta_qty = 0.0
 
         # 仓位变动阈值检查
-        prev_frac = 0.0 if current_nav == 0 else (prev_qty * price) / current_nav
+        prev_frac = 0.0 if current_nav == 0 else (current_pos_qty * price) / current_nav
         if abs(target_frac - prev_frac) < min_position_change:
             delta_qty = 0.0
 
+        # 执行交易
         if abs(delta_qty) > 0:
-                exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
+            exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
 
-                # 买入
+            if delta_qty > 0:
+                max_possible_qty = cash / (exec_price * (1 + fee_rate)) if exec_price > 0 else 0.0
+                if delta_qty > max_possible_qty:
+                    delta_qty = max_possible_qty
+            else:
+                if abs(delta_qty) > current_pos_qty:
+                    delta_qty = -current_pos_qty
+
+            # lot_size 四舍五入
+            if lot_size and lot_size > 0:
                 if delta_qty > 0:
-                    max_possible_qty = cash / (exec_price * (1 + fee_rate)) if exec_price > 0 else 0.0
-                    if delta_qty > max_possible_qty:
-                        delta_qty = max_possible_qty
-                # 卖出
+                    delta_qty = (int(delta_qty / lot_size)) * lot_size
                 else:
-                    if abs(delta_qty) > current_pos_qty:
-                        delta_qty = -current_pos_qty
+                    delta_qty = - (int(abs(delta_qty) / lot_size)) * lot_size
 
-                # lot_size 四舍五入
-                if lot_size and lot_size > 0:
-                    if delta_qty > 0:
-                        delta_qty = (int(delta_qty / lot_size)) * lot_size
-                    else:
-                        delta_qty = - (int(abs(delta_qty) / lot_size)) * lot_size
+            amount = exec_price * delta_qty
+            fee_amt = abs(amount) * fee_rate
 
-                amount = exec_price * delta_qty
-                fee_amt = abs(amount) * fee_rate
+            if abs(amount) < min_trade_amount or (min_trade_qty and abs(delta_qty) < min_trade_qty):
+                delta_qty = 0.0
 
-                # 最小订单金额/数量检查
-                if abs(amount) < min_trade_amount or (min_trade_qty and abs(delta_qty) < min_trade_qty):
-                    delta_qty = 0.0
+            if abs(delta_qty) > 0:
+                cash -= (amount + fee_amt)
 
-                if abs(delta_qty) > 0:
-                    # 扣款/入账
-                    cash -= (amount + fee_amt)
+                realized_pnl = None
+                side = "buy" if delta_qty > 0 else "sell"
 
-                    realized_pnl = None
-                    side = "buy" if delta_qty > 0 else "sell"
+                if delta_qty > 0:  # 买入
+                    total_cost = avg_price * current_pos_qty + exec_price * delta_qty
+                    current_pos_qty += delta_qty
+                    avg_price = total_cost / current_pos_qty if current_pos_qty > 0 else 0.0
+                else:  # 卖出
+                    realized_pnl = (exec_price - avg_price) * abs(delta_qty) - fee_amt
+                    current_pos_qty += delta_qty
+                    # 卖出后 avg_price 保留卖出前持仓均价
 
-                    if delta_qty > 0:  # 买入
-                        total_cost = avg_price * current_pos_qty + exec_price * delta_qty
-                        current_pos_qty += delta_qty
-                        avg_price = total_cost / current_pos_qty if current_pos_qty > 0 else 0.0
-                    else:  # 卖出
-                        realized_pnl = (exec_price - avg_price) * abs(delta_qty) - fee_amt
-                        current_pos_qty += delta_qty
-                        # 卖出后即使仓位清零，也不修改 avg_price，保留卖出前的持仓均价
+                nav_val = cash + current_pos_qty * price
 
-                    nav_val = cash + current_pos_qty * price
+                # trades 记录
+                trades.append({
+                    "run_id": backtest_id,
+                    "datetime": dt,
+                    "code": code,
+                    "side": side,
+                    "price": float(exec_price),
+                    "qty": float(delta_qty),
+                    "amount": float(amount),
+                    "fee": float(fee_amt),
+                    "avg_price": float(avg_price),
+                    "nav": float(nav_val),
+                    "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
+                })
 
-                    # === trades 表记录 ===
-                    trades.append({
-                        "run_id": backtest_id,
-                        "datetime": dt,
-                        "code": code,
-                        "side": side,
-                        "price": float(exec_price),
-                        "qty": float(delta_qty),
-                        "amount": float(amount),
-                        "fee": float(fee_amt),
-                        "avg_price": float(avg_price),
-                        "nav": float(nav_val),
-                        "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
-                    })
+                    # equity_curve 记录（方案 A：仅交易时）
+                peak = nav_val if not equity_curve else max(nav_val, equity_curve[-1]["nav"])
+                drawdown = nav_val / peak - 1 if peak > 0 else 0
+                equity_curve.append({
+                    "run_id": backtest_id,
+                    "datetime": dt,
+                    "nav": float(nav_val),
+                    "drawdown": float(drawdown),
+                })
 
-                    # === 调试日志输出 ===
-                    log_trade_debug(
-                        action=side.upper(),
-                        price=exec_price,
-                        qty=delta_qty,
-                        fee=fee_amt,
-                        slippage=slippage,
-                        position_cost=avg_price,
-                        pnl=realized_pnl
-                    )
+                # 调试日志
+                log_trade_debug(
+                    action=side.upper(),
+                    price=exec_price,
+                    qty=delta_qty,
+                    fee=fee_amt,
+                    slippage=slippage,
+                    position_cost=avg_price,
+                    pnl=realized_pnl
+                )
 
-                    last_trade_bar = i
+                last_trade_bar = i
 
+        # positions 记录（方案 A）
+        if last_pos_qty is None or current_pos_qty != last_pos_qty:
+            positions.append({
+                "run_id": backtest_id,
+                "datetime": dt,
+                "code": code,
+                "qty": float(current_pos_qty),
+                "avg_price": float(avg_price),
+            })
+            last_pos_qty = current_pos_qty
 
-
-        # 每根 bar 记录持仓
-        positions.append({
-            "run_id": backtest_id,
-            "datetime": dt,
-            "code": code,
-            "qty": float(current_pos_qty),
-            "avg_price": float(avg_price),
-        })
-
-        # 更新净值曲线
         nav_val = cash + current_pos_qty * price
+        # 将当前净值添加到nav_list
         nav_list.append(nav_val)
-
-        peak = max(nav_list)
-        drawdown = nav_val / peak - 1 if peak > 0 else 0
-        equity_curve.append({
-            "run_id": backtest_id,
-            "datetime": dt,
-            "nav": float(nav_val),
-            "drawdown": float(drawdown),
-        })
 
     nav_series = pd.Series(nav_list, index=data["datetime"])
 
