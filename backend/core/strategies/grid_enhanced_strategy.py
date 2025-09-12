@@ -1,4 +1,3 @@
-
 """Strategy: grid_enhanced_strategy
     Template strategy. Edit `run(df, params)` to implement.
 """
@@ -46,7 +45,13 @@ def run(df: pd.DataFrame, params: dict):
 
     # === 3. 计算目标网格位置 ===
     # 归一化当前价格在网格中的位置
-    df['grid_pos'] = (df['close'] - df['grid_lower']) / (df['grid_upper'] - df['grid_lower'])
+    # 使用 np.divide 安全地处理除以零的情况
+    df['grid_pos'] = np.divide(
+        df['close'] - df['grid_lower'], 
+        df['grid_upper'] - df['grid_lower'], 
+        out=np.full_like(df['close'], 0.5), # 如果网格宽度为0，则默认为中间位置
+        where=(df['grid_upper'] - df['grid_lower']) != 0
+    )
     df['grid_pos'] = np.clip(df['grid_pos'], 0, 1) # 限制在0-1之间
 
     # === 4. 仓位调整（考虑趋势过滤）===
@@ -54,19 +59,25 @@ def run(df: pd.DataFrame, params: dict):
     df['target_position'] = 1 - (df['grid_pos'] ** 2)
 
     # 趋势过滤: 只有在趋势明显时才应用
-    if params['trend_filter']:
+    if params.get('trend_filter', False):
         # 当ADX高于阈值时，执行趋势过滤
         is_trending = df['adx'] > params['adx_threshold']
         
-        # 趋势向上且价格位于网格上半区，减少多头仓位
+        # 趋势向上且价格位于网格上半区，减少多头仓位 (降低风险)
         up_trend_condition = (df['trend_slope'] > 0) & (df['close'] > df['rolling_mean']) & is_trending
         df.loc[up_trend_condition, 'target_position'] = np.clip(df['target_position'] - 0.5, 0, 1)
 
-        # 趋势向下且价格位于网格下半区，减少空头仓位（即增加多头仓位）
+        # 【已优化】趋势向下且价格位于网格下半区，同样减少仓位 (降低风险)
+        # 原逻辑是增加仓位，这会逆势加仓，风险极高。已修正为降低仓位。
         down_trend_condition = (df['trend_slope'] < 0) & (df['close'] < df['rolling_mean']) & is_trending
-        df.loc[down_trend_condition, 'target_position'] = np.clip(df['target_position'] + 0.5, 0, 1)
+        df.loc[down_trend_condition, 'target_position'] = np.clip(df['target_position'] - 0.5, 0, 1)
 
-    # 将目标仓位重命名为'position'，供回测引擎使用
-    df['position'] = df['target_position']
+    # 【已优化】应用资金使用比例
+    # 将策略计算出的理想仓位，根据used_capital_ratio进行缩放
+    used_capital_ratio = params.get("used_capital_ratio", 1.0)
+    df['position'] = df['target_position'] * used_capital_ratio
+    
+    # 移除中间计算列，只保留回测引擎需要的'position'列
+    df = df[['open', 'high', 'low', 'close', 'volume', 'position']]
     
     return df

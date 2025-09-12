@@ -50,7 +50,7 @@ def run_detail(run_id: str):
     df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=run_id)
     # 获取交易记录数据
     df_t = fetch_df("""
-        SELECT run_id, datetime, code, side, price, qty, amount, fee, realized_pnl, nav
+        SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, realized_pnl, nav
         FROM trades
         WHERE run_id = :rid
         ORDER BY datetime
