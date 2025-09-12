@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query
 from ..services.market_service import get_predictions, aget_predictions
 router = APIRouter(prefix="/api", tags=["predictions"])
 @router.get("/predictions")

@@ -8,17 +8,17 @@ import numpy as np
 
 DEFAULT_PARAMS = {
     "initial_capital": 1000000.0, # (引擎参数)初始资金
-    "min_trade_amount": 100.0,    # (引擎参数)最小成交金额（货币单位）
+    "min_trade_amount": 500.0,    # (引擎参数)最小成交金额（货币单位）
     "min_trade_qty": 0.001,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
-    "cooldown_bars": 2,           # (引擎参数)冷却周期（单位bar）
-    "lot_size": 0.00001,          # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
-    "min_position_change": 0.02,  # (引擎参数)低于仓位变动门槛不出发交易（1%）
+    "cooldown_bars": 120,          # (引擎参数)冷却周期（单位bar）
+    "lot_size": 0.0001,           # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
+    "min_position_change": 0.05,  # (引擎参数)低于仓位变动门槛不出发交易（2%）
     "grid_num": 10,               # (策略参数)网格数量
-    "lookback": 30,               # (策略参数)动态边界回溯窗口
-    "trend_window": 20,           # (策略参数)趋势窗口
+    "lookback": 50,               # (策略参数)动态边界回溯窗口
+    "trend_window": 240,           # (策略参数)趋势窗口
     "used_capital_ratio": 0.5,    # (策略参数)初始投入资金比例，留一部分保证金
-    "stop_loss_pct": 0.1,         # (策略参数)跌破下限百分比止损
-    "take_profit_pct": 0.2,       # (策略参数)超过收益百分比止盈
+    "stop_loss_pct": 0.15,        # (策略参数)跌破下限百分比止损
+    "take_profit_pct": 0.25,      # (策略参数)超过收益百分比止盈
     "trend_filter": True          # (策略参数)是否启用趋势过滤
 }
 

@@ -21,16 +21,52 @@ DEFAULT_BACKTEST_PARAMS = {
     "initial_capital": 100000.0
 }
 
-logging.basicConfig(
-    filename="backtest_trades_debug.log",
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
-def log_trade_debug(action, price, qty, fee, slippage, position_cost, pnl=None):
+import os
+import logging
+
+# 配置专用的回测日志记录器
+# 获取当前文件所在目录
+service_dir = os.path.dirname(os.path.abspath(__file__))
+# 向上两级目录，到达backend目录
+backtest_dir = os.path.dirname(os.path.dirname(os.path.dirname(service_dir)))
+# 确保logs目录存在
+logs_dir = os.path.join(backtest_dir, "logs")
+os.makedirs(logs_dir, exist_ok=True)
+# 日志文件路径
+log_file = os.path.join(logs_dir, "backtest_trades_debug.log")
+
+# 创建专用的回测日志记录器
+backtest_logger = logging.getLogger("backtest_service")
+backtest_logger.setLevel(logging.DEBUG)
+
+# 清除可能存在的处理器
+for handler in backtest_logger.handlers[:]:
+    backtest_logger.removeHandler(handler)
+
+# 创建文件处理器
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.DEBUG)
+
+# 设置日志格式
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+file_handler.setFormatter(formatter)
+
+# 添加处理器到记录器
+backtest_logger.addHandler(file_handler)
+
+# 确保日志记录器不会传播到根记录器
+backtest_logger.propagate = False
+
+# 记录日志文件路径信息
+backtest_logger.info(f"回测服务日志已配置在: {log_file}")
+print(f"回测服务日志已配置在: {log_file}")  # 添加控制台输出以便调试
+print(f"当前工作目录: {os.getcwd()}")  # 打印当前工作目录以便调试
+def log_trade_debug(action, price, qty, fee, slippage, position_cost, pnl=None, datetime=None):
     """
     打印每笔交易的详细信息到日志文件
     """
-    logging.debug(
+    backtest_logger.debug(
+        f"DATETIME={datetime if datetime is not None else 'N/A'}, "
         f"ACTION={action}, PRICE={price:.2f}, QTY={qty}, "
         f"FEE={fee:.2f}, SLIPPAGE={slippage:.2f}, "
         f"POSITION_COST={position_cost:.2f}, "
@@ -94,6 +130,10 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     mod = _load_strategy_module(strategy)
     default_params = getattr(mod, "DEFAULT_PARAMS", {})
     merged_params = {**DEFAULT_BACKTEST_PARAMS, **default_params, **(params or {})}
+    
+    # 记录合并后的参数
+    backtest_logger.info(f"回测参数已合并 - 策略: {strategy}, 标的: {code}")
+    backtest_logger.info(f"合并后的完整参数: {json.dumps(merged_params, ensure_ascii=False)}")
 
     fee_rate = float(merged_params.get("fee_rate", 0.0005))
     slippage = float(merged_params.get("slippage", 0.0002))
@@ -221,7 +261,8 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                     fee=fee_amt,
                     slippage=slippage,
                     position_cost=avg_price,
-                    pnl=realized_pnl
+                    pnl=realized_pnl,
+                    datetime=dt
                 )
 
                 last_trade_bar = i

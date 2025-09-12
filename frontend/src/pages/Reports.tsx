@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import client from '../api/client'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
+import * as XLSX from 'xlsx'
 
 // 格式化日期时间函数
 const formatDateTime = (dateString: string) => {
@@ -475,9 +476,9 @@ const Reports = () => {
         open={detailModalVisible}
         onCancel={handleCloseDetailModal}
         footer={null}
-        width={900}
-        style={{ maxHeight: '90vh' }}
-        styles={{ body: { overflowY: 'auto' } }}
+        width={1200}
+        style={{ maxHeight: '90vh', minWidth: '1000px' }}
+        styles={{ body: { overflowY: 'auto', padding: '16px' } }}
       >
         {currentRunDetail && (
           <Tabs>
@@ -579,21 +580,60 @@ const Reports = () => {
             {/* 模拟交易记录 */}
             <Tabs.TabPane tab="交易记录" key="4">
               <div style={{ padding: '8px 0', maxHeight: '600px', overflow: 'auto' }}>
+                <div style={{ marginBottom: 16, textAlign: 'right' }}>
+                  <Button 
+                    onClick={() => {
+                      if (currentRunTrades.length === 0) {
+                        message.warning('没有可导出的交易记录');
+                        return;
+                      }
+                       
+                      // 准备导出数据
+                      const exportData = currentRunTrades.map(trade => ({
+                        '时间': formatDateTime(trade.datetime),
+                        '标的': trade.code,
+                        '方向': trade.side,
+                        '价格': trade.price.toFixed(Math.min(4, trade.price.toString().split('.')[1]?.length || 0)),
+                        '数量': trade.qty.toFixed(Math.min(4, trade.qty.toString().split('.')[1]?.length || 0)),
+                        '金额': trade.amount.toFixed(Math.min(4, trade.amount.toString().split('.')[1]?.length || 0)),
+                        '费用': trade.fee.toFixed(Math.min(4, trade.fee.toString().split('.')[1]?.length || 0)),
+                        '盈亏': trade.realized_pnl ? trade.realized_pnl.toFixed(Math.min(4, trade.realized_pnl.toString().split('.')[1]?.length || 0)) : '-',
+                        '净值': trade.nav ? trade.nav.toFixed(Math.min(4, trade.nav.toString().split('.')[1]?.length || 0)) : '-'
+                      }));
+                       
+                      // 创建工作表
+                      const ws = XLSX.utils.json_to_sheet(exportData);
+                      
+                      // 创建工作簿
+                      const wb = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(wb, ws, '交易记录');
+                      
+                      // 生成文件名，使用回测ID和当前日期
+                      const filename = `交易记录_${currentRunDetail.id || 'unknown'}_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`;
+                      
+                      // 导出文件
+                      XLSX.writeFile(wb, filename);
+                      message.success('交易记录导出成功');
+                    }}
+                  >
+                    导出Excel
+                  </Button>
+                </div>
                 <Table 
                   dataSource={currentRunTrades}
                   rowKey={(record: any) => `${record.datetime}-${record.side}`}
                   pagination={{pageSize: 10}}
-                  scroll={{ x: 'max-content' }}
+                  scroll={{ x: '1200px' }}
                   columns={[
                     {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160},
                     {title: '标的', dataIndex: 'code', key: 'code', width: 100},
                     {title: '方向', dataIndex: 'side', key: 'side', width: 80},
-                    {title: '价格', dataIndex: 'price', key: 'price', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
-                    {title: '数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
-                    {title: '金额', dataIndex: 'amount', key: 'amount', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
-                    {title: '费用', dataIndex: 'fee', key: 'fee', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))},
-                    {title: '盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-'},
-                    {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-'}
+                    {title: '价格', dataIndex: 'price', key: 'price', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
+                    {title: '数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
+                    {title: '金额', dataIndex: 'amount', key: 'amount', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
+                    {title: '费用', dataIndex: 'fee', key: 'fee', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
+                    {title: '盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 100},
+                    {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 100}
                   ]}
                 />
               </div>
