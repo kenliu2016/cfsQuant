@@ -11,14 +11,16 @@ import logging
 
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
 DEFAULT_BACKTEST_PARAMS = {
-    "fee_rate": 0.0005,
-    "slippage": 0.0002,
-    "min_trade_amount": 100.0,       # 最小成交金额（货币单位）
-    "min_trade_qty": 0.001,          # 最小成交数量（标的单位，0 表示不启用）
-    "min_position_change": 0.01,     # 仓位变动门槛（绝对比例，例如 0.01 = 1%）
-    "lot_size": 0.00001,             # 交易单位（如 100 股，或最小下单单位；0 表示不启用）
-    "cooldown_bars": 20,             # 冷却期，单位 bar
-    "initial_capital": 100000.0
+    "initial_capital": 1000000.0, # (引擎参数)初始资金
+    "fee_rate": 0.0005,           # (引擎参数)手续费率（每笔交易的固定成本）
+    "slippage": 0.0002,           # (引擎参数)滑点（交易价格的偏移量，模拟真实交易环境）
+    "min_trade_amount": 5000.0,   # (引擎参数)最小成交金额（货币单位）
+    "min_trade_qty": 0.001,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
+    "min_position_change": 0.2,   # (引擎参数)低于仓位变动门槛不出发交易（2%）
+    "lot_size": 0.0001,           # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
+    "cooldown_bars": 120,         # (引擎参数)冷却周期（单位bar）
+    "stop_loss_pct": 0.15,        # (引擎参数)跌破下限百分比止损
+    "take_profit_pct": 0.25,      # (引擎参数)超过收益百分比止盈
 }
 
 import os
@@ -58,9 +60,6 @@ backtest_logger.addHandler(file_handler)
 backtest_logger.propagate = False
 
 # 记录日志文件路径信息
-backtest_logger.info(f"回测服务日志已配置在: {log_file}")
-print(f"回测服务日志已配置在: {log_file}")  # 添加控制台输出以便调试
-print(f"当前工作目录: {os.getcwd()}")  # 打印当前工作目录以便调试
 def log_trade_debug(action, price, qty, fee, slippage, position_cost, pnl=None, datetime=None):
     """
     打印每笔交易的详细信息到日志文件
@@ -68,7 +67,7 @@ def log_trade_debug(action, price, qty, fee, slippage, position_cost, pnl=None, 
     backtest_logger.debug(
         f"DATETIME={datetime if datetime is not None else 'N/A'}, "
         f"ACTION={action}, PRICE={price:.2f}, QTY={qty}, "
-        f"FEE={fee:.2f}, SLIPPAGE={slippage:.2f}, "
+        f"FEE={fee:.2f}, SLIPPAGE={slippage:.4f}, "
         f"POSITION_COST={position_cost:.2f}, "
         f"PNL={pnl if pnl is not None else 'N/A'}"
     )
@@ -130,19 +129,22 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     mod = _load_strategy_module(strategy)
     default_params = getattr(mod, "DEFAULT_PARAMS", {})
     merged_params = {**DEFAULT_BACKTEST_PARAMS, **default_params, **(params or {})}
-    
-    # 记录合并后的参数
+
     backtest_logger.info(f"回测参数已合并 - 策略: {strategy}, 标的: {code}")
     backtest_logger.info(f"合并后的完整参数: {json.dumps(merged_params, ensure_ascii=False)}")
 
+    # === 参数解析 ===
     fee_rate = float(merged_params.get("fee_rate", 0.0005))
-    slippage = float(merged_params.get("slippage", 0.0002))
-    min_trade_amount = float(merged_params.get("min_trade_amount", 100.0))
+    #slippage = float(merged_params.get("slippage", 0.0002))
+    base_slippage = float(merged_params.get("slippage", 0.0002)) # 修改为基础滑点
+    min_trade_amount = float(merged_params.get("min_trade_amount", 5000.0))   # 提高交易门槛
     min_trade_qty = float(merged_params.get("min_trade_qty", 0.0))
-    min_position_change = float(merged_params.get("min_position_change", 0.01))
+    min_position_change = float(merged_params.get("min_position_change", 0.2))  # 提高为20%
     lot_size = float(merged_params.get("lot_size", 0.0))
     cooldown_bars = int(merged_params.get("cooldown_bars", 0))
     initial_capital = float(merged_params.get("initial_capital", 100000.0))
+    stop_loss_pct = float(merged_params.get("stop_loss_pct", 0.25))
+    take_profit_pct = float(merged_params.get("take_profit_pct", 0.15))
 
     try:
         df = mod.run(df, merged_params)
@@ -153,18 +155,13 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
         raise ValueError("Strategy must output 'position' column")
 
     data = df.reset_index()
-    # 初始化变量
+    # === 初始化变量 ===
     cash = initial_capital
     current_pos_qty = 0.0
     avg_price = 0.0
 
-    nav_list = []
-    trades = []
-    positions = []
-    equity_curve = []
-
+    nav_list, trades, positions, equity_curve = [], [], [], []
     last_trade_bar = -9999
-    last_nav_val = None
     last_pos_qty = None
 
     for i, row in data.iterrows():
@@ -172,23 +169,58 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
         price = float(row["close"])
         target_frac = float(row["position"])
 
+        # === 动态滑点计算 ===
+        # 使用ATR作为波动率指标，或简单地用 (high-low)/close
+        # 这里我们使用一个简单的ATR模拟
+        if i > 0:
+            tr = max(row["high"] - row["low"], abs(row["high"] - data.iloc[i-1]["close"]), abs(row["low"] - data.iloc[i-1]["close"]))
+        else:
+            tr = row["high"] - row["low"]
+        
+        # 归一化波动率，这里简化为与close的比例
+        volatility_factor = tr / price
+        
+        # 动态滑点 = 基础滑点 * (1 + 波动率倍数)
+        # 这里的2.0是一个可调参数，可以根据需要调整滑点与波动率的关系
+        dynamic_slippage = base_slippage * (1 + volatility_factor * 2.0)
+
         current_nav = cash + current_pos_qty * price
         target_value = current_nav * target_frac
         target_qty = 0.0 if price <= 0 else (target_value / price)
         delta_qty = target_qty - current_pos_qty
 
-        # 冷却期检查
-        if (i - last_trade_bar) <= cooldown_bars:
-            delta_qty = 0.0
+        # 初始化止盈止损相关变量
+        drawdown = 0.0
+        profit = 0.0
 
-        # 仓位变动阈值检查
+        # === 止盈止损优先 ===
+        if current_pos_qty > 0 and avg_price > 0:
+            drawdown = (avg_price - price) / avg_price
+            profit = (price - avg_price) / avg_price
+            if drawdown >= stop_loss_pct:
+                backtest_logger.info(f"[{dt}] 触发止损: 当前价={price}, 持仓均价={avg_price}, 跌幅={drawdown:.2%}")
+                delta_qty = -current_pos_qty   # 全部清仓
+            elif profit >= take_profit_pct:
+                backtest_logger.info(f"[{dt}] 触发止盈: 当前价={price}, 持仓均价={avg_price}, 涨幅={profit:.2%}")
+                delta_qty = -current_pos_qty * 0.5  # 平掉一半仓位
+
+        # === 冷却期检查（除非止盈止损触发） ===
+        if delta_qty != 0 and (i - last_trade_bar) <= cooldown_bars:
+            # 如果不是止盈止损触发，就忽略
+            if not (drawdown >= stop_loss_pct or profit >= take_profit_pct):
+                delta_qty = 0.0
+
+        # === 仓位变动阈值 ===
         prev_frac = 0.0 if current_nav == 0 else (current_pos_qty * price) / current_nav
         if abs(target_frac - prev_frac) < min_position_change:
-            delta_qty = 0.0
+            # 除非止盈止损，否则忽略小变动
+            if not (drawdown >= stop_loss_pct or profit >= take_profit_pct):
+                delta_qty = 0.0
 
-        # 执行交易
+        # === 执行交易 ===
         if abs(delta_qty) > 0:
-            exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
+            # exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
+            exec_price = price * (1 + dynamic_slippage) if delta_qty > 0 else price * (1 - dynamic_slippage)
 
             if delta_qty > 0:
                 max_possible_qty = cash / (exec_price * (1 + fee_rate)) if exec_price > 0 else 0.0
@@ -224,11 +256,11 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                 else:  # 卖出
                     realized_pnl = (exec_price - avg_price) * abs(delta_qty) - fee_amt
                     current_pos_qty += delta_qty
-                    # 卖出后 avg_price 保留卖出前持仓均价
+                    # 卖出后 avg_price 保留不变
 
                 nav_val = cash + current_pos_qty * price
 
-                # trades 记录
+                # === 记录 trades ===
                 trades.append({
                     "run_id": backtest_id,
                     "datetime": dt,
@@ -243,23 +275,22 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                     "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
                 })
 
-                    # equity_curve 记录（方案 A：仅交易时）
+                # === 记录 equity_curve ===
                 peak = nav_val if not equity_curve else max(nav_val, equity_curve[-1]["nav"])
-                drawdown = nav_val / peak - 1 if peak > 0 else 0
+                drawdown_val = nav_val / peak - 1 if peak > 0 else 0
                 equity_curve.append({
                     "run_id": backtest_id,
                     "datetime": dt,
                     "nav": float(nav_val),
-                    "drawdown": float(drawdown),
+                    "drawdown": float(drawdown_val),
                 })
 
-                # 调试日志
                 log_trade_debug(
                     action=side.upper(),
                     price=exec_price,
                     qty=delta_qty,
                     fee=fee_amt,
-                    slippage=slippage,
+                    slippage=dynamic_slippage,
                     position_cost=avg_price,
                     pnl=realized_pnl,
                     datetime=dt
@@ -267,7 +298,7 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
 
                 last_trade_bar = i
 
-        # positions 记录（方案 A）
+        # === 记录 positions ===
         if last_pos_qty is None or current_pos_qty != last_pos_qty:
             positions.append({
                 "run_id": backtest_id,
@@ -279,9 +310,9 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
             last_pos_qty = current_pos_qty
 
         nav_val = cash + current_pos_qty * price
-        # 将当前净值添加到nav_list
         nav_list.append(nav_val)
 
+    # ==== 保存数据库 & 计算指标 (保持不变) ====
     nav_series = pd.Series(nav_list, index=data["datetime"])
 
     # ==== 保存到数据库 ====
