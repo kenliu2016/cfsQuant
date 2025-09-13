@@ -197,7 +197,13 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                 if abs(final_target_frac - prev_frac) < min_position_change:
                     delta_qty = 0.0
         
-        tr = max(row["high"] - row["low"], abs(row["high"] - data.iloc[i-1]["close"]) if i > 0 else 0, abs(row["low"] - data.iloc[i-1]["close"]) if i > 0 else 0) if not (pd.isna(row["high"]) or pd.isna(row["low"])) else 0.0
+        # 防御性编程：检查high和low字段是否存在且不为NaN
+        if "high" in row and "low" in row and not (pd.isna(row["high"]) or pd.isna(row["low"])):
+            tr = max(row["high"] - row["low"], 
+                    abs(row["high"] - data.iloc[i-1]["close"]) if i > 0 and "close" in data.iloc[i-1] else 0, 
+                    abs(row["low"] - data.iloc[i-1]["close"]) if i > 0 and "close" in data.iloc[i-1] else 0)
+        else:
+            tr = 0.0  # 如果字段不存在或值为NaN，使用默认值0
         volatility_factor = tr / price if not (pd.isna(price) or price <= 0) else 0.0
         dynamic_slippage = base_slippage * (1 + volatility_factor * 2.0)
         

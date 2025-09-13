@@ -4,11 +4,16 @@ import itertools
 import threading
 import time
 import json
+import logging
 from typing import Dict, Any
 import pandas as pd
 from ..services.backtest_service import run_backtest
 from ..db import fetch_df, to_sql, execute
 from sqlalchemy import text
+
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 _tasks = {}  # task_id -> status dict
 
@@ -72,15 +77,31 @@ def start_tuning_async(strategy: str, code: str, start: str, end: str, params_gr
                 # 更新tuning_tasks表中的状态
                 if db_task_id:
                     try:
-                        execute(text(f"UPDATE tuning_tasks SET finished = {_tasks[task_id]['finished']} WHERE task_id = '{db_task_id}'"))
+                        # 使用参数化查询避免SQL注入
+                        execute(text("UPDATE tuning_tasks SET finished = :finished WHERE task_id = :task_id").bindparams(
+                            finished=_tasks[task_id]['finished'], 
+                            task_id=db_task_id
+                        ))
+                        logger.info(f"Tuning task {db_task_id} progress: {_tasks[task_id]['finished']}/{_tasks[task_id]['total']} runs completed")
                     except Exception as e:
                         print(f"Error updating tuning task status: {e}")
                         
             _tasks[task_id]['status'] = 'finished'
+            
+            # 验证finished和total字段是否相等
+            if _tasks[task_id]['finished'] == _tasks[task_id]['total']:
+                logger.info(f"Tuning task {db_task_id} completed successfully: {_tasks[task_id]['finished']}/{_tasks[task_id]['total']} runs")
+            else:
+                logger.warning(f"Tuning task {db_task_id} finished with mismatch: {_tasks[task_id]['finished']}/{_tasks[task_id]['total']} runs")
+            
             # 更新最终状态
             if db_task_id:
                 try:
-                    execute(text(f"UPDATE tuning_tasks SET status = 'finished' WHERE task_id = '{db_task_id}'"))
+                    # 使用参数化查询避免SQL注入
+                    execute(text("UPDATE tuning_tasks SET status = :status WHERE task_id = :task_id").bindparams(
+                        status='finished', 
+                        task_id=db_task_id
+                    ))
                 except Exception as e:
                     print(f"Error updating tuning task status: {e}")
         except Exception as e:
@@ -90,7 +111,11 @@ def start_tuning_async(strategy: str, code: str, start: str, end: str, params_gr
             db_task_id = _tasks[task_id].get('db_id')
             if db_task_id:
                 try:
-                    execute(text(f"UPDATE tuning_tasks SET status = 'error' WHERE task_id = '{db_task_id}'"))
+                    # 使用参数化查询避免SQL注入
+                    execute(text("UPDATE tuning_tasks SET status = :status WHERE task_id = :task_id").bindparams(
+                        status='error', 
+                        task_id=db_task_id
+                    ))
                 except Exception as e:
                     print(f"Error updating tuning task status: {e}")
 
