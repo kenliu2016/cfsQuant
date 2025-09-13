@@ -1,5 +1,5 @@
 
-import { Card, Table, Button, Space, message, Select, Modal, Tabs, Statistic } from 'antd'
+import { Card, Table, Button, Space, message, Select, Modal, Tabs, Statistic, Checkbox } from 'antd'
 import { useEffect, useState, useMemo } from 'react'
 import client from '../api/client'
 import ReactECharts from 'echarts-for-react'
@@ -14,6 +14,7 @@ const formatDateTime = (dateString: string) => {
 
 const Reports = () => {
   const [runs, setRuns] = useState<any[]>([])
+  const [total, setTotal] = useState<number>(0)
   const [selected, setSelected] = useState<string[]>([])
   const [compareData, setCompareData] = useState<any[]>([])
   const [detailModalVisible, setDetailModalVisible] = useState(false)
@@ -26,22 +27,64 @@ const Reports = () => {
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [sortMetric] = useState('sharpe')
   const [currentRunKlineData, setCurrentRunKlineData] = useState<any[]>([])
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [pageSize, setPageSize] = useState<number>(20)
+  // 调优任务过滤状态
+  const [isTuningTask, setIsTuningTask] = useState<boolean>(false)
+  // 排序状态 - 设置默认排序字段为totalReturn
+  const [sortField, setSortField] = useState<string>('totalReturn')
+  const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend')
+  // loading状态 - 用于在排序和加载数据时显示loading效果
+  const [loading, setLoading] = useState<boolean>(false)
 
   // 加载回测列表
-  const loadRuns = async () => {
+  const loadRuns = async (page: number = currentPage, size: number = pageSize, refreshFilter: boolean = false) => {
     try {
-      const res = await client.get('/runs')
+      // 设置loading为true，表示正在加载数据
+      setLoading(true)
+      
+      // 直接使用当前的排序状态，确保参数正确传递
+      // 构建参数对象，注意：后端API使用limit而不是pageSize
+      const params: any = {
+        page: page,
+        limit: size,  // 注意：后端API使用limit而不是pageSize
+        code: searchText || undefined,
+        strategy: strategySearchText || undefined
+        // 后端API不支持isTuningTask参数
+      }
+      
+      // 只有当sortField有实际值时才添加到参数中
+      if (sortField && sortField.trim() !== '') {
+        params.sortField = sortField
+        params.sortOrder = sortOrder
+      }
+      
+      console.log('发送到后端的API请求参数:', params);
+      const res = await client.get('/runs', {
+        params: params
+      })
+      
+      // 直接使用后端返回的排序后数据
       setRuns(res.data.rows || [])
+      setTotal(res.data.total || 0)
       
-      // 提取唯一的标的和策略
-      const symbols: string[] = Array.from(new Set(res.data.rows.map((run: any) => run.code)))
-      const strategies: string[] = Array.from(new Set(res.data.rows.map((run: any) => run.strategy)))
-      
-      setFilteredSymbols(symbols.map((s) => ({ value: s, label: s })))
-      setFilteredStrategies(strategies.map((s) => ({ value: s, label: s })))
+      // 仅在初始加载或请求刷新时提取唯一的标的和策略
+      if (refreshFilter || runs.length === 0) {
+        // 获取所有的回测数据来提取唯一的标的和策略
+        const allRunsRes = await client.get('/runs', { params: { pageSize: 1000 } })
+        const symbols: string[] = Array.from(new Set(allRunsRes.data.rows.map((run: any) => run.code)))
+        const strategies: string[] = Array.from(new Set(allRunsRes.data.rows.map((run: any) => run.strategy)))
+        
+        setFilteredSymbols(symbols.map((s) => ({ value: s, label: s })))
+        setFilteredStrategies(strategies.map((s) => ({ value: s, label: s })))
+      }
     } catch (error) {
       console.error('加载回测列表失败:', error)
       message.error('加载回测列表失败')
+    } finally {
+      // 无论成功或失败，最后都设置loading为false
+      setLoading(false)
     }
   }
 
@@ -365,6 +408,40 @@ const Reports = () => {
     setFilteredStrategies(filtered);
   }
 
+  // 处理分页变化
+  const handlePageChange = (page: number, size: number) => {
+    setCurrentPage(page);
+    setPageSize(size);
+    loadRuns(page, size);
+  }
+
+  // 处理搜索条件变化
+  const handleSearchChange = () => {
+    setCurrentPage(1); // 重置到第一页
+    loadRuns(1, pageSize);
+  }
+
+  // 处理调优任务过滤变化
+  const handleTuningTaskChange = (checked: boolean) => {
+    setIsTuningTask(checked);
+    setCurrentPage(1);
+    loadRuns(1, pageSize);
+  }
+
+  // 处理排序变化
+  const handleTableChange = (_pagination: any, _filters: any, sorter: any) => {
+    console.log('接收到的排序参数:', sorter);
+    // 确保排序字段和排序顺序都不为空
+    if (sorter.field && sorter.order) {
+      // 直接使用Table组件传递的排序字段，确保与columns中的key一致
+      console.log('设置排序字段:', sorter.field, '排序顺序:', sorter.order);
+      setSortField(sorter.field);
+      setSortOrder(sorter.order);
+    } else {
+      console.log('无效的排序参数:', sorter);
+    }
+  }
+
   const onCompare = async ()=>{
     if (selected.length < 2) return message.warning('请选择至少2个回测进行对比')
     const all = []
@@ -380,7 +457,7 @@ const Reports = () => {
     setCompareData(all)
   }
 
-  // 过滤回测列表
+  // 过滤回测列表（现在由后端处理过滤和排序，这里只保留前端快速过滤功能）
   const filteredRuns = useMemo(() => {
     let filtered = [...runs];
     
@@ -396,17 +473,63 @@ const Reports = () => {
       );
     }
     
+    // 注意：排序现在由后端处理，这里不再进行前端排序，以保证显示与后端返回的排序结果一致
+    
     return filtered;
   }, [runs, searchText, strategySearchText]);
 
   const columns = [
-    { title:'Strategy', dataIndex:'strategy', key:'strategy' },
+    { title:'策略', dataIndex:'strategy', key:'strategy' },
     { title:'标的', dataIndex:'code', key:'code' },
-    { title:'FromTime', dataIndex:'start_time', key:'start_time', render: formatDateTime },
-    { title:'ToTime', dataIndex:'end_time', key:'end_time', render: formatDateTime },
-    { title:'InitialCapital', dataIndex:'initial_capital', key:'initial_capital' },
-    { title:'FinalCapital', dataIndex:'final_capital', key:'final_capital' },
-    { title:'RunFinish', dataIndex:'created_at', key:'created_at', render: formatDateTime },
+    {
+      title:'总收益率', 
+      dataIndex:'totalReturn',
+      key:'totalReturn',
+      sorter: (a: any, b: any) => {
+        const initialA = a.initial_capital || 0;
+        const finalA = a.final_capital || 0;
+        const returnRateA = initialA > 0 ? ((finalA - initialA) / initialA * 100) : 0;
+        
+        const initialB = b.initial_capital || 0;
+        const finalB = b.final_capital || 0;
+        const returnRateB = initialB > 0 ? ((finalB - initialB) / initialB * 100) : 0;
+        
+        return returnRateB - returnRateA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        const initial = record.initial_capital || 0;
+        const final = record.final_capital || 0;
+        const returnRate = initial > 0 ? ((final - initial) / initial * 100) : 0;
+        return returnRate.toFixed(2) + '%';
+      }
+    },
+    {
+      title:'最大回撤', 
+      dataIndex:'maxDrawdown',
+      key:'maxDrawdown',
+      sorter: (a: any, b: any) => {
+        const drawdownA = a.max_drawdown || 0;
+        const drawdownB = b.max_drawdown || 0;
+        return drawdownB - drawdownA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        return record.max_drawdown ? (record.max_drawdown * 100).toFixed(2) + '%' : '0.00%';
+      }
+    },
+    {
+      title:'夏普率', 
+      dataIndex:'sharpe',
+      key:'sharpe',
+      sorter: (a: any, b: any) => {
+        const sharpeA = a.sharpe || 0;
+        const sharpeB = b.sharpe || 0;
+        return sharpeB - sharpeA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        return record.sharpe ? record.sharpe.toFixed(2) : '0.00';
+      }
+    },
+    { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime },
     {
       title:'详情',
       key:'detail',
@@ -421,13 +544,20 @@ const Reports = () => {
     }
   ]
 
+  // 初始加载数据
   useEffect(() => {
     loadRuns()
   }, [])
 
+  // 监听排序状态变化，触发数据重新加载
+  useEffect(() => {
+    console.log('排序状态变化 - 准备重新加载数据:', { sortField, sortOrder, currentPage, pageSize });
+    // 无条件触发数据加载，确保任何排序状态变化都能立即反映
+    loadRuns(currentPage, pageSize)
+  }, [sortField, sortOrder, currentPage, pageSize])
+
   return (
-    <>
-      <Card title='Reports'>
+    <>      <Card title='Reports'>
         <Space style={{marginBottom:12}}>
           <Select
             placeholder="请选择或输入标的"
@@ -438,7 +568,10 @@ const Reports = () => {
             onSearch={handleSymbolSearch}
             options={filteredSymbols}
             value={searchText}
-            onChange={(value) => setSearchText(value)}
+            onChange={(value) => {
+              setSearchText(value)
+              handleSearchChange()
+            }}
           />
           <Select
             placeholder="请选择或输入策略"
@@ -449,15 +582,48 @@ const Reports = () => {
             onSearch={handleStrategySearch}
             options={filteredStrategies}
             value={strategySearchText}
-            onChange={(value) => setStrategySearchText(value)}
+            onChange={(value) => {
+              setStrategySearchText(value)
+              handleSearchChange()
+            }}
           />
+          <Checkbox 
+            checked={isTuningTask} 
+            onChange={(e) => handleTuningTaskChange(e.target.checked)}
+            style={{ marginRight: 16 }}
+          >
+            仅显示调优任务
+          </Checkbox>
           <Button onClick={onCompare}>比较所选</Button>
-          <Button onClick={loadRuns}>刷新</Button>
+          <Button onClick={() => loadRuns(currentPage, pageSize, true)}>刷新</Button>
+          {/* 测试按钮 - 手动触发排序状态更新 */}
+          <Button onClick={() => {
+            console.log('手动设置排序字段: totalReturn, 排序顺序: descend');
+            setSortField('totalReturn');
+            setSortOrder('descend');
+          }}>测试排序</Button>
         </Space>
-        <Table rowKey="run_id" dataSource={filteredRuns} columns={columns} rowSelection={{ 
-          selectedRowKeys: selected, 
-          onChange: (keys)=> setSelected(keys as string[])
-        }} pagination={{pageSize:20}} />
+        <Table 
+          rowKey="run_id" 
+          dataSource={filteredRuns} 
+          columns={columns} 
+          rowSelection={{ 
+            selectedRowKeys: selected, 
+            onChange: (keys)=> setSelected(keys as string[]) 
+          }} 
+          pagination={{
+            current: currentPage,
+            pageSize: pageSize,
+            total: total,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条记录`,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            onChange: handlePageChange,
+            onShowSizeChange: handlePageChange
+          }}
+          onChange={handleTableChange}
+          loading={loading} // 添加loading属性，在加载数据时显示loading效果
+        />
 
         {compareData.length>0 && (
           <Card title="比较结果" style={{marginTop:16}}>

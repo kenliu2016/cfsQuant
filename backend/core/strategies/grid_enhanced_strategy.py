@@ -6,11 +6,12 @@ import numpy as np
 import ta
 
 DEFAULT_PARAMS = {
-    "lookback": 50,               # (策略参数)动态边界回溯窗口
-    "used_capital_ratio": 0.5,    # (策略参数)初始投入资金比例，留一部分保证金
+    "lookback": 120,              # (策略参数)动态边界回溯窗口
+    "used_capital_ratio": 0.6,    # (策略参数)初始投入资金比例
     "trend_filter": True,         # (策略参数)是否启用趋势过滤
-    "trend_window": 240,          # (策略参数)趋势过滤窗口
-    "adx_threshold": 25,          # (策略参数)新增ADX阈值
+    "trend_window": 480,          # (策略参数)趋势过滤窗口
+    "adx_threshold": 30,          # (策略参数)新增ADX阈值
+    "stop_loss_range_multiplier": 0.6, # 【新增】(策略参数)网格下方止损范围乘数
 }
 
 def run(df: pd.DataFrame, params: dict):
@@ -23,61 +24,52 @@ def run(df: pd.DataFrame, params: dict):
     df = df.copy()
     
     # === 1. 计算中枢价格和网格边界 ===
-    # 使用历史均价作为中枢，以lookback窗口的均价计算
     df['rolling_mean'] = df['close'].rolling(window=params['lookback']).mean()
-    
-    # 动态网格上下边界
-    # 使用历史最高/最低价的均值作为网格范围的参考
     df['rolling_high'] = df['high'].rolling(window=params['lookback']).max()
     df['rolling_low'] = df['low'].rolling(window=params['lookback']).min()
     df['grid_range'] = (df['rolling_high'] - df['rolling_low']) / 2
-    
     df['grid_upper'] = df['rolling_mean'] + df['grid_range']
     df['grid_lower'] = df['rolling_mean'] - df['grid_range']
 
     # === 2. 计算趋势和ADX ===
-    # 趋势方向：使用trend_window的均线斜率
     df['trend_ma'] = df['close'].rolling(window=params['trend_window']).mean()
     df['trend_slope'] = df['trend_ma'].pct_change().rolling(window=5).mean()
-    
-    # 计算ADX
     df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=params['trend_window'])
 
     # === 3. 计算目标网格位置 ===
-    # 归一化当前价格在网格中的位置
-    # 使用 np.divide 安全地处理除以零的情况
     df['grid_pos'] = np.divide(
         df['close'] - df['grid_lower'], 
         df['grid_upper'] - df['grid_lower'], 
-        out=np.full_like(df['close'], 0.5), # 如果网格宽度为0，则默认为中间位置
+        out=np.full_like(df['close'], 0.5),
         where=(df['grid_upper'] - df['grid_lower']) != 0
     )
-    df['grid_pos'] = np.clip(df['grid_pos'], 0, 1) # 限制在0-1之间
+    df['grid_pos'] = np.clip(df['grid_pos'], 0, 1)
 
     # === 4. 仓位调整（考虑趋势过滤）===
-    # 非线性仓位：低位重仓，高位轻仓
     df['target_position'] = 1 - (df['grid_pos'] ** 2)
 
-    # 趋势过滤: 只有在趋势明显时才应用
     if params.get('trend_filter', False):
-        # 当ADX高于阈值时，执行趋势过滤
         is_trending = df['adx'] > params['adx_threshold']
-        
-        # 趋势向上且价格位于网格上半区，减少多头仓位 (降低风险)
         up_trend_condition = (df['trend_slope'] > 0) & (df['close'] > df['rolling_mean']) & is_trending
         df.loc[up_trend_condition, 'target_position'] = np.clip(df['target_position'] - 0.5, 0, 1)
-
-        # 【已优化】趋势向下且价格位于网格下半区，同样减少仓位 (降低风险)
-        # 原逻辑是增加仓位，这会逆势加仓，风险极高。已修正为降低仓位。
         down_trend_condition = (df['trend_slope'] < 0) & (df['close'] < df['rolling_mean']) & is_trending
         df.loc[down_trend_condition, 'target_position'] = np.clip(df['target_position'] - 0.5, 0, 1)
 
-    # 【已优化】应用资金使用比例
-    # 将策略计算出的理想仓位，根据used_capital_ratio进行缩放
+    # === 5. 【新增优化】整合策略层面的止损逻辑 ===
+    # 当价格跌破下方网格一个指定倍数(stop_loss_range_multiplier)的grid_range幅度时，清仓止损
+    stop_loss_multiplier = params.get('stop_loss_range_multiplier', 1.0)
+    stop_loss_price = df['grid_lower'] - (df['grid_range'] * stop_loss_multiplier)
+    stop_loss_condition = df['close'] < stop_loss_price
+    
+    # 在触发止损的K线上，将目标仓位强制设为0，这将覆盖上面所有的仓位计算结果
+    df.loc[stop_loss_condition, 'target_position'] = 0
+    
+    # === 6. 应用最终的资金使用比例 ===
     used_capital_ratio = params.get("used_capital_ratio", 1.0)
     df['position'] = df['target_position'] * used_capital_ratio
     
-    # 移除中间计算列，只保留回测引擎需要的'position'列
-    df = df[['open', 'high', 'low', 'close', 'volume', 'position']]
+    # 移除中间计算列，只保留回测引擎需要的列
+    final_cols = ['open', 'high', 'low', 'close', 'volume', 'position']
+    df = df[[col for col in final_cols if col in df.columns]]
     
     return df

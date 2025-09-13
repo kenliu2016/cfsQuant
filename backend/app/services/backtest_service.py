@@ -12,18 +12,19 @@ import os
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
 DEFAULT_BACKTEST_PARAMS = {
     "initial_capital": 1000000.0, # (引擎参数)初始资金
-    "fee_rate": 0.0005,           # (引擎参数)手续费率（每笔交易的固定成本）
+    "fee_rate": 0.001,           # (引擎参数)手续费率（每笔交易的固定成本）
     "slippage": 0.0002,           # (引擎参数)滑点（交易价格的偏移量，模拟真实交易环境）
     "min_trade_amount": 5000.0,   # (引擎参数)最小成交金额（货币单位）
-    "min_trade_qty": 0.001,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
-    "min_position_change": 0.02,  # 【已优化】仓位变动门槛从20%降低到2%，更合理
+    "min_trade_qty": 0.01,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
+    "min_position_change": 0.05,  # 【已优化】仓位变动门槛从20%降低到2%，更合理
     "lot_size": 0.0001,           # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
-    "cooldown_bars": 120,         # (引擎参数)冷却周期（单位bar）
-    "stop_loss_pct": 0.15,        # (引擎参数)跌破下限百分比止损
-    "take_profit_pct": 0.25,      # (引擎参数)超过收益百分比止盈
+    "cooldown_bars": 240,         # (引擎参数)冷却周期（单位bar）
+    "stop_loss_pct": 0.25,        # (引擎参数)跌破下限百分比止损
+    "take_profit_pct": 0.15,      # (引擎参数)超过收益百分比止盈
+    "logging_enabled": False,      # (通用参数)日志总开关
 }
 
-# --- 日志记录器配置 (保持不变) ---
+# --- 日志记录器配置 ---
 service_dir = os.path.dirname(os.path.abspath(__file__))
 backtest_dir = os.path.dirname(os.path.dirname(os.path.dirname(service_dir)))
 logs_dir = os.path.join(backtest_dir, "logs")
@@ -39,6 +40,10 @@ formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 file_handler.setFormatter(formatter)
 backtest_logger.addHandler(file_handler)
 backtest_logger.propagate = False
+
+# 全局日志开关状态
+global_logging_enabled = True
+
 # --- 日志记录器配置结束 ---
 
 
@@ -46,6 +51,9 @@ def log_trade_debug(action, price, qty, fee, slippage, position_cost, trade_type
     """
     打印每笔交易的详细信息到日志文件
     """
+    if not global_logging_enabled:
+        return
+        
     def safe_format(value, format_str):
         if value is None or pd.isna(value) or np.isnan(value):
             return 'N/A'
@@ -61,6 +69,20 @@ def log_trade_debug(action, price, qty, fee, slippage, position_cost, trade_type
         f"POSITION_COST={safe_format(position_cost, '{:.2f}')}, "
         f"PNL={safe_format(pnl, '{:.2f}') if pnl is not None else 'N/A'}"
     )
+
+def log_info(message):
+    """
+    带开关的info日志记录
+    """
+    if global_logging_enabled:
+        backtest_logger.info(message)
+
+def log_debug(message):
+    """
+    带开关的debug日志记录
+    """
+    if global_logging_enabled:
+        backtest_logger.debug(message)
 
 def _load_data(code: str, start: str, end: str):
     sql = """
@@ -95,8 +117,14 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     default_params = getattr(mod, "DEFAULT_PARAMS", {})
     merged_params = {**DEFAULT_BACKTEST_PARAMS, **default_params, **(params or {})}
 
-    backtest_logger.info(f"回测参数已合并 - 策略: {strategy}, 标的: {code}")
-    backtest_logger.info(f"合并后的完整参数: {json.dumps(merged_params, ensure_ascii=False)}")
+    # 根据参数设置全局日志开关状态
+    global global_logging_enabled
+    global_logging_enabled = bool(merged_params.get("logging_enabled", True))
+    
+    # 即使日志关闭，也要记录日志开关状态，以便调试
+    if global_logging_enabled:
+        log_info(f"回测参数已合并 - 策略: {strategy}, 标的: {code}")
+        log_info(f"合并后的完整参数: {json.dumps(merged_params, ensure_ascii=False)}")
 
     fee_rate = float(merged_params.get("fee_rate", 0.0005))
     base_slippage = float(merged_params.get("slippage", 0.0002))
@@ -149,13 +177,13 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                 final_target_frac = current_frac * 0.5 
                 trade_type = "take_profit"
                 is_risk_trade = True
-                backtest_logger.info(f"[{dt}] 触发止盈: 当前价={price:.2f}, 均价={avg_price:.2f}, 涨幅={profit_pct:.2%}")
+                log_info(f"[{dt}] 触发止盈: 当前价={price:.2f}, 均价={avg_price:.2f}, 涨幅={profit_pct:.2%}")
             
             elif profit_pct <= -stop_loss_pct:
                 final_target_frac = 0.0
                 trade_type = "stop_loss"
                 is_risk_trade = True
-                backtest_logger.info(f"[{dt}] 触发止损: 当前价={price:.2f}, 均价={avg_price:.2f}, 跌幅={profit_pct:.2%}")
+                log_info(f"[{dt}] 触发止损: 当前价={price:.2f}, 均价={avg_price:.2f}, 跌幅={profit_pct:.2%}")
 
         target_value = nav_val * final_target_frac
         target_qty = target_value / price if not (pd.isna(price) or price <= 0) else 0.0
@@ -303,8 +331,8 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                 trade_attribution['win_rate'] = (trade_attribution['winning_trades'] / trade_attribution['total_trades']).fillna(0)
                 trade_attribution['avg_pnl'] = (trade_attribution['total_pnl'] / trade_attribution['total_trades']).fillna(0)
             
-                backtest_logger.info("盈亏归因分析结果:")
-                backtest_logger.info(trade_attribution.to_string(index=False))
+                log_info("盈亏归因分析结果:")
+                log_info(trade_attribution.to_string(index=False))
 
                 attribution_metrics = []
                 for _, row in trade_attribution.iterrows():

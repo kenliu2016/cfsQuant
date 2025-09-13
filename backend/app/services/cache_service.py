@@ -144,7 +144,7 @@ class CacheService:
 
     @staticmethod
     def set(key: str, value: Any, expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
-        """设置缓存数据"""
+        """设置缓存数据，处理Timestamp对象的序列化"""
         # 获取最新的客户端实例
         client = _redis_manager.get_client()
         
@@ -152,8 +152,50 @@ class CacheService:
             # 使用内存字典
             client[key] = ({'value': value, '_expire_time': expire_time}, time.time())
         else:
-            # 使用Redis
-            client.setex(key, expire_time, json.dumps(value))
+            # 使用Redis，需要序列化数据
+            try:
+                # 尝试直接序列化
+                client.setex(key, expire_time, json.dumps(value))
+            except TypeError as e:
+                # 检查是否是Timestamp对象导致的序列化错误
+                if 'Timestamp' in str(e):
+                    # 处理包含Timestamp对象的数据
+                    processed_value = CacheService._process_serialization_types(value)
+                    client.setex(key, expire_time, json.dumps(processed_value))
+                else:
+                    # 其他类型错误直接抛出
+                    raise
+                    
+    @staticmethod
+    def _process_serialization_types(data):
+        """递归处理数据中的不可JSON序列化类型，特别是pandas Timestamp"""
+        import pandas as pd
+        import numpy as np
+        
+        if isinstance(data, pd.Timestamp):
+            # 处理pandas Timestamp对象
+            return data.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(data, pd.core.series.Series):
+            # 处理pandas Series
+            return data.tolist()
+        elif isinstance(data, np.ndarray):
+            # 处理numpy数组
+            return data.tolist()
+        elif isinstance(data, np.number):
+            # 处理numpy数值类型
+            return data.item()
+        elif isinstance(data, dict):
+            # 递归处理字典
+            return {k: CacheService._process_serialization_types(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            # 递归处理列表
+            return [CacheService._process_serialization_types(item) for item in data]
+        elif isinstance(data, tuple):
+            # 递归处理元组
+            return tuple(CacheService._process_serialization_types(item) for item in data)
+        else:
+            # 其他类型保持不变
+            return data
 
     @staticmethod
     def delete(key: str) -> None:

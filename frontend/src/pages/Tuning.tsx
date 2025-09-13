@@ -19,6 +19,7 @@ interface ParamConfig {
   min?: number;
   max?: number;
   step?: number;
+  type?: 'boolean' | 'number'; // 参数类型标识
 }
 
 // 定义范围配置类型
@@ -122,7 +123,9 @@ export default function Tuning(){
           
           Object.entries(params).forEach(([key, value]) => {
             paramsConfig[key] = {
-              default: value
+              default: value,
+              // 记录参数类型，用于渲染不同的控件
+              type: typeof value === 'boolean' ? 'boolean' : 'number'
             };
           });
           
@@ -225,19 +228,52 @@ export default function Tuning(){
       end: v.range[1].format('YYYY-MM-DD HH:mm:ss') 
     };
     
-    const r = await client.post('/tuning', payload)
-    const task_id = r.data.task_id
-    setTask(task_id)
-    message.success('任务已提交: ' + task_id)
-    // start polling
-    const t = setInterval(async ()=>{
-      const s = await client.get('/tuning/' + task_id)
-      setStatus(s.data)
-      if (s.data && s.data.status && s.data.status !== 'pending') {
-        clearInterval(t); setTimer(null)
+    try {
+      const r = await client.post('/tuning', payload)
+      const task_id = r.data.task_id
+      setTask(task_id)
+      message.success('任务已提交: ' + task_id)
+      
+      // 清除之前可能存在的定时器
+      if (timer) {
+        clearInterval(timer);
+        setTimer(null);
       }
-    }, 2000)
-    setTimer(t)
+      
+      // start polling
+      const t = setInterval(async ()=>{
+        try {
+          const s = await client.get('/tuning/' + task_id)
+          
+          // 检查是否有错误状态
+          if (s.data && s.data.error) {
+            message.error(`任务查询失败: ${s.data.error}`);
+            clearInterval(t);
+            setTimer(null);
+            setStatus(null);
+            return;
+          }
+          
+          setStatus(s.data)
+          
+          // 当任务状态不是pending或者任务已完成时停止轮询
+          if (s.data && (s.data.status === 'finished' || s.data.status === 'error')) {
+            clearInterval(t); 
+            setTimer(null)
+          }
+        } catch (error) {
+          console.error('查询任务状态失败:', error);
+          message.error('查询任务状态失败，请刷新页面重试');
+          clearInterval(t);
+          setTimer(null);
+          setStatus(null);
+        }
+      }, 2000)
+      setTimer(t)
+    } catch (error) {
+      console.error('提交寻优任务失败:', error);
+      message.error('提交任务失败，请重试');
+    }
   }
 
   // 渲染参数设置表单
@@ -248,48 +284,72 @@ export default function Tuning(){
     
     return (
       <div style={{maxHeight: 400, overflowY: 'auto'}}>
-        {Object.entries(strategyParams).map(([key, param]) => (
-          <div key={key} style={{marginBottom: 8, display: 'flex', alignItems: 'center'}}>
-            <div style={{fontWeight: 'bold', width: 120, paddingRight: 8}}>{key}</div>
-            
-            <Form.Item
-              name={['paramsConfig', key, 'currentValue']}
-              initialValue={param.default}
-              style={{margin: '0 8px', width: 80}}
-            >
-              <InputNumber style={{width: '100%'}} placeholder="值" />
-            </Form.Item>
-            
-            <Form.Item
-              name={['paramsConfig', key, 'min']}
-              style={{margin: '0 8px', width: 80}}
-            >
-              <InputNumber min={0} style={{width: '100%'}} placeholder="最小" />
-            </Form.Item>
-            
-            <Form.Item
-              name={['paramsConfig', key, 'max']}
-              style={{margin: '0 8px', width: 80}}
-            >
-              <InputNumber min={0} style={{width: '100%'}} placeholder="最大" />
-            </Form.Item>
-            
-            <Form.Item
-              name={['paramsConfig', key, 'step']}
-              style={{margin: '0 8px', width: 80}}
-            >
-              <InputNumber min={0.0001} style={{width: '100%'}} placeholder="步长" />
-            </Form.Item>
-            
-            <Form.Item
-              name={['paramsConfig', key, 'type']}
-              initialValue="range"
-              hidden
-            >
-              <Input />
-            </Form.Item>
-          </div>
-        ))}
+        {Object.entries(strategyParams).map(([key, param]) => {
+          const isBoolean = param.type === 'boolean';
+          return (
+            <div key={key} style={{marginBottom: 8, display: 'flex', alignItems: 'center'}}>
+              <div style={{fontWeight: 'bold', width: 120, paddingRight: 8}}>{key}</div>
+              
+              <Form.Item
+                name={['paramsConfig', key, 'currentValue']}
+                initialValue={param.default}
+                style={{margin: '0 8px', width: 80}}
+              >
+                {isBoolean ? (
+                  <Select style={{width: '100%'}}>
+                    <Select.Option value={true}>True</Select.Option>
+                    <Select.Option value={false}>False</Select.Option>
+                  </Select>
+                ) : (
+                  <InputNumber style={{width: '100%'}} placeholder="值" />
+                )}
+              </Form.Item>
+              
+              {!isBoolean && (
+                <>
+                  <Form.Item
+                    name={['paramsConfig', key, 'min']}
+                    style={{margin: '0 8px', width: 80}}
+                  >
+                    <InputNumber min={0} style={{width: '100%'}} placeholder="最小" />
+                  </Form.Item>
+                  
+                  <Form.Item
+                    name={['paramsConfig', key, 'max']}
+                    style={{margin: '0 8px', width: 80}}
+                  >
+                    <InputNumber min={0} style={{width: '100%'}} placeholder="最大" />
+                  </Form.Item>
+                  
+                  <Form.Item
+                    name={['paramsConfig', key, 'step']}
+                    style={{margin: '0 8px', width: 80}}
+                  >
+                    <InputNumber min={0.0001} style={{width: '100%'}} placeholder="步长" />
+                  </Form.Item>
+                </>
+              )}
+              
+              <Form.Item
+                name={['paramsConfig', key, 'type']}
+                initialValue={isBoolean ? 'list' : 'range'}
+                hidden
+              >
+                <Input />
+              </Form.Item>
+              
+              {isBoolean && (
+                <Form.Item
+                  name={['paramsConfig', key, 'options']}
+                  initialValue={[true, false]}
+                  hidden
+                >
+                  <Input />
+                </Form.Item>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   };

@@ -11,6 +11,7 @@ const { Content } = Layout
 const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: any) => void, onCreate: () => void, onRefresh?: number }) => {
   const [tree, setTree] = useState<any[]>([])
   const [strategies, setStrategies] = useState<any[]>([])
+  const [loading, setLoading] = useState<boolean>(true)
   
   // 使用localStorage作为持久化缓存，设置缓存过期时间为5分钟
   const CACHE_KEY = 'strategies_cache'
@@ -18,6 +19,7 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
 
   const load = async () => {
     try {
+      setLoading(true)
       // 1. 首先尝试从localStorage读取缓存
       const cachedData = localStorage.getItem(CACHE_KEY)
       if (cachedData) {
@@ -76,6 +78,8 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
           )
         })))
       }
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -99,13 +103,24 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
       styles={{body: {padding:8, height: '100%'}}} 
       extra={<Button size="small" onClick={onCreate}>新建</Button>}
     >
-      <Tree treeData={tree} onSelect={handleSelect} />
+      {loading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', color: '#1890ff' }}>
+            <div className="ant-spin ant-spin-spinning">
+              <span className="ant-spin-dot ant-spin-dot-spin"><i></i><i></i><i></i><i></i></span>
+            </div>
+            <span style={{ marginLeft: '8px' }}>加载中...</span>
+          </div>
+        </div>
+      ) : (
+        <Tree treeData={tree} onSelect={handleSelect} />
+      )}
     </Card>
   )
 }
 
 // 代码编辑器组件
-const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete }: any) => {
+const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete, codeLoading }: any) => {
   if (!current) {
     return <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       请选择左侧的策略
@@ -118,19 +133,29 @@ const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete }: any) => {
       extra={
         <div style={{ display: 'flex', gap: '8px' }}>
           <Button type="primary" onClick={onSave}>保存</Button>
-          <Button onClick={onSave}>上传/覆盖</Button>
           <Button danger onClick={onDelete}>删除</Button>
         </div>
       }
       style={{ height: '100%' }}
       bodyStyle={{ height: 'calc(100% - 50px)', padding: 0, overflow: 'hidden' }}
     >
-      <Editor 
-        height="100%" 
-        defaultLanguage="python" 
-        value={code} 
-        onChange={(v)=>onCodeChange(v||'')}
-      />
+      {codeLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', color: '#1890ff' }}>
+            <div className="ant-spin ant-spin-spinning">
+              <span className="ant-spin-dot ant-spin-dot-spin"><i></i><i></i><i></i><i></i></span>
+            </div>
+            <span style={{ marginLeft: '8px' }}>加载代码中...</span>
+          </div>
+        </div>
+      ) : (
+        <Editor 
+          height="100%" 
+          defaultLanguage="python" 
+          value={code} 
+          onChange={(v)=>onCodeChange(v||'')}
+        />
+      )}
     </Card>
   )
 }
@@ -175,6 +200,7 @@ export default function StrategyPage(){
   const [newName, setNewName] = useState('')
   const [newDescription, setNewDescription] = useState('')
   const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [codeLoading, setCodeLoading] = useState<boolean>(false)
   
   const refreshStrategyTree = () => {
     // 清除localStorage中的策略缓存
@@ -185,8 +211,17 @@ export default function StrategyPage(){
   const onSelect = async (strategy:any) => {
     if (!strategy) return
     setCurrent(strategy)
-    const codeRes = await client.get(`/strategies/${strategy.name}/code`)
-    setCode(codeRes.data.code || '')
+    setCodeLoading(true)
+    try {
+      const codeRes = await client.get(`/strategies/${strategy.name}/code`)
+      setCode(codeRes.data.code || '')
+    } catch (error) {
+      console.error('加载策略代码失败:', error)
+      message.error('加载策略代码失败')
+      setCode('')
+    } finally {
+      setCodeLoading(false)
+    }
   }
 
   const onSaveCode = async () => {
@@ -224,12 +259,15 @@ export default function StrategyPage(){
         setCurrent(newStrategy);
         
         // 获取新策略的代码（默认为空）
+        setCodeLoading(true)
         try {
           const codeRes = await client.get(`/strategies/${newName}/code`)
           setCode(codeRes.data?.code || '')
         } catch (error) {
           console.error('获取策略代码失败:', error)
           setCode('')
+        } finally {
+          setCodeLoading(false)
         }
         
         // 触发策略树刷新，但不需要等待刷新完成再选择策略
@@ -289,6 +327,7 @@ export default function StrategyPage(){
               onCodeChange={setCode} 
               onSave={onSaveCode} 
               onDelete={onDelete} 
+              codeLoading={codeLoading} 
             />
           </Col>
         </Row>

@@ -1,13 +1,128 @@
 
 import pandas as pd
+import numpy as np
 from ..db import fetch_df
+import datetime
 
-def recent_runs(limit: int = 20) -> pd.DataFrame:
-    sql = """
-    SELECT run_id, strategy, code, start_time, end_time, initial_capital, final_capital, created_at
-    FROM runs ORDER BY start_time DESC LIMIT :limit
+def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None) -> dict:
     """
-    return fetch_df(sql, limit=limit)
+    获取回测运行记录，支持分页、过滤和排序，包含最大回撤和夏普率指标
+    
+    Args:
+        limit: 每页记录数
+        page: 当前页码
+        code: 标的代码过滤
+        strategy: 策略名称过滤
+        sortField: 排序字段
+        sortOrder: 排序方向 ('ascend' 或 'descend')
+        
+    Returns:
+        包含记录列表和总数的字典
+    """
+    # 计算偏移量
+    offset = (page - 1) * limit
+    
+    # 构建基本查询，使用左连接获取metrics表中的max_drawdown和sharpe指标
+    base_sql = """
+    SELECT 
+        r.run_id, 
+        r.strategy, 
+        r.code, 
+        r.start_time, 
+        r.end_time, 
+        r.initial_capital, 
+        r.final_capital, 
+        r.created_at,
+        
+        -- 获取最大回撤指标
+        (SELECT metric_value 
+         FROM metrics m1 
+         WHERE m1.run_id = r.run_id AND m1.metric_name = 'max_drawdown' 
+         LIMIT 1) as max_drawdown,
+        
+        -- 获取夏普率指标
+        (SELECT metric_value 
+         FROM metrics m2 
+         WHERE m2.run_id = r.run_id AND m2.metric_name = 'sharpe' 
+         LIMIT 1) as sharpe
+    
+    FROM runs r
+    """
+    
+    # 构建过滤条件
+    filters = []
+    params = {'limit': limit, 'offset': offset}
+    
+    if code:
+        filters.append("r.code = :code")
+        params['code'] = code
+    
+    if strategy:
+        filters.append("r.strategy = :strategy")
+        params['strategy'] = strategy
+    
+    # 构建排序子句
+    order_by = "ORDER BY r.created_at DESC"  # 默认排序
+    
+    # 定义前端字段名到后端字段名的映射
+    field_mapping = {
+        'totalReturn': None,  # 总收益率是计算字段，需要特殊处理
+        'maxDrawdown': 'max_drawdown',
+        'sharpe': 'sharpe',
+        'strategy': 'r.strategy',
+        'code': 'r.code',
+        'created_at': 'r.created_at'
+    }
+    
+    # 处理排序参数
+    if sortField and sortField in field_mapping:
+        backend_field = field_mapping[sortField]
+        # 对于总收益率这种计算字段，我们需要特殊处理
+        if sortField == 'totalReturn':
+            order_by = f"ORDER BY ((r.final_capital - r.initial_capital) / r.initial_capital) {sortOrder == 'ascend' and 'ASC' or 'DESC'}"
+        elif backend_field:
+            order_by = f"ORDER BY {backend_field} {sortOrder == 'ascend' and 'ASC' or 'DESC'}"
+    
+    # 构建完整查询
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+    sql = f"{base_sql} {where_clause} {order_by} LIMIT :limit OFFSET :offset"
+    
+    # 查询记录
+    df = fetch_df(sql, **params)
+    
+    # 查询总数
+    count_sql = f"SELECT COUNT(*) as total FROM runs r {where_clause}"
+    count_df = fetch_df(count_sql, **{k: v for k, v in params.items() if k not in ['limit', 'offset']})
+    total = count_df.iloc[0]['total'] if not count_df.empty else 0
+    
+    # 处理数据确保可JSON序列化
+    if not df.empty:
+        # 转换datetime类型为字符串
+        for col in ['start_time', 'end_time', 'created_at']:
+            if col in df.columns:
+                # 转换datetime64类型为字符串
+                if pd.api.types.is_datetime64_any_dtype(df[col]):
+                    df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                # 处理None值
+                df[col] = df[col].fillna('')
+        
+        # 确保max_drawdown和sharpe字段存在且为数值类型
+        for col in ['max_drawdown', 'sharpe']:
+            if col in df.columns:
+                # 转换为float类型，处理None值
+                df[col] = df[col].fillna(0).astype(float)
+        
+        # 转换其他数值类型确保可序列化
+        for col in df.select_dtypes(include=['number']).columns:
+            # 将numpy数值类型转换为Python原生类型
+            df[col] = df[col].apply(lambda x: x.item() if isinstance(x, (np.integer, np.floating)) else x)
+            # 处理NaN值
+            df[col] = df[col].fillna(0)
+    
+    return {
+        'rows': df,
+        'total': total
+    }
 
 import logging
 import datetime

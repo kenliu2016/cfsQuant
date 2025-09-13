@@ -93,20 +93,64 @@ def save_strategy_code(strategy_name: str, code: str):
     
     # 从代码中提取DEFAULT_PARAMS并更新到数据库
     try:
-        # 尝试提取DEFAULT_PARAMS
+        # 使用Python re模块支持的语法匹配DEFAULT_PARAMS = { ... }
         import re
-        params_match = re.search(r"DEFAULT_PARAMS\s*=\s*(\{[^}]*\})", code)
+        # 使用非贪婪匹配来处理多行参数定义
+        params_match = re.search(r"DEFAULT_PARAMS\s*=\s*(\{.*?\})", code, re.DOTALL)
+        
         if params_match:
             params_str = params_match.group(1)
+            logger.debug(f"提取到参数字符串: {params_str}")
+            
             # 尝试解析参数
             try:
-                params_dict = json.loads(params_str.replace("'", '"'))
+                # 处理参数中的注释（JSON解析器不支持注释）
+                # 先移除行尾注释
+                lines = params_str.split('\n')
+                cleaned_lines = []
+                for line in lines:
+                    # 找到行中第一个#的位置，如果存在则截断
+                    comment_pos = line.find('#')
+                    if comment_pos != -1:
+                        # 保留#之前的部分并去除首尾空白
+                        cleaned_line = line[:comment_pos].strip()
+                        if cleaned_line:
+                            cleaned_lines.append(cleaned_line)
+                    else:
+                        cleaned_lines.append(line.strip())
+                
+                # 重新组合成字符串
+                cleaned_params_str = '\n'.join(cleaned_lines)
+                logger.debug(f"去除注释后的参数: {cleaned_params_str}")
+                
+                # 尝试解析清理后的JSON
+                # 1. 处理Python风格的布尔值 (True/False -> true/false)
+                json_friendly_str = cleaned_params_str.replace('True', 'true').replace('False', 'false')
+                
+                # 2. 处理末尾多余的逗号
+                # 匹配模式：任何行末的逗号，后面跟右花括号或换行
+                import re
+                json_friendly_str = re.sub(r',\s*(}|$)', '\g<1>', json_friendly_str)
+                
+                logger.debug(f"JSON友好格式参数: {json_friendly_str}")
+                
+                try:
+                    params_dict = json.loads(json_friendly_str)
+                except json.JSONDecodeError:
+                    # 如果失败，尝试将单引号替换为双引号后再解析
+                    try:
+                        params_dict = json.loads(json_friendly_str.replace("'", '"'))
+                    except json.JSONDecodeError as e:
+                        logger.error(f"参数解析失败: {e}, JSON友好格式参数: {json_friendly_str}")
+                        raise
+                
                 params_json = json.dumps(params_dict)
+                logger.debug(f"解析后的参数: {params_json}")
                 
                 # 更新数据库
                 engine = get_engine()
                 with engine.connect() as conn:
-                    conn.execute(
+                    result = conn.execute(
                         text("UPDATE strategies SET params = :params WHERE name = :name"),
                         {
                             'name': strategy_name,
@@ -114,10 +158,28 @@ def save_strategy_code(strategy_name: str, code: str):
                         }
                     )
                     conn.commit()
+                    
+                    # 检查是否有记录被更新
+                    if result.rowcount > 0:
+                        logger.info(f"成功更新策略 [{strategy_name}] 的参数到数据库")
+                    else:
+                        logger.warning(f"策略 [{strategy_name}] 在数据库中不存在，无法更新参数")
+                        # 尝试插入新记录
+                        try:
+                            conn.execute(
+                                text("INSERT INTO strategies (name, description, params) VALUES (:name, '', :params)"),
+                                {'name': strategy_name, 'params': params_json}
+                            )
+                            conn.commit()
+                            logger.info(f"成功在数据库中创建策略 [{strategy_name}] 的记录")
+                        except Exception as e:
+                            logger.error(f"创建策略记录失败: {e}")
             except Exception as e:
-                pass
+                logger.error(f"提取或更新参数时出错: {e}")
+        else:
+            logger.warning(f"在策略代码中未找到DEFAULT_PARAMS定义")
     except Exception as e:
-        pass
+        logger.error(f"处理策略参数时出错: {e}")
     
     return {"status": "ok", "path": str(file_path)}
 
