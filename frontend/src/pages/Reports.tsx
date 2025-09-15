@@ -1,10 +1,11 @@
 
-import { Card, Table, Button, Space, message, Select, Modal, Tabs, Statistic, Checkbox } from 'antd'
+import { Card, Table, Button, Space, message, Select, Modal, Tabs, Statistic } from 'antd'
 import { useEffect, useState, useMemo } from 'react'
 import client from '../api/client'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
+import { formatPriceWithUnit } from '../utils/priceFormatter'
 
 // 格式化日期时间函数
 const formatDateTime = (dateString: string) => {
@@ -16,7 +17,6 @@ const Reports = () => {
   const [runs, setRuns] = useState<any[]>([])
   const [total, setTotal] = useState<number>(0)
   const [selected, setSelected] = useState<string[]>([])
-  const [compareData, setCompareData] = useState<any[]>([])
   const [detailModalVisible, setDetailModalVisible] = useState(false)
   const [currentRunDetail, setCurrentRunDetail] = useState<any>({})
   const [currentRunEquity, setCurrentRunEquity] = useState<any[]>([])
@@ -25,13 +25,11 @@ const Reports = () => {
   const [strategySearchText, setStrategySearchText] = useState<string>('')
   const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
-  const [sortMetric] = useState('sharpe')
   const [currentRunKlineData, setCurrentRunKlineData] = useState<any[]>([])
   // 分页状态
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(20)
   // 调优任务过滤状态
-  const [isTuningTask, setIsTuningTask] = useState<boolean>(false)
   // 排序状态 - 设置默认排序字段为totalReturn
   const [sortField, setSortField] = useState<string>('totalReturn')
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend')
@@ -356,30 +354,14 @@ const Reports = () => {
           type: 'value',
           scale: true,
           axisLabel: {
-            formatter: (value: number) => {
-              if (value >= 1000000) {
-                return Math.round(value / 1000000) + 'M';
-              } else if (value >= 1000) {
-                return Math.round(value / 1000) + 'K';
-              } else {
-                return Math.round(value * 100) / 100; // 保留两位小数
-              }
-            },
+            formatter: formatPriceWithUnit,
             interval: 'auto'
           }
         },
         {
           gridIndex:1,
           axisLabel: {
-            formatter: (value: number) => {
-              if (value >= 1000000) {
-                return Math.round(value / 1000000) + 'M';
-              } else if (value >= 1000) {
-                return Math.round(value / 1000) + 'K';
-              } else {
-                return Math.round(value).toString();
-              }
-            },
+            formatter: formatPriceWithUnit,
             interval: 'auto'
           }
         }
@@ -468,11 +450,7 @@ const Reports = () => {
   }
 
   // 处理调优任务过滤变化
-  const handleTuningTaskChange = (checked: boolean) => {
-    setIsTuningTask(checked);
-    setCurrentPage(1);
-    loadRuns(1, pageSize);
-  }
+
 
   // 处理排序变化
   const handleTableChange = (_pagination: any, _filters: any, sorter: any) => {
@@ -494,20 +472,7 @@ const Reports = () => {
     }
   }
 
-  const onCompare = async ()=>{
-    if (selected.length < 2) return message.warning('请选择至少2个回测进行对比')
-    const all = []
-    for (const id of selected){
-      const r = await client.get(`/backtest/${id}/results`)
-      const metrics = r.data.metrics || []
-      const mobj:any = {} 
-      metrics.forEach((m:any)=> mobj[m.metric_name]=m.metric_value)
-      all.push({ id, metrics: mobj })
-    }
-    // sort by selected metric descending
-    all.sort((a,b)=> (b.metrics[sortMetric]||0) - (a.metrics[sortMetric]||0))
-    setCompareData(all)
-  }
+
 
   // 过滤回测列表（现在由后端处理过滤和排序，这里只保留前端快速过滤功能）
   const filteredRuns = useMemo(() => {
@@ -795,7 +760,7 @@ const Reports = () => {
 
             {/* 交易图表 */}
             <Tabs.TabPane tab="K线交易图" key="5">
-              <div style={{padding: 16, height: 500}}>
+              <div style={{padding: 0, height: 550}}>
                 {prepareKlineWithTradesData ? (
                   <ReactECharts option={prepareKlineWithTradesData} style={{height: '100%'}} />
                 ) : (

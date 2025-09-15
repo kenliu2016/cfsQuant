@@ -100,7 +100,8 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
       size="small" 
       title="策略管理" 
       variant="outlined" 
-      styles={{body: {padding:8, height: '100%'}}} 
+      style={{ height: '100%' }}
+      styles={{body: {padding:8, height: '100%', overflow: 'hidden'}}}
       extra={<Button size="small" onClick={onCreate}>新建</Button>}
     >
       {loading ? (
@@ -113,7 +114,9 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
           </div>
         </div>
       ) : (
-        <Tree treeData={tree} onSelect={handleSelect} />
+        <div style={{ height: '100%', maxHeight: '400px', overflowY: 'auto', padding: '4px 0' }}>
+          <Tree treeData={tree} onSelect={handleSelect} />
+        </div>
       )}
     </Card>
   )
@@ -304,14 +307,14 @@ export default function StrategyPage(){
   }
 
   return (
-    <Layout style={{ background:'#fff', height: '100vh' }}>
-      <Content style={{ padding: 16, height: '100%' }}>
+    <Layout style={{ background:'#fff', height: '100vh', overflow: 'hidden' }}>
+      <Content style={{ padding: 16, height: '100%', overflow: 'hidden' }}>
         {/* 左右结构 */}
-        <Row gutter={[16, 0]} style={{ height: '100%' }}>
+        <Row gutter={[16, 0]} style={{ height: '100%', overflow: 'hidden' }}>
           {/* 左侧列 */}
           <Col span={6} style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* 左上：策略树 */}
-            <div style={{ height: '64%' }}>
+            <div style={{ height: '64%', overflow: 'hidden' }}>
               <StrategyTree onSelect={onSelect} onCreate={() => setShowNew(true)} onRefresh={refreshTrigger} />
             </div>
             {/* 左下：执行参数和按钮 */}

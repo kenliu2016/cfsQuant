@@ -370,7 +370,7 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
         raise
     except TypeError as e:
         if "An asyncio.Future, a coroutine or an awaitable is required" in str(e):
-            logger.error(f"异步操作类型错误: {e}")
+            logger.warning(f"异步操作类型错误，自动降级为同步查询: {e}")
             # 尝试降级为同步查询
             try:
                 return fetch_df(query, config_path, **kwargs)

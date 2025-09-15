@@ -4,6 +4,7 @@ import { Card, Form, Select, DatePicker, Tabs, Spin } from 'antd'
 import client from '../api/client'
 import dayjs from 'dayjs'
 import ReactECharts from 'echarts-for-react'
+import { formatPriceWithUnit } from '../utils/priceFormatter'
 
 const { RangePicker } = DatePicker
 
@@ -257,15 +258,9 @@ export default function Market() {
     }
   }, [intraday])
   
-  // 使用useCallback缓存价格格式化函数
+  // 使用useCallback缓存价格格式化函数，统一调用工具函数
   const formatPrice = useCallback((value: number) => {
-    if (value >= 1000000) {
-      return Math.round(value / 1000000) + 'M';
-    } else if (value >= 1000) {
-      return Math.round(value / 1000) + 'K';
-    } else {
-      return Math.round(value).toString();
-    }
+    return formatPriceWithUnit(value);
   }, []);
   
   // 使用useMemo缓存图表配置对象，避免每次渲染都重新创建
@@ -614,19 +609,19 @@ export default function Market() {
         </Form.Item>
       </Form>
 
-      <div style={{ marginTop: 16 }}>
+      <div style={{ marginTop: 0, padding: 0 }}>
         <Tabs 
           activeKey={activeTab}
           onChange={handleTabChange}
           items={[
             { key:'daily', label:'日线图', children: (
-              <Spin spinning={isDailyLoading} tip="加载中..." style={{minHeight: 500}}>
-                <ReactECharts option={candleOption} style={{height: 500}}/>
+              <Spin spinning={isDailyLoading} tip="加载中..." style={{minHeight: 550}}>
+                <ReactECharts option={candleOption} style={{height: 550}}/>
               </Spin>
             ) },
             { key:'rt', label:'分时图', children: (
-              <Spin spinning={isIntradayLoading} tip="加载中..." style={{minHeight: 500}}>
-                <ReactECharts option={lineOption} style={{height: 500}}/>
+              <Spin spinning={isIntradayLoading} tip="加载中..." style={{minHeight: 550}}>
+                <ReactECharts option={lineOption} style={{height: 550}}/>
               </Spin>
             ) }
           ]} 

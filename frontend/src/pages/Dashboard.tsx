@@ -4,8 +4,7 @@ import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, StarOutlined, Share
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import client from '../api/client';
-
-// 计算移动平均线
+import { formatPriceWithUnit } from '../utils/priceFormatter';
 
 // 解析CSV数据
 const parseCSV = (csvString: string) => {
@@ -81,10 +80,17 @@ const fetchDailyData = async (code: string, interval: string) => {
 
 // 格式化价格显示
 const formatPrice = (value: number) => {
-  return value.toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
+  return formatPriceWithUnit(value);
+};
+
+// 格式化成交量显示，根据值的大小显示K或M单位
+const formatVolume = (value: number) => {
+  if (value >= 1000000) {
+    return (value / 1000000).toFixed(2) + 'M';
+  } else if (value >= 1000) {
+    return (value / 1000).toFixed(2) + 'K';
+  }
+  return value.toLocaleString();
 };
 
 const Dashboard: React.FC = () => {
@@ -319,10 +325,6 @@ const Dashboard: React.FC = () => {
       return 100;
     };
     
-    // 检测日期变化，用于添加纵向网格线
-    
-    // 获取日期变化位置，用于添加纵向网格线
-    
     return {
       backgroundColor: 'transparent',
       tooltip: {
@@ -353,19 +355,19 @@ const Dashboard: React.FC = () => {
         top: 10
       },
       grid: [
-        {
-          left: '10%',
-          right: '10%',
-          top: 40,
-          height: '60%'
-        },
-        {
-          left: '10%',
-          right: '10%',
-          top: '70%',
-          height: '20%'
-        }
-      ],
+            {
+              left: '6%',
+              right: '4%',
+              top: 20,
+              height: '70%'
+            },
+            {
+              left: '6%',
+              right: '4%',
+              top: '72%',
+              height: '25%'
+            }
+          ],
       xAxis: [
         {
           type: 'category',
@@ -409,7 +411,7 @@ const Dashboard: React.FC = () => {
           axisLine: { lineStyle: { color: '#4A4A6A' } },
           axisLabel: {
             color: '#8E8EA0',
-            formatter: (value: number) => value.toLocaleString()
+            formatter: (value: number) => formatVolume(value)
           },
           splitLine: {
             lineStyle: {
@@ -421,31 +423,34 @@ const Dashboard: React.FC = () => {
         }
       ],
       dataZoom: [
-        {
-          type: 'inside',
-          xAxisIndex: [0, 1],
-          start: 0,
-          end: 100,
-          filterMode: 'filter'
-        },
-        {
-          show: true,
-          xAxisIndex: [0, 1],
-          type: 'slider',
-          top: '90%',
-          start: 0,
-          end: 100,
-          handleStyle: {
-            color: '#8E8EA0'
+          {
+            type: 'inside',
+            xAxisIndex: [0, 1],
+            start: 0,
+            end: 100,
+            filterMode: 'filter'
           },
-          textStyle: {
-            color: '#8E8EA0'
-          },
-          backgroundColor: '#2E2E4A',
-          fillerColor: '#4A4A6A',
-          borderColor: '#1E1E2E'
-        }
-      ],
+          {
+              show: true,
+              xAxisIndex: [0, 1],
+              type: 'slider',
+              top: '95%',
+              height: 15,
+              start: 0,
+              end: 100,
+              handleStyle: {
+                color: '#8E8EA0',
+                height: 12
+              },
+              textStyle: {
+                color: '#8E8EA0',
+                fontSize: 8
+              },
+              backgroundColor: '#2E2E4A',
+              fillerColor: '#4A4A6A',
+              borderColor: '#1E1E2E'
+            }
+        ],
       series: [
         {
           name: chartType === 'candlestick' ? 'K线' : '价格',
@@ -481,13 +486,13 @@ const Dashboard: React.FC = () => {
   }, [candleData, chartType, timeframe, formatPrice]);
 
   return (
-    <div className="CFS-Quant-dashboard" style={{ minHeight: '100vh', backgroundColor: '#0F0F1A', margin: 0, padding: 0, paddingLeft: 240 }}>
-      {/* 顶部工具栏 */}
-      <div style={{ background: '#1E1E2E', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: 'none' }}>
+    <div className="CFS-Quant-dashboard" style={{ minHeight: '100vh', backgroundColor: '#0F0F1A', margin: 0, padding: 0 }}>
+      {/* 顶部工具栏 - 紧凑布局 */}
+      <div style={{ background: '#1E1E2E', padding: '4px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: 'none', height: '45px' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <div style={{ color: '#fff', fontWeight: 'bold', fontSize: '16px' }}>CFS-Quant</div>
           
-          <div style={{ display: 'flex', marginLeft: '32px' }}>
+          <div style={{ display: 'flex', marginLeft: '16px' }}>
             <Select
               value={symbol}
               loading={isLoadingSymbols}
@@ -500,7 +505,7 @@ const Dashboard: React.FC = () => {
               placeholder="加载中..."
             />
             
-            <div style={{ marginLeft: '16px', color: '#fff', display: 'flex', alignItems: 'center' }}>
+            <div style={{ marginLeft: '8px', color: '#fff', display: 'flex', alignItems: 'center' }}>
               {candleData.length > 0 ? (
                 <>
                   <span style={{ marginRight: '8px' }}>{candleData[candleData.length - 1].close.toFixed(2)}</span>
@@ -568,9 +573,9 @@ const Dashboard: React.FC = () => {
       </div>
       
       {/* 主内容区域 */}
-      <div style={{ display: 'flex', height: 'calc(100vh - 60px)', backgroundColor: '#0F0F1A' }}>
-        {/* 左侧市场概览 - 固定宽度250px */}
-        <div style={{ width: 250, backgroundColor: '#0F0F1A', padding: 8, overflow: 'auto', height: '100%', flexShrink: 0, position: 'relative', border: 'none' }}>
+      <div style={{ display: 'flex', height: 'calc(100vh - 55px)', backgroundColor: '#0F0F1A' }}>
+        {/* 左侧市场概览 - 减小宽度 */}
+        <div style={{ width: 180, backgroundColor: '#0F0F1A', padding: 4, overflow: 'auto', height: '100%', flexShrink: 0, position: 'relative', border: 'none' }}>
           <div style={{ color: '#8E8EA0', fontSize: '12px', marginBottom: 8 }}>市场概览</div>
           {marketOverview.length > 0 ? (
             marketOverview.map(item => (
@@ -603,9 +608,9 @@ const Dashboard: React.FC = () => {
         </div>
         
         {/* 右侧图表区域 - 占据剩余空间 */}
-        <div style={{ flex: 1, padding: 4, display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-            {/* 图表控制区域 */}
-            <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
+            {/* 图表控制区域 - 紧凑布局 */}
+            <div style={{ marginBottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1px 2px', height: '30px' }}>
               {/* 时间周期选择 - 移除限制，所有周期都可用 */}
               <div style={{ display: 'flex' }}>
                 {['1m', '5m', '15m', '30m', '60m', '1h', '4h', '1D', '1W', '1M'].map((period) => (
@@ -614,10 +619,12 @@ const Dashboard: React.FC = () => {
                     size="small"
                     onClick={() => setTimeframe(period)}
                     style={{
-                      marginRight: '4px',
+                      marginRight: '2px',
+                      padding: '2px 6px',
                       backgroundColor: timeframe === period ? '#26A69A' : '#2E2E4A',
                       border: 'none',
-                      color: '#fff'
+                      color: '#fff',
+                      fontSize: '11px'
                     }}
                   >
                     {period}
@@ -632,14 +639,14 @@ const Dashboard: React.FC = () => {
                   icon={<BarChartOutlined />}
                   type={chartType === 'candlestick' ? 'primary' : 'default'}
                   onClick={() => setChartType('candlestick')}
-                  style={{ marginRight: '4px', backgroundColor: chartType === 'candlestick' ? '#26A69A' : '#2E2E4A', border: 'none' }}
+                  style={{ marginRight: '2px', padding: '2px 4px', backgroundColor: chartType === 'candlestick' ? '#26A69A' : '#2E2E4A', border: 'none' }}
                 />
                 <Button
                   size="small"
                   icon={<LineChartOutlined />}
                   type={chartType === 'line' ? 'primary' : 'default'}
                   onClick={() => setChartType('line')}
-                  style={{ marginRight: '4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
+                  style={{ marginRight: '2px', padding: '2px 4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
                 />
               </div>
               
@@ -651,10 +658,12 @@ const Dashboard: React.FC = () => {
                     size="small"
                     onClick={() => handleTimeRangeChange(range.value)}
                     style={{
-                      marginRight: '4px',
+                      marginRight: '2px',
+                      padding: '2px 6px',
                       backgroundColor: selectedTimeRange === range.value ? '#26A69A' : '#2E2E4A',
                       border: 'none',
-                      color: '#fff'
+                      color: '#fff',
+                      fontSize: '11px'
                     }}
                   >
                     {range.label}
@@ -664,17 +673,15 @@ const Dashboard: React.FC = () => {
             </div>
             
             {/* 图表区域 - 自适应高度 */}
-          
-          {/* 图表区域 - 自适应高度 */}
-          <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            {isLoading ? (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', backgroundColor: '#0F0F1A' }}>
-                <div style={{ color: '#fff' }}>加载中...</div>
-              </div>
-            ) : (
-              <ReactECharts option={chartOption} style={{ height: '100%', width: '100%' }} />
-            )}
-          </div>
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+              {isLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', backgroundColor: '#0F0F1A' }}>
+                  <div style={{ color: '#fff' }}>加载中...</div>
+                </div>
+              ) : (
+                <ReactECharts option={chartOption} style={{ height: '100%', width: '100%' }} />
+              )}
+            </div>
         </div>
       </div>
     </div>
