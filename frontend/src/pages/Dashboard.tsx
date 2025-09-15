@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Select, Button, Avatar } from 'antd';
-import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, StarOutlined, ShareAltOutlined, DownloadOutlined, SettingOutlined, BarChartOutlined, LineChartOutlined } from '@ant-design/icons';
+import { Select, Button, Modal, Checkbox } from 'antd';
+import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, BarChartOutlined, LineChartOutlined, CodeOutlined, CloseOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import client from '../api/client';
 import { formatPriceWithUnit } from '../utils/priceFormatter';
@@ -86,6 +86,51 @@ const Dashboard: React.FC = () => {
   ];
   const [selectedTimeRange, setSelectedTimeRange] = useState<number>(7);
 
+  // 策略相关状态
+  const [showStrategiesModal, setShowStrategiesModal] = useState<boolean>(false);
+  // 未使用的策略选择状态 - 保留结构
+  // const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
+  const [floatingStrategies, setFloatingStrategies] = useState<Array<{id: string, name: string, position: {x: number, y: number}}>>([]);
+  // API获取的策略数据 - 添加默认的硬编码策略数据
+  const [strategiesData, setStrategiesData] = useState<Array<{id: string, name: string}>>([
+    { id: '1', name: 'Hardcoded Strategy 1' },
+    { id: '2', name: 'Hardcoded Strategy 2' },
+    { id: '3', name: 'Hardcoded Strategy 3' }
+  ]);
+  // 策略加载状态 - 暂未使用但保留结构
+  const [_, __] = useState<boolean>(false);
+  
+  // 从API获取策略数据
+  const fetchStrategiesFromAPI = async () => {
+    console.log('fetchStrategiesFromAPI called');
+    try {
+      const response = await client.get('/strategies');
+      // 假设后端返回的数据结构是 { rows: [{ id: string, name: string }] }
+      const strategies = response.data.rows || response.data || [];
+      console.log('Strategies data from API:', strategies);
+      setStrategiesData(strategies);
+    } catch (error) {
+      console.error('Failed to fetch strategies from API:', error);
+      // API调用失败时使用空数组，避免显示mock数据
+      setStrategiesData([]);
+    }
+  };
+  
+  // 在组件挂载时就加载策略数据
+  useEffect(() => {
+    console.log('Component mounted, loading strategies data...');
+    fetchStrategiesFromAPI();
+  }, []);
+  
+  // 在打开策略对话框时也加载策略数据
+  useEffect(() => {
+    console.log('showStrategiesModal changed:', showStrategiesModal);
+    if (showStrategiesModal) {
+      console.log('Modal opened, refreshing strategies data...');
+      fetchStrategiesFromAPI();
+    }
+  }, [showStrategiesModal]);
+  
   // 加载symbol数据和市场概览数据
   useEffect(() => {
     const loadSymbols = async () => {
@@ -105,9 +150,21 @@ const Dashboard: React.FC = () => {
         setIsLoadingSymbols(false);
       }
     };
-    
+
     loadSymbols();
   }, []);
+
+  // 格式化策略数据的辅助函数 - 暂未使用但保留结构
+  // const formatStrategyData = (data: any) => { ... };
+
+  // 在打开策略对话框时获取策略数据
+  useEffect(() => {
+    console.log('useEffect triggered - showStrategiesModal:', showStrategiesModal, 'strategiesData:', strategiesData);
+    if (showStrategiesModal) {
+      console.log('Calling fetchStrategiesFromAPI...');
+      fetchStrategiesFromAPI();
+    }
+  }, [showStrategiesModal]);
   
   // 当时间周期或symbol变化时更新市场概览数据
   useEffect(() => {
@@ -560,233 +617,432 @@ const Dashboard: React.FC = () => {
     return option;
   }, [candleData, chartType, timeframe, formatPrice]);
 
+  // 打开策略选择对话框
+
+  // 关闭策略选择对话框 - 直接在Modal组件中使用setShowStrategiesModal
+  // const handleCloseStrategiesModal = () => { setShowStrategiesModal(false); };
+
+  // 处理策略选择变化
+
+  // 确认加载选中的策略 - 直接在Modal组件中使用内联函数
+  // const handleConfirmLoadStrategies = () => { ... };
+
+  // 关闭悬浮的策略按钮
+  const handleCloseFloatingStrategy = (strategyId: string) => {
+    setFloatingStrategies(prev => prev.filter(s => s.id !== strategyId));
+  };
+
+  // 拖动相关状态
+  const [isDragging, setIsDragging] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  // 处理拖动开始
+  const handleDragStart = (e: React.MouseEvent, strategyId: string) => {
+    e.stopPropagation();
+    setIsDragging(strategyId);
+    const strategy = floatingStrategies.find(s => s.id === strategyId);
+    if (strategy) {
+      setDragOffset({
+        x: e.clientX - strategy.position.x,
+        y: e.clientY - strategy.position.y
+      });
+    }
+  };
+
+  // 处理拖动
+  const handleDrag = (e: MouseEvent) => {
+    if (isDragging) {
+      setFloatingStrategies(prev => 
+        prev.map(strategy => 
+          strategy.id === isDragging 
+            ? { ...strategy, position: { 
+                x: (e as MouseEvent).clientX - dragOffset.x,
+                y: (e as MouseEvent).clientY - dragOffset.y 
+              } } 
+            : strategy
+        )
+      );
+    }
+  };
+
+  // 处理拖动结束
+  const handleDragEnd = () => {
+    setIsDragging(null);
+  };
+
+  // 添加鼠标事件监听器来处理拖动
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleDrag as EventListener);
+      document.addEventListener('mouseup', handleDragEnd as EventListener);
+      return () => {
+        document.removeEventListener('mousemove', handleDrag as EventListener);
+        document.removeEventListener('mouseup', handleDragEnd as EventListener);
+      };
+    }
+  }, [isDragging, dragOffset]);
+
+  // 打开策略选择对话框
+  const openStrategiesModal = () => {
+    setShowStrategiesModal(true);
+  };
+
+  // 返回组件的JSX结构
   return (
-    <div className="CFS-Quant-dashboard" style={{ minHeight: '100vh', backgroundColor: '#0F0F1A', margin: 0, padding: 0 }}>
-      {/* 顶部工具栏 - 紧凑布局 */}
-      <div style={{ background: '#1E1E2E', padding: '4px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: 'none', height: '45px' }}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <div style={{ color: '#fff', fontWeight: 'bold', fontSize: '16px' }}>CFS-Quant</div>
-          
-          <div style={{ display: 'flex', marginLeft: '16px' }}>
-            <Select
-              value={symbol}
-              loading={isLoadingSymbols}
-              style={{ width: 120, backgroundColor: '#2E2E4A', border: 'none', color: '#fff' }}
-              onChange={(value) => {
-                setSymbol(value);
-                // 从市场概览数据中查找并设置选中symbol的详细信息
-                const symbolInfo = marketOverview.find(item => item.code === value);
-                if (symbolInfo) {
-                  setSelectedSymbolData(symbolInfo);
-                }
+    <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0F0F1A' }}>
+      {/* 左侧市场概览面板 */}
+      <div style={{ width: '180px', borderRight: '1px solid #3E3E5A', backgroundColor: '#1E1E2E', overflowY: 'auto' }}>
+        <div style={{ padding: '12px 8px', borderBottom: '1px solid #3E3E5A' }}>
+          <h3 style={{ color: '#fff', margin: '0 0 8px 0', fontSize: '14px' }}>市场概览</h3>
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              placeholder="搜索..."
+              style={{
+                width: '100%',
+                padding: '4px 8px 4px 24px',
+                backgroundColor: '#2E2E4A',
+                border: '1px solid #4E4E6A',
+                borderRadius: '4px',
+                color: '#fff',
+                fontSize: '12px',
+                boxSizing: 'border-box'
               }}
-              options={symbols.map(item => ({
-                value: item.code,
-                label: item.name
-              }))}
-              placeholder="加载中..."
             />
-            
-            <div style={{ marginLeft: '8px', color: '#fff', display: 'flex', alignItems: 'center' }}>
-              {selectedSymbolData ? (
-                <>
-                  <span style={{ marginRight: '8px' }}>{selectedSymbolData.price}</span>
-                  <span style={{ 
-                    color: selectedSymbolData.trend === 'up' ? '#52c41a' : '#ff4d4f', 
-                    display: 'flex', 
-                    alignItems: 'center' 
-                  }}>
-                    {selectedSymbolData.trend === 'up' ? 
-                      <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                    {' '}{selectedSymbolData.trend === 'up' ? '+' : ''}{selectedSymbolData.change}
-                    {' ('}{selectedSymbolData.trend === 'up' ? '+' : ''}{selectedSymbolData.changePercent}%)
-                  </span>
-                </>
-              ) : candleData.length > 0 ? (
-                <>
-                  <span style={{ marginRight: '8px' }}>{candleData[candleData.length - 1].close.toFixed(2)}</span>
-                  <span style={{ 
-                    color: candleData[candleData.length - 1].isUp ? '#52c41a' : '#ff4d4f', 
-                    display: 'flex', 
-                    alignItems: 'center' 
-                  }}>
-                    {candleData[candleData.length - 1].isUp ? 
-                      <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                    {' '}{candleData[candleData.length - 1].isUp ? '+' : ''}{(candleData[candleData.length - 1].close - candleData[candleData.length - 1].open).toFixed(2)}
-                    {' ('}{candleData[candleData.length - 1].isUp ? '+' : ''}{((candleData[candleData.length - 1].close - candleData[candleData.length - 1].open) / candleData[candleData.length - 1].open * 100).toFixed(2)}%)
-                  </span>
-                </>
-              ) : (
-                <span>加载中...</span>
-              )}
-            </div>
+            <SearchOutlined style={{ position: 'absolute', left: '6px', top: '50%', transform: 'translateY(-50%)', color: '#8E8EA0', fontSize: '12px' }} />
           </div>
         </div>
-        
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-            <div className="ant-input-search ant-input-search-small" style={{ width: 200, backgroundColor: '#2E2E4A', border: 'none' }}>
-              <input 
-                type="search" 
-                placeholder="搜索" 
-                className="ant-input ant-input-sm ant-input-search-input" 
-                style={{ backgroundColor: '#2E2E4A', border: 'none', color: '#fff' }}
-              />
-              <span className="ant-input-search-icon" style={{ color: '#8E8EA0' }}>
-                <SearchOutlined />
-              </span>
-            </div>
-            
-
-            
-            <Button
-              type="text"
-              icon={<StarOutlined style={{ color: '#fff' }} />}
-              style={{ marginLeft: '16px', color: '#fff' }}
-            />
-          
-          <Button
-            type="text"
-            icon={<ShareAltOutlined style={{ color: '#fff' }} />}
-            style={{ marginLeft: '16px', color: '#fff' }}
-          />
-          
-          <Button
-            type="text"
-            icon={<DownloadOutlined style={{ color: '#fff' }} />}
-            style={{ marginLeft: '16px', color: '#fff' }}
-          />
-          
-          <Button
-            type="text"
-            icon={<SettingOutlined style={{ color: '#fff' }} />}
-            style={{ marginLeft: '16px', color: '#fff' }}
-          />
-          
-          <Avatar style={{ marginLeft: '16px', backgroundColor: '#666' }}>TK</Avatar>
-        </div>
-      </div>
-      
-      {/* 主内容区域 */}
-      <div style={{ display: 'flex', height: 'calc(100vh - 55px)', backgroundColor: '#0F0F1A' }}>
-        {/* 左侧市场概览 - 减小宽度 */}
-        <div style={{ width: 180, backgroundColor: '#0F0F1A', padding: 4, overflow: 'auto', height: '100%', flexShrink: 0, position: 'relative', border: 'none' }}>
-          <div style={{ color: '#8E8EA0', fontSize: '12px', marginBottom: 8 }}>市场概览</div>
-          {marketOverview.length > 0 ? (
-            marketOverview.map(item => (
-              <div 
-                key={item.id} 
-                style={{ 
-                  marginBottom: 12, 
-                  padding: 8, 
-                  backgroundColor: symbol === item.code ? '#3E3E5A' : '#2E2E4A', 
-                  borderRadius: 4, 
-                  cursor: 'pointer' 
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3E3E5A'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = symbol === item.code ? '#3E3E5A' : '#2E2E4A'}
-                onClick={() => {
-                  setSymbol(item.code);
-                  setSelectedSymbolData(item);
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <div style={{ color: '#fff', fontWeight: 'bold' }}>{item.name}</div>
-                  <div style={{ color: item.trend === 'up' ? '#52c41a' : '#ff4d4f', fontSize: '12px' }}
-                       className={item.trend === 'up' ? 'up-trend' : 'down-trend'}>
-                    {item.trend === 'up' ? '+' : ''}{item.changePercent}%
-                  </div>
-                </div>
-                <div style={{ color: '#fff' }}>{item.price}</div>
-                <div style={{ color: item.trend === 'up' ? '#52c41a' : '#ff4d4f', fontSize: '12px' }}
-                     className={item.trend === 'up' ? 'up-trend' : 'down-trend'}>
-                  {item.trend === 'up' ? '+' : ''}{item.change}
-                </div>
+        <div style={{ padding: '8px' }}>
+          {isLoadingSymbols ? (
+            // 加载状态显示
+            Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} style={{ marginBottom: '8px', padding: '8px', backgroundColor: '#2E2E4A', borderRadius: '4px' }}>
+                <div style={{ height: '12px', backgroundColor: '#4E4E6A', borderRadius: '2px', marginBottom: '6px' }}></div>
+                <div style={{ height: '10px', backgroundColor: '#4E4E6A', borderRadius: '2px', width: '60%' }}></div>
               </div>
             ))
           ) : (
-            <div style={{ color: '#8E8EA0', fontSize: '12px', textAlign: 'center', padding: 20 }}>
-              加载市场数据中...
+            marketOverview.map((item) => (
+              <div
+                key={item.code}
+                style={{
+                  marginBottom: '4px',
+                  padding: '6px 8px',
+                  backgroundColor: symbol === item.code ? '#3E3E5A' : '#2E2E4A',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  borderLeft: symbol === item.code ? '3px solid #165DFF' : '3px solid transparent'
+                }}
+                onClick={() => setSymbol(item.code)}
+                onMouseEnter={(e) => {
+                  if (symbol !== item.code) {
+                    e.currentTarget.style.backgroundColor = '#3E3E5A';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (symbol !== item.code) {
+                    e.currentTarget.style.backgroundColor = '#2E2E4A';
+                  }
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
+                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold', fontFamily: 'monospace' }}>{item.code}</span>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    {item.trend === 'up' ? (
+                      <ArrowUpOutlined style={{ color: '#52c41a', fontSize: '11px', marginRight: '2px' }} />
+                    ) : item.trend === 'down' ? (
+                      <ArrowDownOutlined style={{ color: '#ff4d4f', fontSize: '11px', marginRight: '2px' }} />
+                    ) : null}
+                    <span style={{ color: item.trend === 'up' ? '#52c41a' : item.trend === 'down' ? '#ff4d4f' : '#8E8EA0', fontSize: '10px' }}>
+                      ({item.changePercent}%)
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#fff', fontSize: '14px', fontWeight: 'bold' }}>{item.price}</span>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    {item.trend === 'up' ? (
+                      <ArrowUpOutlined style={{ color: '#52c41a', fontSize: '11px', marginRight: '2px' }} />
+                    ) : item.trend === 'down' ? (
+                      <ArrowDownOutlined style={{ color: '#ff4d4f', fontSize: '11px', marginRight: '2px' }} />
+                    ) : null}
+                    <span style={{ color: item.trend === 'up' ? '#52c41a' : item.trend === 'down' ? '#ff4d4f' : '#8E8EA0', fontSize: '10px' }}>
+                      {item.change}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 右侧主内容区域 */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0F0F1A' }}>
+        {/* 顶部工具栏 */}
+        <div style={{ padding: '12px 16px', backgroundColor: '#1E1E2E', borderBottom: '1px solid #3E3E5A' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {/* 股票选择器 */}
+            <div style={{ marginRight: '16px' }}>
+              <Select
+                value={symbol}
+                onChange={setSymbol}
+                style={{ width: '120px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
+                options={symbols.map(s => ({ label: s.code, value: s.code }))}
+                loading={isLoadingSymbols}
+                placeholder="选择股票"
+                size="small"
+                dropdownStyle={{ backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
+                optionFilterProp="label"
+                filterOption={(input, option) => {
+                  if (!option) return false;
+                  return ((option.label as string).toLowerCase().includes(input.toLowerCase())) ||
+                    (symbols.find(s => s.code === option.value)?.name.toLowerCase().includes(input.toLowerCase()) || false);
+                }}
+              />
+            </div>
+
+            {/* 股票价格和变动信息 */}
+            {selectedSymbolData && (
+              <div style={{ display: 'flex', alignItems: 'center', marginRight: 'auto' }}>
+                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold', marginRight: '12px' }}>
+                  {formatPrice(selectedSymbolData.price)}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  {selectedSymbolData.trend === 'up' ? (
+                    <ArrowUpOutlined style={{ color: '#52c41a', marginRight: '4px' }} />
+                  ) : selectedSymbolData.trend === 'down' ? (
+                    <ArrowDownOutlined style={{ color: '#ff4d4f', marginRight: '4px' }} />
+                  ) : null}
+                  <span style={{
+                    color: selectedSymbolData.trend === 'up' ? '#52c41a' : selectedSymbolData.trend === 'down' ? '#ff4d4f' : '#8E8EA0',
+                    fontSize: '14px',
+                    marginRight: '4px'
+                  }}>
+                    {selectedSymbolData.change}
+                  </span>
+                  <span style={{
+                    color: selectedSymbolData.trend === 'up' ? '#52c41a' : selectedSymbolData.trend === 'down' ? '#ff4d4f' : '#8E8EA0',
+                    fontSize: '12px'
+                  }}>
+                    ({selectedSymbolData.changePercent}%)
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* 策略选择按钮 */}
+            <Button
+              type="primary"
+              size="small"
+              onClick={openStrategiesModal}
+              style={{ marginLeft: '16px', backgroundColor: '#3E3E5A', borderColor: '#3E3E5A' }}
+              icon={<CodeOutlined />}
+            >
+              选择策略
+            </Button>
+          </div>
+        </div>
+
+        {/* 图表工具栏 */}
+        <div style={{ padding: '4px 8px', backgroundColor: '#1E1E2E', display: 'flex', alignItems: 'center', borderBottom: '1px solid #3E3E5A' }}>
+          {/* 时间周期选择 - 移除限制，所有周期都可用 */}
+          <div style={{ display: 'flex', marginRight: 'auto' }}>
+            {['1m', '5m', '15m', '30m', '60m', '1h', '4h', '1D', '1W', '1M'].map((period) => (
+              <Button
+                key={period}
+                size="small"
+                onClick={() => setTimeframe(period)}
+                style={{
+                  marginRight: '2px',
+                  padding: '2px 6px',
+                  backgroundColor: timeframe === period ? '#26A69A' : '#2E2E4A',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '11px'
+                }}
+              >
+                {period}
+              </Button>
+            ))}
+          </div>
+          
+          {/* 图表类型选择和显示控制 - 使用相对定位调整位置 */}
+          <div style={{ display: 'flex', justifyContent: 'center', flex: 1, position: 'relative', left: '-55px' }}>
+            <Button
+              size="small"
+              icon={<BarChartOutlined />}
+              type={chartType === 'candlestick' ? 'primary' : 'default'}
+              onClick={() => setChartType('candlestick')}
+              style={{ marginRight: '2px', padding: '2px 4px', backgroundColor: chartType === 'candlestick' ? '#26A69A' : '#2E2E4A', border: 'none' }}
+            />
+            <Button
+              size="small"
+              icon={<LineChartOutlined />}
+              type={chartType === 'line' ? 'primary' : 'default'}
+              onClick={() => setChartType('line')}
+              style={{ marginRight: '8px', padding: '2px 4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
+            />
+          </div>
+          
+          {/* 时间范围选择 */}
+          <div style={{ display: 'flex', marginLeft: 'auto' }}>
+            {timeRanges.map((range) => (
+              <Button
+                key={range.value}
+                size="small"
+                onClick={() => handleTimeRangeChange(range.value)}
+                style={{
+                  marginRight: '2px',
+                  padding: '2px 6px',
+                  backgroundColor: selectedTimeRange === range.value ? '#26A69A' : '#2E2E4A',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '11px'
+                }}
+              >
+                {range.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        
+        {/* 策略按钮区域 - 放在周期选择列表下方 */}
+        <div style={{ 
+          padding: '4px 8px', 
+          backgroundColor: '#1E1E2E', 
+          height: '32px', 
+          display: 'flex', 
+          alignItems: 'center',
+          gap: '8px',
+          overflowX: 'auto',
+          position: 'relative',
+          borderBottom: '1px solid #3E3E5A'
+        }}>
+          {floatingStrategies.map((strategy) => (
+            <div
+              key={strategy.id}
+              style={{
+                position: 'relative',
+                left: `${strategy.position.x}px`,
+                backgroundColor: '#2E2E4A',
+                border: '1px solid #4E4E6A',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                cursor: isDragging === strategy.id ? 'grabbing' : 'grab',
+                color: '#fff',
+                fontSize: '12px',
+                whiteSpace: 'nowrap',
+                minWidth: '120px'
+              }}
+              onMouseDown={(e) => handleDragStart(e, strategy.id)}
+            >
+              <span style={{ marginRight: '8px', fontSize: '11px' }}>{strategy.name}</span>
+              <Button
+                type="text"
+                icon={<CloseOutlined style={{ color: '#fff', fontSize: '10px' }} />}
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation(); // 阻止事件冒泡
+                  handleCloseFloatingStrategy(strategy.id);
+                }}
+                style={{ padding: '0 4px', marginLeft: 'auto', height: '20px', width: '20px' }}
+              />
+            </div>
+          ))}
+        </div>
+        
+        {/* 图表区域 - 自适应高度 */}
+        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          {isLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', backgroundColor: '#0F0F1A' }}>
+              <div style={{ color: '#fff' }}>加载中...</div>
+            </div>
+          ) : (
+            <ReactECharts option={chartOption} style={{ height: '100%', width: '100%' }} />
+          )}
+        </div>
+      </div>
+      
+      {/* 策略选择模态框 */}
+      <Modal
+        title="选择策略"
+        open={showStrategiesModal}
+        onCancel={() => setShowStrategiesModal(false)}
+        onOk={() => {
+          // 这里可以添加确认逻辑
+          setShowStrategiesModal(false);
+        }}
+        width={600}
+        okText="确定"
+        cancelText="取消"
+      >
+        <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+          {strategiesData.length === 0 ? (
+            <div style={{ color: '#fff', textAlign: 'center', padding: '20px' }}>没有可用的策略</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {strategiesData.map((strategy) => (
+                <div
+                  key={strategy.id}
+                  style={{
+                    padding: '10px',
+                    border: '1px solid #4E4E6A',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    backgroundColor: '#3E3E5A',
+                    color: '#fff',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    // 在点击时添加策略到浮动策略列表
+                    const newStrategy = {
+                      id: strategy.id,
+                      name: strategy.name,
+                      position: {
+                        x: 10 + floatingStrategies.length * 150, // 水平位置错开
+                        y: 0 // 垂直位置在这个布局中不那么重要了
+                      }
+                    };
+                    setFloatingStrategies([...floatingStrategies, newStrategy]);
+                    setShowStrategiesModal(false);
+                  }}
+                >
+                  <Checkbox
+                    style={{ color: '#fff' }}
+                    checked={false}
+                    onChange={(e) => e.stopPropagation()}
+                  />
+                  <span style={{ marginLeft: '10px', flex: 1 }}>{strategy.name}</span>
+                  <Button
+                    type="text"
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const newStrategy = {
+                        id: strategy.id,
+                        name: strategy.name,
+                        position: {
+                          x: 10 + floatingStrategies.length * 150,
+                          y: 0
+                        }
+                      };
+                      setFloatingStrategies([...floatingStrategies, newStrategy]);
+                      setShowStrategiesModal(false);
+                    }}
+                    style={{ color: '#26A69A' }}
+                  >
+                    添加
+                  </Button>
+                </div>
+              ))}
             </div>
           )}
         </div>
-        
-        {/* 右侧图表区域 - 占据剩余空间 */}
-        <div style={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-            {/* 图表控制区域 - 紧凑布局 */}
-            <div style={{ marginBottom: 0, display: 'flex', alignItems: 'center', padding: '1px 2px', height: '30px' }}>
-              {/* 时间周期选择 - 移除限制，所有周期都可用 */}
-              <div style={{ display: 'flex', marginRight: 'auto' }}>
-                {['1m', '5m', '15m', '30m', '60m', '1h', '4h', '1D', '1W', '1M'].map((period) => (
-                  <Button
-                    key={period}
-                    size="small"
-                    onClick={() => setTimeframe(period)}
-                    style={{
-                      marginRight: '2px',
-                      padding: '2px 6px',
-                      backgroundColor: timeframe === period ? '#26A69A' : '#2E2E4A',
-                      border: 'none',
-                      color: '#fff',
-                      fontSize: '11px'
-                    }}
-                  >
-                    {period}
-                  </Button>
-                ))}
-              </div>
-              
-              {/* 图表类型选择和显示控制 - 使用相对定位调整位置 */}
-              <div style={{ display: 'flex', justifyContent: 'center', flex: 1, position: 'relative', left: '-55px' }}>
-                <Button
-                  size="small"
-                  icon={<BarChartOutlined />}
-                  type={chartType === 'candlestick' ? 'primary' : 'default'}
-                  onClick={() => setChartType('candlestick')}
-                  style={{ marginRight: '2px', padding: '2px 4px', backgroundColor: chartType === 'candlestick' ? '#26A69A' : '#2E2E4A', border: 'none' }}
-                />
-                <Button
-                  size="small"
-                  icon={<LineChartOutlined />}
-                  type={chartType === 'line' ? 'primary' : 'default'}
-                  onClick={() => setChartType('line')}
-                  style={{ marginRight: '8px', padding: '2px 4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
-                />
-              </div>
-              
-              {/* 时间范围选择 */}
-              <div style={{ display: 'flex', marginLeft: 'auto' }}>
-                {timeRanges.map((range) => (
-                  <Button
-                    key={range.value}
-                    size="small"
-                    onClick={() => handleTimeRangeChange(range.value)}
-                    style={{
-                      marginRight: '2px',
-                      padding: '2px 6px',
-                      backgroundColor: selectedTimeRange === range.value ? '#26A69A' : '#2E2E4A',
-                      border: 'none',
-                      color: '#fff',
-                      fontSize: '11px'
-                    }}
-                  >
-                    {range.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            
-            {/* 图表区域 - 自适应高度 */}
-            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-              {isLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', backgroundColor: '#0F0F1A' }}>
-                  <div style={{ color: '#fff' }}>加载中...</div>
-                </div>
-              ) : (
-                <ReactECharts option={chartOption} style={{ height: '100%', width: '100%' }} />
-              )}
-            </div>
-        </div>
-      </div>
+      </Modal>
     </div>
   );
 };
