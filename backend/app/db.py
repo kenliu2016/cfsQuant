@@ -7,6 +7,7 @@
 """
 
 import os
+import asyncio
 from typing import Dict, Any, Optional, AsyncGenerator
 import yaml
 
@@ -250,14 +251,8 @@ def fetch_df(query: str, config_path: Optional[str] = None, **kwargs):
     return df
 
 
-async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs):
-    """异步执行SQL查询并返回pandas DataFrame
-    
-    Args:
-        query: SQL查询语句
-        config_path: 数据库配置路径
-        **kwargs: 参数化查询的参数
-    """
+async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
+    """异步执行SQL查询并返回pandas DataFrame"""
     import logging
     import inspect
     logger = logging.getLogger(__name__)
@@ -274,6 +269,9 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
     except ImportError:
         raise ImportError("未安装必要的包，请先执行: pip install pandas sqlalchemy")
     
+    import asyncio
+    
+    result = None
     try:
         # 获取异步引擎
         engine = await get_async_engine(config_path)
@@ -285,94 +283,115 @@ async def fetch_df_async(query: str, config_path: Optional[str] = None, **kwargs
             raise ValueError(f"引擎对象不具有connect方法，类型: {type(engine)}")
         
         # 使用异步连接执行查询并读取结果
-        result = None
-        try:
-            async with engine.connect() as conn:
-                # 执行查询
-                if kwargs:
-                    result = await conn.execute(text(query), kwargs)
-                else:
-                    result = await conn.execute(text(query))
+        # 添加超时处理，避免长时间阻塞
+        async with engine.connect() as conn:
+            # 使用asyncio.wait_for包装查询执行，设置30秒超时
+            if kwargs:
+                result = await asyncio.wait_for(
+                    conn.execute(text(query), kwargs), 
+                    timeout=30
+                )
+            else:
+                result = await asyncio.wait_for(
+                    conn.execute(text(query)), 
+                    timeout=30
+                )
 
-                # 获取列名
-                columns = result.keys()
+            # 获取列名
+            columns = result.keys()
 
-                batch_size = 10000
-                chunks = []
+            batch_size = 5000  # 减小批次大小以优化内存使用和查询速度
+            chunks = []
 
-                # 分批获取数据
-                while True:
-                    batch = result.fetchmany(batch_size)
+            # 分批获取数据，同样添加超时处理
+            while True:
+                try:
+                    batch = await asyncio.wait_for(
+                        result.fetchmany(batch_size), 
+                        timeout=15
+                    )
                     if not batch:
                         break
                     chunks.append(pd.DataFrame(batch, columns=columns))
+                except asyncio.TimeoutError:
+                    logger.warning("数据获取超时，尝试继续处理已获取的数据")
+                    break
 
-                # 如果没有数据，返回空DataFrame
-                if not chunks:
-                    logger.debug("没有获取到数据，返回空DataFrame")
-                    return pd.DataFrame(columns=columns)
+            # 如果没有数据，返回空DataFrame
+            if not chunks:
+                logger.debug("没有获取到数据，返回空DataFrame")
+                return pd.DataFrame(columns=columns)
 
-                # 优化：合并所有批次的数据，避免过多的内存复制
-                if len(chunks) == 1:
-                    logger.debug("只有一个批次，直接复制")
-                    df = chunks[0].copy()
-                else:
-                    logger.debug(f"合并 {len(chunks)} 个批次")
-                    # 使用ignore_index=True避免索引冲突
-                    df = pd.concat(chunks, ignore_index=True)
-                    # 释放中间数据占用的内存
-                    del chunks
+            # 优化：合并所有批次的数据，避免过多的内存复制
+            if len(chunks) == 1:
+                logger.debug("只有一个批次，直接复制")
+                df = chunks[0].copy()
+            else:
+                logger.debug(f"合并 {len(chunks)} 个批次")
+                # 使用ignore_index=True避免索引冲突
+                df = pd.concat(chunks, ignore_index=True)
+                # 释放中间数据占用的内存
+                del chunks
 
-                # 优化：数据类型转换，减少内存使用
-                for col in df.columns:
-                    # 尝试将数值列转换为更高效的数据类型
-                    if pd.api.types.is_integer_dtype(df[col]):
-                        # 检查是否存在NA值，如果不存在可以使用更高效的类型
-                        if not df[col].isna().any():
-                            df[col] = df[col].astype('int32')  # 使用更小的整数类型
-                    elif pd.api.types.is_float_dtype(df[col]):
-                        # 对于浮点数，可以使用float32来减少内存使用
-                        df[col] = df[col].astype('float32')
-                    elif pd.api.types.is_object_dtype(df[col]):
-                        # 尝试推断并转换对象列
-                        try:
-                            # 尝试使用通用格式解析日期时间
-                            # 先检查是否包含时间信息
-                            if df[col].str.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', na=False).any():
-                                # 包含时间，使用带时间的格式
-                                df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
-                            elif df[col].str.match(r'\d{4}-\d{2}-\d{2}', na=False).any():
-                                # 只有日期，使用日期格式
-                                df[col] = pd.to_datetime(df[col], format='%Y-%m-%d', errors='coerce')
-                            else:
-                                # 其他格式，不需要尝试解析，因为注释说明不会修改原数据
-                                # 已移除不必要的pd.to_datetime调用，避免警告
-                                pass  # 空语句，确保代码块不为空
-                        except (ValueError, TypeError, AttributeError):
-                            # 不能转换为datetime，检查是否可以转换为分类类型以减少内存使用
-                            if len(df[col].unique()) < len(df) * 0.5:
-                                df[col] = df[col].astype('category')
+            # 优化：数据类型转换，减少内存使用
+            for col in df.columns:
+                # 尝试将数值列转换为更高效的数据类型
+                if pd.api.types.is_integer_dtype(df[col]):
+                    # 检查是否存在NA值，如果不存在可以使用更高效的类型
+                    if not df[col].isna().any():
+                        df[col] = df[col].astype('int32')  # 使用更小的整数类型
+                elif pd.api.types.is_float_dtype(df[col]):
+                    # 对于浮点数，可以使用float32来减少内存使用
+                    df[col] = df[col].astype('float32')
+                elif pd.api.types.is_object_dtype(df[col]):
+                    # 尝试推断并转换对象列
+                    try:
+                        # 尝试使用通用格式解析日期时间
+                        # 先检查是否包含时间信息
+                        if df[col].str.match(r'\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}', na=False).any():
+                            # 包含时间，使用带时间的格式
+                            df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+                        elif df[col].str.match(r'\\d{4}-\\d{2}-\\d{2}', na=False).any():
+                            # 只有日期，使用日期格式
+                            df[col] = pd.to_datetime(df[col], format='%Y-%m-%d', errors='coerce')
+                        else:
+                            # 其他格式，不需要尝试解析，因为注释说明不会修改原数据
+                            # 已移除不必要的pd.to_datetime调用，避免警告
+                            pass  # 空语句，确保代码块不为空
+                    except (ValueError, TypeError, AttributeError):
+                        # 不能转换为datetime，检查是否可以转换为分类类型以减少内存使用
+                        if len(df[col].unique()) < len(df) * 0.5:
+                            df[col] = df[col].astype('category')
 
-                logger.debug(f"成功获取数据: {len(df)} 行，{len(df.columns)} 列")
-                return df
-        except Exception as e:
-            logger.error(f"查询执行失败: {type(e).__name__}: {e}")
+            logger.debug(f"成功获取数据: {len(df)} 行，{len(df.columns)} 列")
+            return df
+    except asyncio.TimeoutError as e:
+        logger.error(f"数据库查询超时: {type(e).__name__}: {e}")
+        raise
+    except TypeError as e:
+        if "An asyncio.Future, a coroutine or an awaitable is required" in str(e):
+            logger.error(f"异步操作类型错误: {e}")
+            # 尝试降级为同步查询
+            try:
+                return fetch_df(query, config_path, **kwargs)
+            except Exception as sync_e:
+                logger.error(f"同步查询也失败: {sync_e}")
+                raise
+        else:
+            logger.error(f"类型错误: {e}")
             raise
-        finally:
-            # 确保结果集被关闭 - 直接检查result是否不为None
-            if result is not None:
-                try:
-                    logger.debug(f"关闭结果集，类型: {type(result)}")
-                    result.close()
-                    logger.debug("结果集关闭成功")
-                except Exception as close_e:
-                    logger.warning(f"关闭结果集时出错: {type(close_e).__name__}: {close_e}")
     except Exception as e:
-        logger.error(f"连接数据库失败: {type(e).__name__}: {e}")
+        logger.error(f"数据库操作失败: {type(e).__name__}: {e}")
         raise
-    except Exception as e:
-        logger.error(f"数据库操作总失败: {type(e).__name__}: {e}")
-        raise
+    finally:
+        # 确保结果集被关闭 - 直接检查result是否不为None
+        if result is not None:
+            try:
+                logger.debug(f"关闭结果集，类型: {type(result)}")
+                result.close()
+                logger.debug("结果集关闭成功")
+            except Exception as close_e:
+                logger.warning(f"关闭结果集时出错: {type(close_e).__name__}: {close_e}")
 
 
 def to_sql(df, table_name: str, config_path: Optional[str] = None, if_exists: str = "append", index: bool = False):

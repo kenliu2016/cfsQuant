@@ -1,26 +1,51 @@
 from fastapi import APIRouter, Query
-from fastapi import APIRouter, Query
-from ..services.market_service import get_candles, aget_candles, aget_daily_candles, aget_intraday, arefresh_market_data_cache
-from datetime import datetime
+from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache
+from datetime import datetime, timedelta
 router = APIRouter(prefix="/api/market", tags=["market"])
 @router.get("/candles")
-async def candles(code: str = Query(...), start: str = Query(...), end: str = Query(...), interval: str = Query("1m"), 
+def candles(code: str = Query(...), start: str = Query(None), end: str = Query(None), interval: str = Query("1m"), 
                  page: int = Query(None, ge=1, description="页码，从1开始"), 
                  page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    # 将字符串类型的日期时间转换为datetime对象
-    try:
-        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        # 尝试其他常见格式
+    # 根据interval参数设置默认的查询时间范围
+    now = datetime.now()
+    today = datetime(now.year, now.month, now.day)
+    
+    if not start and not end:
+        if interval in ["1m", "5m", "15m"]:
+            # 1m, 5m, 15m: 默认查询当天的数据
+            start_dt = today
+            end_dt = now
+        elif interval == "30m":
+            # 30m: 默认查询最近2天的数据
+            start_dt = today - timedelta(days=1)
+            end_dt = now
+        elif interval == "1h":
+            # 1h: 默认查询最近5天的数据
+            start_dt = today - timedelta(days=4)
+            end_dt = now
+        elif interval == "4h":
+            # 4h: 默认查询最近30天的数据
+            start_dt = today - timedelta(days=29)
+            end_dt = now
+        else:
+            # 其他情况默认查询当天数据
+            start_dt = today
+            end_dt = now
+    else:
+        # 将字符串类型的日期时间转换为datetime对象
         try:
-            start_dt = datetime.strptime(start, "%Y-%m-%d")
-            end_dt = datetime.strptime(end, "%Y-%m-%d")
+            start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+            end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
         except ValueError:
-            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-            end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+            # 尝试其他常见格式
+            try:
+                start_dt = datetime.strptime(start, "%Y-%m-%d")
+                end_dt = datetime.strptime(end, "%Y-%m-%d")
+            except ValueError:
+                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
             
-    result = await aget_candles(code, start_dt, end_dt, interval, page, page_size)
+    result = get_candles(code, start_dt, end_dt, interval, page, page_size)
     
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
@@ -43,23 +68,45 @@ async def candles(code: str = Query(...), start: str = Query(...), end: str = Qu
 
 
 @router.get("/daily")
-async def daily(code: str = Query(...), start: str = Query(...), end: str = Query(...),
+def daily(code: str = Query(...), start: str = Query(None), end: str = Query(None), interval: str = Query("1D"),
                page: int = Query(None, ge=1, description="页码，从1开始"),
                page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    # 将字符串类型的日期时间转换为datetime对象
-    try:
-        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        # 尝试其他常见格式
+    # 根据interval参数设置默认的查询时间范围
+    now = datetime.now()
+    today = datetime(now.year, now.month, now.day)
+    
+    if not start and not end:
+        if interval == "1D":
+            # 1D: 默认查询最近1个月的数据
+            start_dt = today - timedelta(days=30)
+            end_dt = now
+        elif interval == "1W":
+            # 1W: 默认查询最近6个月的数据
+            start_dt = today - timedelta(days=180)
+            end_dt = now
+        elif interval == "1M":
+            # 1M: 默认查询最近2年的数据
+            start_dt = today - timedelta(days=730)
+            end_dt = now
+        else:
+            # 默认查询最近1个月的数据
+            start_dt = today - timedelta(days=30)
+            end_dt = now
+    else:
+        # 将字符串类型的日期时间转换为datetime对象
         try:
-            start_dt = datetime.strptime(start, "%Y-%m-%d")
-            end_dt = datetime.strptime(end, "%Y-%m-%d")
+            start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+            end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
         except ValueError:
-            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-            end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+            # 尝试其他常见格式
+            try:
+                start_dt = datetime.strptime(start, "%Y-%m-%d")
+                end_dt = datetime.strptime(end, "%Y-%m-%d")
+            except ValueError:
+                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
             
-    result = await aget_daily_candles(code, start_dt, end_dt, page, page_size)
+    result = get_daily_candles(code, start_dt, end_dt, interval, page, page_size)
     
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
@@ -81,7 +128,7 @@ async def daily(code: str = Query(...), start: str = Query(...), end: str = Quer
         return {"rows": df.to_dict(orient="records")}
 
 @router.get("/intraday")
-async def intraday(code: str = Query(...), start: str = Query(...), end: str = Query(...),
+def intraday(code: str = Query(...), start: str = Query(...), end: str = Query(...),
                   page: int = Query(None, ge=1, description="页码，从1开始"),
                   page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
     # 将字符串类型的日期时间转换为datetime对象
@@ -97,7 +144,7 @@ async def intraday(code: str = Query(...), start: str = Query(...), end: str = Q
             start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
             end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
             
-    result = await aget_intraday(code, start_dt, end_dt, page, page_size)
+    result = get_intraday(code, start_dt, end_dt, page, page_size)
     
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
@@ -120,7 +167,7 @@ async def intraday(code: str = Query(...), start: str = Query(...), end: str = Q
 
 # 添加刷新缓存的API端点
 @router.post("/refresh-cache")
-async def refresh_market_cache(code: str = Query(None, description="可选的股票代码，不提供则刷新所有缓存")):
+def refresh_market_cache(code: str = Query(None, description="可选的股票代码，不提供则刷新所有缓存")):
     """
     刷新市场数据缓存
     

@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 async def app_lifespan(app: FastAPI):
     # 应用启动时
     # 启动缓存预热任务（作为后台任务，不阻塞应用启动）
-    asyncio.create_task(prewarm_market_cache())
+    import threading
+    threading.Thread(target=prewarm_market_cache, daemon=True).start()
     
     yield  # 应用运行中
     
@@ -102,11 +103,11 @@ app.include_router(tuning.router)
 app.include_router(monitor.router)
 app.include_router(trades.router)
 
-async def prewarm_market_cache():
+def prewarm_market_cache():
     """预热市场数据缓存"""
     # 导入需要的模块
     from datetime import datetime, timedelta
-    from .services.market_service import aget_intraday
+    from .services.market_service import get_intraday
     
     hot_codes = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT']  # 热门交易对
     
@@ -119,25 +120,15 @@ async def prewarm_market_cache():
         
         logger.debug(f"开始预热市场数据缓存，代码: {', '.join(hot_codes)}")
         
-        # 创建预热任务
-        tasks = []
-        for code in hot_codes:
-            # 创建预热任务但不等待完成
-            tasks.append(asyncio.create_task(
-                aget_intraday(code, start_str, end_str)
-            ))
-        
-        # 等待所有预热任务完成
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # 检查预热结果
+        # 直接同步调用，不再使用异步任务
         success_count = 0
-        for i, result in enumerate(results):
-            if not isinstance(result, Exception):
+        for code in hot_codes:
+            try:
+                get_intraday(code, start_str, end_str)
                 success_count += 1
-                logger.debug(f"成功预热 {hot_codes[i]} 的市场数据缓存")
-            else:
-                logger.error(f"预热 {hot_codes[i]} 的市场数据缓存失败: {result}")
+                logger.debug(f"成功预热 {code} 的市场数据缓存")
+            except Exception as e:
+                logger.error(f"预热 {code} 的市场数据缓存失败: {e}")
         
         logger.debug(f"市场数据缓存预热完成，成功: {success_count}/{len(hot_codes)}")
     except Exception as e:
