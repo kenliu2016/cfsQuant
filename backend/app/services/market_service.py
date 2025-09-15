@@ -462,6 +462,154 @@ def get_intraday(code: str, start: str, end: str, page: int = None, page_size: i
     # minute bars directly
     return get_candles(code, start, end, '1m', page, page_size)
 
+@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
+def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1):
+    """
+    批量获取多个股票代码的最新K线数据，使用缓存装饰器优化性能
+    缓存过期时间：5分钟
+    
+    Args:
+        codes: 股票代码列表
+        interval: 时间间隔，默认1分钟
+        limit: 返回的记录数量，默认1条，设置为2可以获取最近两个bar的数据
+    
+    Returns:
+        包含多个股票代码最新数据的DataFrame
+    """
+    # 验证参数
+    if not codes or not isinstance(codes, list):
+        return pd.DataFrame()
+    
+    # 确保limit是有效的正整数
+    limit = max(1, int(limit))
+    
+    # 根据interval选择表名
+    if interval in ["1D", "1W", "1M"]:
+        table_name = "day_realtime"
+    else:
+        table_name = "minute_realtime"
+    
+    # 构建SQL查询，使用IN子句查询多个代码的最新数据
+    # 对于每个代码，获取最新的指定数量的记录
+    sql = """
+    WITH ranked_data AS (
+        SELECT 
+            datetime, 
+            code, 
+            open, 
+            high, 
+            low, 
+            close, 
+            volume,
+            ROW_NUMBER() OVER (PARTITION BY code ORDER BY datetime DESC) AS rank
+        FROM 
+            """ + table_name + """
+        WHERE 
+            code IN :codes
+    )
+    SELECT 
+        datetime, 
+        code, 
+        open, 
+        high, 
+        low, 
+        close, 
+        volume
+    FROM 
+        ranked_data
+    WHERE 
+        rank <= :limit
+    ORDER BY 
+        code, datetime DESC
+    """
+    
+    try:
+        # 执行查询，传递limit参数
+        df = fetch_df(sql, codes=tuple(codes), limit=limit)
+        
+        # 对于1W和1M周期，需要特殊处理以获取正确的聚合数据
+        if interval == "1W" and not df.empty:
+            # 对于周线数据，需要重新查询并聚合最近一周的数据
+            all_weekly_data = []
+            for code in codes:
+                # 对于每个代码，查询最近的完整周数据
+                weekly_sql = """
+                SELECT 
+                    MIN(datetime) as datetime,
+                    code,
+                    FIRST(open) as open,
+                    MAX(high) as high,
+                    MIN(low) as low,
+                    LAST(close) as close,
+                    SUM(volume) as volume
+                FROM 
+                    day_realtime
+                WHERE 
+                    code = :code
+                GROUP BY 
+                    code,
+                    strftime('%Y-%W', datetime)
+                ORDER BY 
+                    datetime DESC
+                LIMIT 1
+                """
+                weekly_df = fetch_df(weekly_sql, code=code)
+                if not weekly_df.empty:
+                    all_weekly_data.append(weekly_df)
+            
+            if all_weekly_data:
+                df = pd.concat(all_weekly_data, ignore_index=True)
+        elif interval == "1M" and not df.empty:
+            # 对于月线数据，需要重新查询并聚合最近一月的数据
+            all_monthly_data = []
+            for code in codes:
+                # 对于每个代码，查询最近的完整月数据
+                monthly_sql = """
+                SELECT 
+                    MIN(datetime) as datetime,
+                    code,
+                    FIRST(open) as open,
+                    MAX(high) as high,
+                    MIN(low) as low,
+                    LAST(close) as close,
+                    SUM(volume) as volume
+                FROM 
+                    day_realtime
+                WHERE 
+                    code = :code
+                GROUP BY 
+                    code,
+                    strftime('%Y-%m', datetime)
+                ORDER BY 
+                    datetime DESC
+                LIMIT 1
+                """
+                monthly_df = fetch_df(monthly_sql, code=code)
+                if not monthly_df.empty:
+                    all_monthly_data.append(monthly_df)
+            
+            if all_monthly_data:
+                df = pd.concat(all_monthly_data, ignore_index=True)
+        else:
+            # 对于其他周期，使用aggregate_kline_data函数进行聚合处理
+            if interval == "5m":
+                df = aggregate_kline_data(df, "5T")
+            elif interval == "15m":
+                df = aggregate_kline_data(df, "15T")
+            elif interval == "30m":
+                df = aggregate_kline_data(df, "30T")
+            elif interval == "1h":
+                df = aggregate_kline_data(df, "H")
+            elif interval == "4h":
+                df = aggregate_kline_data(df, "4H")
+            elif interval == "1D":
+                df = aggregate_kline_data(df, "D")
+        
+        return df
+    except Exception as e:
+        logger.error(f"批量获取K线数据失败: {e}")
+        return pd.DataFrame()
+
 # 提供清除特定代码缓存的函数，用于数据更新后刷新缓存
 def refresh_market_data_cache(code: str = None):
     """

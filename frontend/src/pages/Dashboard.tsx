@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Select, Button, Avatar } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, StarOutlined, ShareAltOutlined, DownloadOutlined, SettingOutlined, BarChartOutlined, LineChartOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
-import type { EChartsOption } from 'echarts';
 import client from '../api/client';
 import { formatPriceWithUnit } from '../utils/priceFormatter';
 
@@ -47,36 +46,8 @@ const fetchSymbolsFromCSV = async () => {
 };
 
 // 调用API获取candles数据
-const fetchCandlesData = async (code: string, interval: string) => {
-  try {
-    const response = await client.get('/market/candles', {
-      params: {
-        code,
-        interval
-      }
-    });
-    return response.data.rows || [];
-  } catch (error) {
-    console.error('Failed to fetch candles data:', error);
-    return [];
-  }
-};
 
 // 调用API获取daily数据
-const fetchDailyData = async (code: string, interval: string) => {
-  try {
-    const response = await client.get('/market/daily', {
-      params: {
-        code,
-        interval
-      }
-    });
-    return response.data.rows || [];
-  } catch (error) {
-    console.error('Failed to fetch daily data:', error);
-    return [];
-  }
-};
 
 // 格式化价格显示
 const formatPrice = (value: number) => {
@@ -84,24 +55,37 @@ const formatPrice = (value: number) => {
 };
 
 // 格式化成交量显示，根据值的大小显示K或M单位
-const formatVolume = (value: number) => {
-  if (value >= 1000000) {
-    return (value / 1000000).toFixed(2) + 'M';
-  } else if (value >= 1000) {
-    return (value / 1000).toFixed(2) + 'K';
-  }
-  return value.toLocaleString();
-};
 
 const Dashboard: React.FC = () => {
-  // 股票代码和名称
-  const [symbol, setSymbol] = useState<string>('BTCUSDT');
-  const [symbols, setSymbols] = useState<{ code: string; name: string; exchange: string; type: string }[]>([]);
-  const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(true);
-  
+  // 市场概览数据
+  const [marketOverview, setMarketOverview] = useState<any[]>([]);
+  // 当前选中股票的概览数据
+  const [selectedSymbolData, setSelectedSymbolData] = useState<any>(null);
+  // 图表数据
+  const [candleData, setCandleData] = useState<any[]>([]);
+  // 加载状态
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(false);
+  // 股票列表
+  const [symbols, setSymbols] = useState<any[]>([]);
+  // 选中的股票
+  const [symbol, setSymbol] = useState<string>('');
   // 时间周期
   const [timeframe, setTimeframe] = useState<string>('1D');
-  
+  // 图表类型 - 修正类型定义，使用candlestick而不是candle
+  const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
+  // 时间范围选择
+  const timeRanges = [
+    { label: '1D', value: 1 },
+    { label: '1W', value: 7 },
+    { label: '1M', value: 30 },
+    { label: '3M', value: 90 },
+    { label: '1Y', value: 365 },
+    { label: '5Y', value: 1825 },
+    { label: 'ALL', value: 0 },
+  ];
+  const [selectedTimeRange, setSelectedTimeRange] = useState<number>(7);
+
   // 加载symbol数据和市场概览数据
   useEffect(() => {
     const loadSymbols = async () => {
@@ -125,292 +109,369 @@ const Dashboard: React.FC = () => {
     loadSymbols();
   }, []);
   
-  // 当时间周期变化时更新市场概览数据
+  // 当时间周期或symbol变化时更新市场概览数据
   useEffect(() => {
     if (symbols.length > 0) {
       loadMarketOverview(symbols);
     }
+  }, [timeframe, symbol]);
+
+  // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
+  useEffect(() => {
+    if (marketOverview.length > 0 && symbol) {
+      const symbolInfo = marketOverview.find(item => item.code === symbol);
+      if (symbolInfo) {
+        setSelectedSymbolData(symbolInfo);
+      }
+    }
+  }, [marketOverview, symbol]);
+
+  // 根据不同时间周期设置默认查询天数
+  useEffect(() => {
+    const daysMap: Record<string, number> = {
+      '1m': 1,
+      '5m': 1,
+      '15m': 1,
+      '30m': 1,
+      '1h': 3,
+      '4h': 7,
+      '1D': 90,
+      '1W': 365,
+      '1M': 1825,
+    };
+    
+    if (daysMap[timeframe]) {
+      setSelectedTimeRange(daysMap[timeframe]);
+    }
   }, [timeframe]);
-  
-  // 调用API获取市场概览数据
+
+  // 监听变化并获取数据
+  useEffect(() => {
+    if (symbol && selectedTimeRange !== undefined) {
+      fetchData();
+    }
+  }, [symbol, selectedTimeRange, timeframe]);
+
+  // 调用API获取市场概览数据 - 使用批量查询优化性能
   const loadMarketOverview = async (symbolsData: { code: string; name: string; exchange: string; type: string }[]) => {
     try {
-      const overviewPromises = symbolsData.map(async (item) => {
-        try {
-          // 对于市场概览，我们只需要最新的数据点
-          const response = await client.get('/market/candles', {
-            params: {
-              code: item.code,
-              interval: timeframe,
-              limit: 1 // 只获取最新的一个数据点
-            }
-          });
+      // 创建一个包含市场概览卡片symbol和选中symbol的集合，自动去重
+      const uniqueSymbols = new Set<string>();
+      
+      // 添加市场概览卡片的所有symbol
+      symbolsData.forEach(item => uniqueSymbols.add(item.code));
+      
+      // 添加被选择器选中的symbol（如果存在且不在市场概览卡片中）
+      if (symbol && !symbolsData.find(item => item.code === symbol)) {
+        uniqueSymbols.add(symbol);
+      }
+      
+      // 转换为数组并连接
+      const codes = Array.from(uniqueSymbols).join(',');
+      
+      // 调用批量查询API，获取最近2个bar的数据
+      const response = await client.get('/market/batch-candles', {
+        params: {
+          codes: codes,
+          interval: timeframe,
+          limit: 2  // 获取最近2个bar的数据，用于计算更准确的价格变化百分比
+        }
+      });
+      
+      const batchData = response.data;
+      
+      // 处理批量数据，为每个股票创建概览信息
+      const marketOverviewData = symbolsData.map(item => {
+        const symbolData = batchData[item.code];
+        
+        if (symbolData) {
+          // 确保数据是数组格式（可能返回多条记录）
+          const dataArray = Array.isArray(symbolData) ? symbolData : [symbolData];
           
-          if (response.data.rows && response.data.rows.length > 0) {
-            const latestData = response.data.rows[0];
-            const isUp = latestData.close >= latestData.open;
-            const change = (latestData.close - latestData.open).toFixed(2);
-            const changePercent = ((latestData.close - latestData.open) / latestData.open * 100).toFixed(2);
+          // 如果有至少两个bar的数据，使用上一个bar的close作为基准计算变化
+          if (dataArray.length >= 2) {
+            // 按照时间排序，确保最新的数据在前
+            const sortedData = [...dataArray].sort((a, b) => new Date(b.datetime).getTime() - new Date(a.datetime).getTime());
+            const latestBar = sortedData[0];
+            const previousBar = sortedData[1];
+            
+            const isUp = latestBar.close >= previousBar.close;
+            const change = (latestBar.close - previousBar.close).toFixed(2);
+            const changePercent = ((latestBar.close - previousBar.close) / previousBar.close * 100).toFixed(2);
             
             return {
               id: item.code,
               code: item.code,
               name: item.name,
-              price: formatPrice(latestData.close),
+              price: latestBar.close,
               change: change,
               changePercent: changePercent,
               trend: isUp ? 'up' : 'down'
             };
           } else {
-            // 如果没有数据，返回基本信息
+            // 只有一个bar的数据，使用开盘价和收盘价计算变化
+            const latestBar = dataArray[0];
+            const isUp = latestBar.close >= latestBar.open;
+            const change = (latestBar.close - latestBar.open).toFixed(2);
+            const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
+            
             return {
               id: item.code,
               code: item.code,
               name: item.name,
-              price: '0.00',
-              change: '0.00',
-              changePercent: '0.00',
-              trend: 'up'
+              price: latestBar.close,
+              change: change,
+              changePercent: changePercent,
+              trend: isUp ? 'up' : 'down'
             };
           }
-        } catch (error) {
-          console.error(`Failed to fetch market data for ${item.code}:`, error);
-          // 出错时返回基本信息
+        } else {
+          // 如果没有数据，返回基本信息
           return {
             id: item.code,
             code: item.code,
             name: item.name,
-            price: '0.00',
+            price: '-',
             change: '0.00',
             changePercent: '0.00',
-            trend: 'up'
+            trend: 'neutral'
           };
         }
       });
       
-      const overviewData = await Promise.all(overviewPromises);
-      setMarketOverview(overviewData);
+      setMarketOverview(marketOverviewData);
     } catch (error) {
-      console.error('Failed to load market overview:', error);
+      console.error('批量获取市场概览数据失败:', error);
+      
+      // 出错时降级为单个查询模式，确保功能正常
+      try {
+        const overviewPromises = symbolsData.map(async (item) => {
+          try {
+            // 根据不同的时间周期调用不同的API
+            let latestData = null;
+            
+            if (['1m', '5m', '15m', '30m', '1h', '4h'].includes(timeframe)) {
+              const response = await client.get('/market/candles', {
+                params: {
+                  code: item.code,
+                  interval: timeframe,
+                  limit: 1
+                }
+              });
+              latestData = response.data.rows && response.data.rows.length > 0 ? response.data.rows[0] : null;
+            } else if (['1D', '1W', '1M'].includes(timeframe)) {
+              const response = await client.get('/market/daily', {
+                params: {
+                  code: item.code,
+                  interval: timeframe,
+                  limit: 1
+                }
+              });
+              latestData = response.data.rows && response.data.rows.length > 0 ? response.data.rows[0] : null;
+            }
+            
+            if (latestData) {
+              const isUp = latestData.close >= latestData.open;
+              const change = (latestData.close - latestData.open).toFixed(2);
+              const changePercent = ((latestData.close - latestData.open) / latestData.open * 100).toFixed(2);
+              
+              return {
+                id: item.code,
+                code: item.code,
+                name: item.name,
+                price: latestData.close,
+                change: change,
+                changePercent: changePercent,
+                trend: isUp ? 'up' : 'down'
+              };
+            } else {
+              return {
+                id: item.code,
+                code: item.code,
+                name: item.name,
+                price: '-',
+                change: '0.00',
+                changePercent: '0.00',
+                trend: 'neutral'
+              };
+            }
+          } catch (itemError) {
+            console.error(`获取 ${item.code} 市场概览数据失败:`, itemError);
+            return {
+              id: item.code,
+              code: item.code,
+              name: item.name,
+              price: '-',
+              change: '0.00',
+              changePercent: '0.00',
+              trend: 'neutral'
+            };
+          }
+        });
+        
+        const marketOverviewData = await Promise.all(overviewPromises);
+        setMarketOverview(marketOverviewData);
+      } catch (fallbackError) {
+        console.error('降级获取市场概览数据也失败:', fallbackError);
+      }
     }
   };
-  
-  // 图表类型 - 修正类型定义，使用candlestick而不是candle
-  const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
-  
-  // 时间范围选择
-  const timeRanges = [
-    { label: '1D', value: 1 },
-    { label: '1W', value: 7 },
-    { label: '1M', value: 30 },
-    { label: '3M', value: 90 },
-    { label: '1Y', value: 365 },
-    { label: '5Y', value: 1825 },
-    { label: 'ALL', value: 0 },
-  ];
-  const [selectedTimeRange, setSelectedTimeRange] = useState<number>(7);
-  
-  // 蜡烛图数据
-  const [candleData, setCandleData] = useState<any[]>([]);
-  
-  // 市场概览数据
-  const [marketOverview, setMarketOverview] = useState<any[]>([]);
-  
-  // 加载状态
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  
+
   // 处理时间范围变更
   const handleTimeRangeChange = (range: number) => {
     setSelectedTimeRange(range);
-    
-    // 根据时间范围设置默认时间周期
-    switch(range) {
-      case 1: // 1D
-        setTimeframe('1m');
-        break;
-      case 7: // 1W
-        setTimeframe('5m');
-        break;
-      case 30: // 1M
-        setTimeframe('30m');
-        break;
-      case 90: // 3M
-        setTimeframe('1h');
-        break;
-      case 365: // 1Y
-        setTimeframe('1D');
-        break;
-      case 1825: // 5Y
-        setTimeframe('1W');
-        break;
-      case 0: // ALL
-        setTimeframe('1M');
-        break;
-      default:
-        break;
-    }
   };
-  
-  // 获取数据
+
+
+
+  // 获取蜡烛图数据
   const fetchData = async () => {
     if (!symbol) return;
     
     setIsLoading(true);
     try {
-      // 根据不同的时间周期调用不同的API
+      let response;
       if (['1m', '5m', '15m', '30m', '1h', '4h'].includes(timeframe)) {
-        // 短期数据调用candles接口
-        const data = await fetchCandlesData(symbol, timeframe);
-        // 转换数据格式，确保isUp字段存在
-        const formattedData = data.map((item: any) => ({
-          ...item,
-          isUp: item.close >= item.open
-        }));
-        setCandleData(formattedData);
+        response = await client.get('/market/candles', {
+          params: {
+            code: symbol,
+            interval: timeframe,
+            limit: selectedTimeRange || 300
+          }
+        });
       } else if (['1D', '1W', '1M'].includes(timeframe)) {
-        // 长期数据调用daily接口
-        const data = await fetchDailyData(symbol, timeframe);
-        // 转换数据格式，确保isUp字段存在
-        const formattedData = data.map((item: any) => ({
+        response = await client.get('/market/daily', {
+          params: {
+            code: symbol,
+            interval: timeframe,
+            limit: selectedTimeRange || 300
+          }
+        });
+      }
+      
+      if (response && response.data && response.data.rows) {
+        const processedData = response.data.rows.map((item: any) => ({
           ...item,
           isUp: item.close >= item.open
         }));
-        setCandleData(formattedData);
+        setCandleData(processedData);
       }
     } catch (error) {
-      console.error('Failed to fetch data:', error);
+      console.error('获取K线数据失败:', error);
     } finally {
       setIsLoading(false);
     }
   };
-  
-  // 初始化数据和监听变化
-  useEffect(() => {
-    fetchData();
-  }, [timeframe, selectedTimeRange, symbol]);
-  
+
+  // 格式化时间
+
+  // 计算刻度间隔
+
   // 图表配置
-  const chartOption: EChartsOption = useMemo(() => {
-    // 格式化时间轴标签
-    const formatTime = (value: number | string) => {
-      try {
-        const date = new Date(value.toString());
-        
-        // 分钟级别的时间周期（1m,5m,15m,30m,60m,1h,4h）
-        if (['1m', '5m', '15m', '30m', '60m', '1h', '4h'].includes(timeframe)) {
-          return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-        }
-        // 天级别的时间周期（1D,1W）
-        else if (['1D', '1W'].includes(timeframe)) {
-          return `${date.getMonth() + 1}/${date.getDate()}`;
-        }
-        // 月级别的时间周期（1M）
-        else if (timeframe === '1M') {
-          return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-        }
-        return value;
-      } catch (e) {
-        return value;
+  // 图表配置
+  const chartOption = useMemo(() => {
+    if (!candleData || candleData.length === 0) {
+      // 提供默认的空图表配置，防止option为null/undefined
+      return {
+        backgroundColor: '#0F0F1A',
+        title: {
+          text: '暂无数据',
+          textStyle: { color: '#fff' }
+        },
+        xAxis: [{ type: 'category', data: [], axisLine: { lineStyle: { color: '#4E4E6A' } }, axisLabel: { color: '#8E8EA0' } }],
+        yAxis: [
+          { type: 'value', axisLine: { lineStyle: { color: '#4E4E6A' } }, axisLabel: { color: '#8E8EA0' }, splitLine: { lineStyle: { color: '#2E2E4A' } } },
+          { type: 'value', axisLine: { show: false }, axisLabel: { show: false }, splitLine: { show: false } }
+        ],
+        series: []
+      };
+    }
+
+    // 准备数据
+    const dates = candleData.map(item => {
+      const date = new Date(item.datetime);
+      if (['1m', '5m', '15m', '30m', '1h', '4h'].includes(timeframe)) {
+        return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+      } else {
+        return `${date.getMonth() + 1}/${date.getDate()}`;
       }
+    });
+
+    const candlestickData = candleData.map(item => [
+      item.open,
+      item.close,
+      item.low,
+      item.high
+    ]);
+
+    const lineData = candleData.map(item => item.close);
+
+    // 格式化坐标轴的数值显示
+    const axisLabelFormatter = (value: number) => {
+      return formatPrice(value);
     };
-    
-    // 计算刻度间隔
-    const calculateInterval = (count: number) => {
-      // 根据数据量自动调节间隔
-      if (count <= 30) return 3;
-      if (count <= 50) return 5;
-      if (count <= 100) return 10;
-      if (count <= 200) return 20;
-      if (count <= 500) return 50;
-      return 100;
+
+    // 格式化成交量显示
+    const formatVolume = (value: number) => {
+      if (value >= 1000000) {
+        return (value / 1000000).toFixed(2) + 'M';
+      } else if (value >= 1000) {
+        return (value / 1000).toFixed(2) + 'K';
+      }
+      return value.toString();
     };
-    
-    return {
-      backgroundColor: 'transparent',
+
+    // 生成图表配置
+    const option = {
+      backgroundColor: '#0F0F1A',
       tooltip: {
         trigger: 'axis',
+        backgroundColor: 'rgba(15, 15, 26, 0.8)',
+        borderColor: '#4E4E6A',
+        textStyle: { color: '#fff' },
         axisPointer: {
           type: 'cross',
-          label: {
-            backgroundColor: '#6a7985'
-          }
+          lineStyle: { color: '#4E4E6A' }
         },
-        formatter: (params: any) => {
-          // 获取当前数据点的时间和索引
-          const datetime = params[0].axisValue;
-          const index = params[0].dataIndex;
+        formatter: function(params: any) {
+          if (!params || params.length === 0) return '';
           
-          // 格式化时间，确保精确到分钟
-          let formattedTime = datetime;
-          try {
-            const date = new Date(datetime.toString());
-            // 确保时间精确到分钟
-            formattedTime = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-          } catch (e) {
-            // 如果格式化失败，使用原始时间
-          }
-          
-          let result = `时间: ${formattedTime}<br/>`;
-          
-          // 完整显示OHLCV的原始值
-          if (candleData[index]) {
-            const data = candleData[index];
-            result += `开盘价: ${data.open}<br/>`;
-            result += `最高价: ${data.high}<br/>`;
-            result += `最低价: ${data.low}<br/>`;
-            result += `收盘价: ${data.close}<br/>`;
-            result += `成交量: ${data.volume}<br/>`;
+          let result = `${params[0].axisValue}<br/>`;
+          if (chartType === 'candlestick') {
+            result += `开: ${formatPrice(params[0].data[0])}<br/>`;
+            result += `收: ${formatPrice(params[0].data[1])}<br/>`;
+            result += `低: ${formatPrice(params[0].data[2])}<br/>`;
+            result += `高: ${formatPrice(params[0].data[3])}<br/>`;
+            // 添加成交量信息
+            if (params.length > 1 && params[1].value) {
+              result += `成交量: ${formatVolume(params[1].value)}`;
+            }
           } else {
-            // 如果没有完整数据，使用默认显示
-            params.forEach((param: any) => {
-              if (param.seriesName === '成交量') {
-                result += `${param.marker}${param.seriesName}: ${param.value}<br/>`;
-              } else {
-                result += `${param.marker}${param.seriesName}: ${param.value}<br/>`;
-              }
-            });
+            result += `价格: ${formatPrice(params[0].value)}<br/>`;
+            // 添加成交量信息
+            if (params.length > 1 && params[1].value) {
+              result += `成交量: ${formatVolume(params[1].value)}`;
+            }
           }
-          
           return result;
         }
       },
-      legend: {
-        data: ['K线', '成交量'],
-        textStyle: {
-          color: '#fff'
-        },
-        top: 10
-      },
       grid: [
-            {
-              left: '6%',
-              right: '4%',
-              top: 20,
-              height: '70%'
-            },
-            {
-              left: '6%',
-              right: '4%',
-              top: '72%',
-              height: '25%'
-            }
-          ],
+        { left: '5%', right: '2%', top: '5%', height: '60%' },
+        { left: '5%', right: '2%', bottom: '5%', height: '20%' }
+      ],
       xAxis: [
         {
           type: 'category',
-          data: candleData.map(item => item.datetime),
-          axisLine: { lineStyle: { color: '#4A4A6A' } },
-          axisLabel: {
-            color: '#8E8EA0',
-            formatter: formatTime,
-            interval: calculateInterval(candleData.length)
-          },
+          data: dates,
+          axisLine: { lineStyle: { color: '#4E4E6A' } },
+          axisLabel: { color: '#8E8EA0' },
           splitLine: { show: false },
           gridIndex: 0
         },
         {
           type: 'category',
-          data: candleData.map(item => item.datetime),
+          data: dates,
           axisLine: { show: false },
           axisLabel: { show: false },
           splitLine: { show: false },
@@ -420,89 +481,74 @@ const Dashboard: React.FC = () => {
       yAxis: [
         {
           type: 'value',
-          axisLine: { lineStyle: { color: '#4A4A6A' } },
-          axisLabel: {
-            color: '#8E8EA0',
-            formatter: (value: number) => formatPrice(value)
-          },
-          splitLine: {
-            lineStyle: {
-              color: '#2E2E4A'
-            }
-          },
+          position: 'left',
+          axisLine: { lineStyle: { color: '#4E4E6A' } },
+          axisLabel: { color: '#8E8EA0', formatter: axisLabelFormatter },
+          splitLine: { lineStyle: { color: '#2E2E4A' } },
           scale: true,
           gridIndex: 0
         },
         {
           type: 'value',
-          axisLine: { lineStyle: { color: '#4A4A6A' } },
-          axisLabel: {
-            color: '#8E8EA0',
-            formatter: (value: number) => formatVolume(value)
-          },
-          splitLine: {
-            lineStyle: {
-              color: '#2E2E4A'
-            }
-          },
+          position: 'left',
+          axisLine: { show: false },
+          axisLabel: { color: '#8E8EA0', formatter: formatVolume },
+          splitLine: { show: false },
           scale: true,
           gridIndex: 1
         }
       ],
       dataZoom: [
-          {
-            type: 'inside',
-            xAxisIndex: [0, 1],
-            start: 0,
-            end: 100,
-            filterMode: 'filter'
-          },
-          {
-              show: true,
-              xAxisIndex: [0, 1],
-              type: 'slider',
-              top: '95%',
-              height: 15,
-              start: 0,
-              end: 100,
-              handleStyle: {
-                color: '#8E8EA0',
-                height: 12
-              },
-              textStyle: {
-                color: '#8E8EA0',
-                fontSize: 8
-              },
-              backgroundColor: '#2E2E4A',
-              fillerColor: '#4A4A6A',
-              borderColor: '#1E1E2E'
-            }
-        ],
-      series: [
         {
-          name: chartType === 'candlestick' ? 'K线' : '价格',
+          type: 'inside',
+          xAxisIndex: [0, 1],
+          start: 0,
+          end: 100
+        },
+        {
+          type: 'slider',
+          xAxisIndex: [0, 1],
+          bottom: 10,
+          height: 20,
+          borderColor: '#4E4E6A',
+          backgroundColor: '#1E1E2E',
+          fillerColor: 'rgba(38, 166, 154, 0.2)',
+          handleStyle: { color: '#26A69A' },
+          textStyle: { color: '#8E8EA0' },
+          start: 0,
+          end: 100
+        }
+      ],
+      series: [
+        // K线图/折线图系列
+        {
+          name: chartType === 'candlestick' ? 'K线图' : '折线图',
           type: chartType,
-          data: chartType === 'candlestick' 
-            ? candleData.map(item => [item.open, item.close, item.low, item.high])
-            : candleData.map(item => item.close),
+          data: chartType === 'candlestick' ? candlestickData : lineData,
+          smooth: chartType === 'line',
           itemStyle: {
             color: '#52c41a',
             color0: '#ff4d4f',
             borderColor: '#52c41a',
             borderColor0: '#ff4d4f'
           },
-          barWidth: '60%',
+          lineStyle: {
+            color: '#26A69A'
+          },
           xAxisIndex: 0,
           yAxisIndex: 0
         },
+        // 成交量柱状图系列
         {
           name: '成交量',
           type: 'bar',
-          data: candleData.map(item => item.volume),
+          data: candleData.map(item => item.volume || 0),
           itemStyle: {
-            color: (params: any) => {
-              const index = params.dataIndex;
-              return candleData[index] && candleData[index].isUp ? '#52c41a' : '#ff4d4f';
+            color: function(params: any) {
+              // 根据K线的涨跌设置成交量柱子的颜色
+              const isUp = candleData[params.dataIndex] && candleData[params.dataIndex].isUp !== undefined ? 
+                           candleData[params.dataIndex].isUp : true;
+              return isUp ? '#52c41a' : '#ff4d4f';
             }
           },
           xAxisIndex: 1,
@@ -510,6 +556,8 @@ const Dashboard: React.FC = () => {
         }
       ]
     };
+
+    return option;
   }, [candleData, chartType, timeframe, formatPrice]);
 
   return (
@@ -524,7 +572,14 @@ const Dashboard: React.FC = () => {
               value={symbol}
               loading={isLoadingSymbols}
               style={{ width: 120, backgroundColor: '#2E2E4A', border: 'none', color: '#fff' }}
-              onChange={(value) => setSymbol(value)}
+              onChange={(value) => {
+                setSymbol(value);
+                // 从市场概览数据中查找并设置选中symbol的详细信息
+                const symbolInfo = marketOverview.find(item => item.code === value);
+                if (symbolInfo) {
+                  setSelectedSymbolData(symbolInfo);
+                }
+              }}
               options={symbols.map(item => ({
                 value: item.code,
                 label: item.name
@@ -533,7 +588,21 @@ const Dashboard: React.FC = () => {
             />
             
             <div style={{ marginLeft: '8px', color: '#fff', display: 'flex', alignItems: 'center' }}>
-              {candleData.length > 0 ? (
+              {selectedSymbolData ? (
+                <>
+                  <span style={{ marginRight: '8px' }}>{selectedSymbolData.price}</span>
+                  <span style={{ 
+                    color: selectedSymbolData.trend === 'up' ? '#52c41a' : '#ff4d4f', 
+                    display: 'flex', 
+                    alignItems: 'center' 
+                  }}>
+                    {selectedSymbolData.trend === 'up' ? 
+                      <ArrowUpOutlined /> : <ArrowDownOutlined />}
+                    {' '}{selectedSymbolData.trend === 'up' ? '+' : ''}{selectedSymbolData.change}
+                    {' ('}{selectedSymbolData.trend === 'up' ? '+' : ''}{selectedSymbolData.changePercent}%)
+                  </span>
+                </>
+              ) : candleData.length > 0 ? (
                 <>
                   <span style={{ marginRight: '8px' }}>{candleData[candleData.length - 1].close.toFixed(2)}</span>
                   <span style={{ 
@@ -555,43 +624,41 @@ const Dashboard: React.FC = () => {
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <div className="ant-input-search ant-input-search-small" style={{ width: 200, backgroundColor: '#2E2E4A', border: 'none' }}>
-            <input 
-              type="search" 
-              placeholder="搜索" 
-              className="ant-input ant-input-sm ant-input-search-input" 
-              style={{ backgroundColor: '#2E2E4A', border: 'none', color: '#fff' }}
+            <div className="ant-input-search ant-input-search-small" style={{ width: 200, backgroundColor: '#2E2E4A', border: 'none' }}>
+              <input 
+                type="search" 
+                placeholder="搜索" 
+                className="ant-input ant-input-sm ant-input-search-input" 
+                style={{ backgroundColor: '#2E2E4A', border: 'none', color: '#fff' }}
+              />
+              <span className="ant-input-search-icon" style={{ color: '#8E8EA0' }}>
+                <SearchOutlined />
+              </span>
+            </div>
+            
+
+            
+            <Button
+              type="text"
+              icon={<StarOutlined style={{ color: '#fff' }} />}
+              style={{ marginLeft: '16px', color: '#fff' }}
             />
-            <span className="ant-input-search-icon" style={{ color: '#8E8EA0' }}>
-              <SearchOutlined />
-            </span>
-          </div>
           
           <Button
             type="text"
-            icon={<StarOutlined style={{ color: '#fff' }} />
-            }
+            icon={<ShareAltOutlined style={{ color: '#fff' }} />}
             style={{ marginLeft: '16px', color: '#fff' }}
           />
           
           <Button
             type="text"
-            icon={<ShareAltOutlined style={{ color: '#fff' }} />
-            }
+            icon={<DownloadOutlined style={{ color: '#fff' }} />}
             style={{ marginLeft: '16px', color: '#fff' }}
           />
           
           <Button
             type="text"
-            icon={<DownloadOutlined style={{ color: '#fff' }} />
-            }
-            style={{ marginLeft: '16px', color: '#fff' }}
-          />
-          
-          <Button
-            type="text"
-            icon={<SettingOutlined style={{ color: '#fff' }} />
-            }
+            icon={<SettingOutlined style={{ color: '#fff' }} />}
             style={{ marginLeft: '16px', color: '#fff' }}
           />
           
@@ -608,10 +675,19 @@ const Dashboard: React.FC = () => {
             marketOverview.map(item => (
               <div 
                 key={item.id} 
-                style={{ marginBottom: 12, padding: 8, backgroundColor: '#2E2E4A', borderRadius: 4, cursor: 'pointer' }}
+                style={{ 
+                  marginBottom: 12, 
+                  padding: 8, 
+                  backgroundColor: symbol === item.code ? '#3E3E5A' : '#2E2E4A', 
+                  borderRadius: 4, 
+                  cursor: 'pointer' 
+                }}
                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3E3E5A'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2E2E4A'}
-                onClick={() => setSymbol(item.code)}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = symbol === item.code ? '#3E3E5A' : '#2E2E4A'}
+                onClick={() => {
+                  setSymbol(item.code);
+                  setSelectedSymbolData(item);
+                }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <div style={{ color: '#fff', fontWeight: 'bold' }}>{item.name}</div>
@@ -637,9 +713,9 @@ const Dashboard: React.FC = () => {
         {/* 右侧图表区域 - 占据剩余空间 */}
         <div style={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
             {/* 图表控制区域 - 紧凑布局 */}
-            <div style={{ marginBottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1px 2px', height: '30px' }}>
+            <div style={{ marginBottom: 0, display: 'flex', alignItems: 'center', padding: '1px 2px', height: '30px' }}>
               {/* 时间周期选择 - 移除限制，所有周期都可用 */}
-              <div style={{ display: 'flex' }}>
+              <div style={{ display: 'flex', marginRight: 'auto' }}>
                 {['1m', '5m', '15m', '30m', '60m', '1h', '4h', '1D', '1W', '1M'].map((period) => (
                   <Button
                     key={period}
@@ -659,8 +735,8 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
               
-              {/* 图表类型选择 */}
-              <div style={{ display: 'flex' }}>
+              {/* 图表类型选择和显示控制 - 使用相对定位调整位置 */}
+              <div style={{ display: 'flex', justifyContent: 'center', flex: 1, position: 'relative', left: '-55px' }}>
                 <Button
                   size="small"
                   icon={<BarChartOutlined />}
@@ -673,12 +749,12 @@ const Dashboard: React.FC = () => {
                   icon={<LineChartOutlined />}
                   type={chartType === 'line' ? 'primary' : 'default'}
                   onClick={() => setChartType('line')}
-                  style={{ marginRight: '2px', padding: '2px 4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
+                  style={{ marginRight: '8px', padding: '2px 4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
                 />
               </div>
               
               {/* 时间范围选择 */}
-              <div style={{ display: 'flex' }}>
+              <div style={{ display: 'flex', marginLeft: 'auto' }}>
                 {timeRanges.map((range) => (
                   <Button
                     key={range.value}
