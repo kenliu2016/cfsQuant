@@ -47,3 +47,20 @@
 - **策略只决定目标仓位**，不负责成交逻辑。  
 - **引擎决定能否成交**（资金是否足够、是否触发冷却期、交易费用等）。  
 - **策略与引擎解耦**：策略可单独运行做信号可视化，引擎统一负责交易回测。  
+
+
+
+# 拉取日线历史 + 订阅日线实时数据
+python app/cli_ingest_1k_ws.py --interval 1d
+
+# 只拉取分钟线历史数据
+python app/cli_ingest_1k_ws.py --rest-only --interval 1m
+
+# Binance 数据适配器用法示例
+1. 批量并发拉取多个交易对
+python -m app.cli_ingest_history --symbols BTCUSDT,ETHUSDT,BNBUSDT --interval 1m --start 2025-09-10 --end 2025-09-16 --force --workers 3
+
+这里 --workers 3 表示同时开 3 个线程，分别拉不同交易对。
+
+2. 单币种（默认 1 个线程）
+python -m app.cli_ingest_history --symbols BTCUSDT --interval 1d --start 2025-09-01 --end 2025-09-16 --force

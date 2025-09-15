@@ -336,14 +336,41 @@ const Dashboard: React.FC = () => {
           }
         },
         formatter: (params: any) => {
-          let result = `${params[0].axisValue}<br/>`;
-          params.forEach((param: any) => {
-            if (param.seriesName === '成交量') {
-              result += `${param.marker}${param.seriesName}: ${param.value.toLocaleString()}<br/>`;
-            } else {
-              result += `${param.marker}${param.seriesName}: ${formatPrice(param.value)}<br/>`;
-            }
-          });
+          // 获取当前数据点的时间和索引
+          const datetime = params[0].axisValue;
+          const index = params[0].dataIndex;
+          
+          // 格式化时间，确保精确到分钟
+          let formattedTime = datetime;
+          try {
+            const date = new Date(datetime.toString());
+            // 确保时间精确到分钟
+            formattedTime = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+          } catch (e) {
+            // 如果格式化失败，使用原始时间
+          }
+          
+          let result = `时间: ${formattedTime}<br/>`;
+          
+          // 完整显示OHLCV的原始值
+          if (candleData[index]) {
+            const data = candleData[index];
+            result += `开盘价: ${data.open}<br/>`;
+            result += `最高价: ${data.high}<br/>`;
+            result += `最低价: ${data.low}<br/>`;
+            result += `收盘价: ${data.close}<br/>`;
+            result += `成交量: ${data.volume}<br/>`;
+          } else {
+            // 如果没有完整数据，使用默认显示
+            params.forEach((param: any) => {
+              if (param.seriesName === '成交量') {
+                result += `${param.marker}${param.seriesName}: ${param.value}<br/>`;
+              } else {
+                result += `${param.marker}${param.seriesName}: ${param.value}<br/>`;
+              }
+            });
+          }
+          
           return result;
         }
       },

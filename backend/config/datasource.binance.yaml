@@ -1,0 +1,17 @@
+# Binance 数据源配置
+binance:
+  api_key: ""
+  api_secret: ""
+  rest:
+    enabled: true
+    symbols: ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+    interval: "1m"
+    limit: 100000
+    start_time: "2023-01-01"
+    end_time: ""
+  websocket:
+    enabled: true
+    symbols: ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+    interval: "1m"
+    save_mode: "final"      # 可选：final（收盘保存）/ realtime（实时更新）
+    multi_thread: true
