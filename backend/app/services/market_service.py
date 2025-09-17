@@ -11,7 +11,7 @@ def aggregate_kline_data(df, interval):
     
     Args:
         df: K线数据DataFrame，必须包含datetime, code, open, high, low, close, volume列
-        interval: 聚合周期，支持5T,15T,30T,H,4H,D,W,M
+        interval: 前端传入的原始时间间隔参数，如1m,5m,15m,30m,1h,4h,1D等
     
     Returns:
         聚合后的K线数据DataFrame
@@ -50,17 +50,40 @@ def aggregate_kline_data(df, interval):
             # 设置datetime为索引
             group = group.set_index('datetime')
             
+            # 创建前端传入interval到聚合函数所需interval的映射表
+            interval_mapping = {
+                "1m": "1T",  # 1分钟
+                "5m": "5T",  # 5分钟
+                "15m": "15T",  # 15分钟
+                "30m": "30T",  # 30分钟
+                "60m": "H",  # 60分钟
+                "1h": "H",   # 1小时
+                "4h": "4H",  # 4小时
+                "1D": "D",   # 1天
+                "1W": "W",   # 1周
+                "1M": "M",   # 1月
+                # 可以根据需要添加更多映射
+            }
+            
+            # 检查传入的interval是否在映射表中
+            if interval in interval_mapping:
+                # 使用映射后的interval
+                processed_interval = interval_mapping[interval]
+            else:
+                # 对于不在映射表中的interval，直接使用
+                processed_interval = interval
+            
             # 转换弃用的时间频率格式
             # 'T'(分钟) -> 'min', 'H'(小时) -> 'h'
-            if 'T' in interval:
+            if 'T' in processed_interval:
                 # 处理分钟频率，如5T -> 5min
-                freq = interval.replace('T', 'min')
-            elif 'H' in interval:
+                freq = processed_interval.replace('T', 'min')
+            elif 'H' in processed_interval:
                 # 处理小时频率，如H -> h, 4H -> 4h
-                freq = interval.lower()
+                freq = processed_interval.lower()
             else:
                 # 其他频率保持不变 (D, W, M)
-                freq = interval
+                freq = processed_interval
             
             # 重新采样并聚合
             resampled = group.resample(freq).agg(agg_dict).dropna()
@@ -177,24 +200,9 @@ def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int
         try:
             df = fetch_df(sql, code=code, start=start_dt, end=end_dt)
             
-            # 根据interval参数调用聚合函数
-            if interval == "5m":
-                df = aggregate_kline_data(df, "5T")
-            elif interval == "15m":
-                df = aggregate_kline_data(df, "15T")
-            elif interval == "30m":
-                df = aggregate_kline_data(df, "30T")
-            elif interval == "1h":
-                df = aggregate_kline_data(df, "H")
-            elif interval == "4h":
-                df = aggregate_kline_data(df, "4H")
-            elif interval == "1d":
-                df = aggregate_kline_data(df, "D")
-            elif interval == "1w":
-                df = aggregate_kline_data(df, "W")
-            elif interval == "1M":
-                df = aggregate_kline_data(df, "M")
-                
+            # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
+            df = aggregate_kline_data(df, interval)
+            
             return df
         except Exception as e:
             # 其他异常处理
@@ -224,23 +232,8 @@ def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int
         count_df = fetch_df(count_sql, code=code, start=start_dt, end=end_dt)
         total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
         
-        # 根据interval参数调用聚合函数
-        if interval == "5m":
-            df = aggregate_kline_data(df, "5T")
-        elif interval == "15m":
-            df = aggregate_kline_data(df, "15T")
-        elif interval == "30m":
-            df = aggregate_kline_data(df, "30T")
-        elif interval == "1h":
-            df = aggregate_kline_data(df, "H")
-        elif interval == "4h":
-            df = aggregate_kline_data(df, "4H")
-        elif interval == "1d":
-            df = aggregate_kline_data(df, "D")
-        elif interval == "1w":
-            df = aggregate_kline_data(df, "W")
-        elif interval == "1M":
-            df = aggregate_kline_data(df, "M")
+        # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
+        df = aggregate_kline_data(df, interval)
         
         return df, total_count
     except Exception as e:
@@ -302,13 +295,9 @@ def get_predictions(code: str, start: str, end: str, interval: str = None, page:
         try:
             df = fetch_df(sql, code=code, start=start_dt, end=end_dt)
             
-            # 根据interval参数调用聚合函数
-            if interval == "1D":
-                df = aggregate_kline_data(df, "D")
-            elif interval == "1W":
-                df = aggregate_kline_data(df, "W")
-            elif interval == "1M":
-                df = aggregate_kline_data(df, "M")
+            # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
+            if interval:
+                df = aggregate_kline_data(df, interval)
             
             return df
         except Exception as e:
@@ -409,7 +398,16 @@ def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", pag
     
     # 不使用分页时
     if page is None or page_size is None:
-        return fetch_df(sql, code=code, start=start_dt, end=end_dt)
+        try:
+            df = fetch_df(sql, code=code, start=start_dt, end=end_dt)
+            
+            # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
+            df = aggregate_kline_data(df, interval)
+            
+            return df
+        except Exception as e:
+            logger.error(f"获取日线数据失败: {e}")
+            return pd.DataFrame()
     
     # 使用分页时
     offset = (page - 1) * page_size
@@ -430,13 +428,8 @@ def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", pag
         count_df = fetch_df(count_sql, code=code, start=start_dt, end=end_dt)
         total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
         
-        # 根据interval参数调用聚合函数
-        if interval == "1D":
-            df = aggregate_kline_data(df, "D")
-        elif interval == "1W":
-            df = aggregate_kline_data(df, "W")
-        elif interval == "1M":
-            df = aggregate_kline_data(df, "M")
+        # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
+        df = aggregate_kline_data(df, interval)
         
         return df, total_count
     except Exception as e:
@@ -463,7 +456,7 @@ def get_intraday(code: str, start: str, end: str, page: int = None, page_size: i
     return get_candles(code, start, end, '1m', page, page_size)
 
 @cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1):
+def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timestamp: str = None):
     """
     批量获取多个股票代码的最新K线数据，使用缓存装饰器优化性能
     缓存过期时间：5分钟
@@ -476,6 +469,10 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1):
     Returns:
         包含多个股票代码最新数据的DataFrame
     """
+    # 仅保留必要的错误日志记录
+    import logging
+    logger = logging.getLogger("market_service")
+    
     # 验证参数
     if not codes or not isinstance(codes, list):
         return pd.DataFrame()
@@ -591,19 +588,22 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1):
             if all_monthly_data:
                 df = pd.concat(all_monthly_data, ignore_index=True)
         else:
-            # 对于其他周期，使用aggregate_kline_data函数进行聚合处理
-            if interval == "5m":
-                df = aggregate_kline_data(df, "5T")
-            elif interval == "15m":
-                df = aggregate_kline_data(df, "15T")
-            elif interval == "30m":
-                df = aggregate_kline_data(df, "30T")
-            elif interval == "1h":
-                df = aggregate_kline_data(df, "H")
-            elif interval == "4h":
-                df = aggregate_kline_data(df, "4H")
-            elif interval == "1D":
-                df = aggregate_kline_data(df, "D")
+            # 对于其他周期，直接使用aggregate_kline_data函数进行聚合处理
+            # 注意：interval映射逻辑已移至aggregate_kline_data函数内部实现
+            df = aggregate_kline_data(df, interval)
+        
+        # 记录返回结果的基本信息
+        if not df.empty:
+            # 按代码分组，记录每个代码的时间范围
+            code_time_ranges = []
+            for code, group in df.groupby('code'):
+                min_time = group['datetime'].min()
+                max_time = group['datetime'].max()
+                code_time_ranges.append(f"{code}: [{min_time}, {max_time}]")
+            
+            logger.info(f"批量查询结果: total_rows={len(df)}, total_columns={len(df.columns)}, code_time_ranges={', '.join(code_time_ranges)}")
+        else:
+            logger.info("批量查询结果: 空DataFrame")
         
         return df
     except Exception as e:

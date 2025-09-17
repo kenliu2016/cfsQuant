@@ -25,21 +25,15 @@ DEFAULT_BACKTEST_PARAMS = {
 }
 
 # --- 日志记录器配置 ---
-service_dir = os.path.dirname(os.path.abspath(__file__))
-backtest_dir = os.path.dirname(os.path.dirname(os.path.dirname(service_dir)))
-logs_dir = os.path.join(backtest_dir, "logs")
-os.makedirs(logs_dir, exist_ok=True)
-log_file = os.path.join(logs_dir, "backtest_trades_debug.log")
-backtest_logger = logging.getLogger("backtest_service")
-backtest_logger.setLevel(logging.DEBUG)
-for handler in backtest_logger.handlers[:]:
-    backtest_logger.removeHandler(handler)
-file_handler = logging.FileHandler(log_file, mode='w') # 使用'w'模式在每次回测时覆盖日志
-file_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-file_handler.setFormatter(formatter)
-backtest_logger.addHandler(file_handler)
-backtest_logger.propagate = False
+from ..common import setup_logger_with_file_handler
+
+# 配置日志记录器
+backtest_logger = setup_logger_with_file_handler(
+    logger_name="backtest_service",
+    log_filename="backtest_trades_debug.log",
+    log_level=logging.DEBUG,
+    mode='w'  # 使用'w'模式在每次回测时覆盖日志
+)
 
 # 全局日志开关状态
 global_logging_enabled = True

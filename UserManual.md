@@ -51,14 +51,14 @@
 
 
 # 拉取日线历史 + 订阅日线实时数据
-python app/cli_ingest_1k_ws.py --interval 1d
+python app/cli_ingest_1k_ws.py --interval 1m
 
 # 只拉取分钟线历史数据
 python app/cli_ingest_1k_ws.py --rest-only --interval 1m
 
 # Binance 数据适配器用法示例
 1. 批量并发拉取多个交易对
-python -m app.cli_ingest_history --symbols BTCUSDT,ETHUSDT,BNBUSDT --interval 1m --start 2025-09-10 --end 2025-09-16 --force --workers 3
+python -m app.cli_ingest_history --symbols BTCUSDT,ETHUSDT,BNBUSDT --interval 1m --start 2025-09-10 --end 2025-09-18 --force --workers 3
 
 这里 --workers 3 表示同时开 3 个线程，分别拉不同交易对。
 

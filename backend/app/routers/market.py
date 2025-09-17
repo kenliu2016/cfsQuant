@@ -176,15 +176,16 @@ def intraday(code: str = Query(...), start: str = Query(...), end: str = Query(.
 @router.get("/batch-candles")
 def batch_candles(codes: str = Query(..., description="股票代码列表，用逗号分隔"),
                   interval: str = Query("1m", description="时间间隔"),
-                  limit: int = Query(2, ge=1, description="每个股票返回的bar数量，默认返回最近2个bar的数据")):
+                  limit: int = Query(2, ge=1, description="每个股票返回的bar数量，默认返回最近2个bar的数据"),
+                  timestamp: str = Query(None, description="时间戳，用于缓存优化，精确到分钟")):
     """
     批量获取多个股票代码的最新K线数据
     """
     # 将逗号分隔的字符串转换为列表
     code_list = [code.strip() for code in codes.split(",") if code.strip()]
     
-    # 调用服务层的批量查询函数，传递limit参数
-    df = get_batch_candles(code_list, interval, limit)
+    # 调用服务层的批量查询函数，传递limit参数和timestamp参数
+    df = get_batch_candles(code_list, interval, limit, timestamp)
     
     # 处理结果
     if "datetime" in df.columns:
