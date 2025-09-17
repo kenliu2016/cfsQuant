@@ -61,7 +61,7 @@ def aggregate_kline_data(df, interval):
                 "4h": "4H",  # 4小时
                 "1D": "D",   # 1天
                 "1W": "W",   # 1周
-                "1M": "M",   # 1月
+                "1M": "ME",   # 1月
                 # 可以根据需要添加更多映射
             }
             
@@ -74,7 +74,6 @@ def aggregate_kline_data(df, interval):
                 processed_interval = interval
             
             # 转换弃用的时间频率格式
-            # 'T'(分钟) -> 'min', 'H'(小时) -> 'h'
             if 'T' in processed_interval:
                 # 处理分钟频率，如5T -> 5min
                 freq = processed_interval.replace('T', 'min')
@@ -82,7 +81,7 @@ def aggregate_kline_data(df, interval):
                 # 处理小时频率，如H -> h, 4H -> 4h
                 freq = processed_interval.lower()
             else:
-                # 其他频率保持不变 (D, W, M)
+                # 其他频率保持不变 (D, W, M) - 'M'在pandas中表示月份
                 freq = processed_interval
             
             # 重新采样并聚合
@@ -114,12 +113,7 @@ def aggregate_kline_data(df, interval):
     return aggregated_df
 
 
-from .cache_service import (
-    cache_dataframe_result,
-    DEFAULT_EXPIRE_TIME,
-    LONG_EXPIRE_TIME,
-    clear_market_data_cache
-)
+from .cache_service import (cache_dataframe_result,DEFAULT_EXPIRE_TIME,LONG_EXPIRE_TIME,clear_market_data_cache)
 
 @cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
 def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int = None, page_size: int = None):
@@ -534,18 +528,18 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
                 SELECT 
                     MIN(datetime) as datetime,
                     code,
-                    FIRST(open) as open,
+                    MIN(open) FILTER (WHERE datetime = (SELECT MIN(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW'))) as open,
                     MAX(high) as high,
                     MIN(low) as low,
-                    LAST(close) as close,
+                    MAX(close) FILTER (WHERE datetime = (SELECT MAX(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW'))) as close,
                     SUM(volume) as volume
                 FROM 
-                    day_realtime
+                    day_realtime dr
                 WHERE 
                     code = :code
                 GROUP BY 
                     code,
-                    strftime('%Y-%W', datetime)
+                    TO_CHAR(datetime, 'IYYY-IW')
                 ORDER BY 
                     datetime DESC
                 LIMIT 1
@@ -565,18 +559,18 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
                 SELECT 
                     MIN(datetime) as datetime,
                     code,
-                    FIRST(open) as open,
+                    MIN(open) FILTER (WHERE datetime = (SELECT MIN(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM'))) as open,
                     MAX(high) as high,
                     MIN(low) as low,
-                    LAST(close) as close,
+                    MAX(close) FILTER (WHERE datetime = (SELECT MAX(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM'))) as close,
                     SUM(volume) as volume
                 FROM 
-                    day_realtime
+                    day_realtime dr
                 WHERE 
                     code = :code
                 GROUP BY 
                     code,
-                    strftime('%Y-%m', datetime)
+                    TO_CHAR(datetime, 'YYYY-MM')
                 ORDER BY 
                     datetime DESC
                 LIMIT 1

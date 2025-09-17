@@ -59,10 +59,6 @@ const fetchSymbolsFromCSV = async () => {
   }
 };
 
-// 调用API获取candles数据
-
-// 调用API获取daily数据
-
 // 格式化价格显示
 const formatPrice = (value: number) => {
   return formatPriceWithUnit(value);
@@ -356,7 +352,6 @@ const Dashboard: React.FC = () => {
         setIsLoadingSymbols(false);
       }
     };
-
     loadSymbols();
   }, []);
 
@@ -387,31 +382,13 @@ const Dashboard: React.FC = () => {
     }
   }, [marketOverview, symbol]);
 
-  // 根据不同时间周期设置默认查询天数
-  useEffect(() => {
-    const daysMap: Record<string, number> = {
-      '1m': 1,
-      '5m': 1,
-      '15m': 1,
-      '30m': 1,
-      '1h': 3,
-      '4h': 7,
-      '1D': 90,
-      '1W': 365,
-      '1M': 1825,
-    };
-    
-    if (daysMap[timeframe]) {
-      setSelectedTimeRange(daysMap[timeframe]);
-    }
-  }, [timeframe]);
 
   // 监听变化并获取数据
   useEffect(() => {
     if (symbol && selectedTimeRange !== undefined) {
       fetchData();
     }
-  }, [symbol, selectedTimeRange, timeframe]);
+  }, [symbol, timeframe]);
 
   // 调用API获取市场概览数据 - 使用批量查询优化性能
   const loadMarketOverview = async (symbolsData: { code: string; name: string; exchange: string; type: string }[]) => {
@@ -578,16 +555,14 @@ const Dashboard: React.FC = () => {
         response = await client.get('/market/candles', {
           params: {
             code: symbol,
-            interval: timeframe,
-            limit: selectedTimeRange || 300
+            interval: timeframe
           }
         });
       } else if (['1D', '1W', '1M'].includes(timeframe)) {
         response = await client.get('/market/daily', {
           params: {
             code: symbol,
-            interval: timeframe,
-            limit: selectedTimeRange || 300
+            interval: timeframe
           }
         });
       }
