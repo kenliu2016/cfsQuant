@@ -50,8 +50,13 @@ def candles(code: str = Query(...), start: str = Query(None), end: str = Query(N
                 start_dt = datetime.strptime(start, "%Y-%m-%d")
                 end_dt = datetime.strptime(end, "%Y-%m-%d")
             except ValueError:
-                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+                try:
+                    start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+                    end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+                except ValueError:
+                    # 支持ISO 8601格式，带有毫秒和时区信息
+                    start_dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+                    end_dt = datetime.strptime(end[:19], "%Y-%m-%dT%H:%M:%S")
             
     result = get_candles(code, start_dt, end_dt, interval, page, page_size)
     
@@ -111,8 +116,13 @@ def daily(code: str = Query(...), start: str = Query(None), end: str = Query(Non
                 start_dt = datetime.strptime(start, "%Y-%m-%d")
                 end_dt = datetime.strptime(end, "%Y-%m-%d")
             except ValueError:
-                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+                try:
+                    start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+                    end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
+                except ValueError:
+                    # 支持ISO 8601格式，带有毫秒和时区信息
+                    start_dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+                    end_dt = datetime.strptime(end[:19], "%Y-%m-%dT%H:%M:%S")
             
     result = get_daily_candles(code, start_dt, end_dt, interval, page, page_size)
     

@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Select, Button, Modal, Checkbox, message } from 'antd';
+import { Select, Button, Modal, Checkbox, message, DatePicker } from 'antd';
+import type { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, BarChartOutlined, LineChartOutlined, CodeOutlined, CloseOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import client from '../api/client';
@@ -86,17 +88,14 @@ const Dashboard: React.FC = () => {
   const [timeframe, setTimeframe] = useState<string>('1D');
   // 图表类型 - 修正类型定义，使用candlestick而不是candle
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
-  // 时间范围选择
-  const timeRanges = [
-    { label: '1D', value: 1 },
-    { label: '1W', value: 7 },
-    { label: '1M', value: 30 },
-    { label: '3M', value: 90 },
-    { label: '1Y', value: 365 },
-    { label: '5Y', value: 1825 },
-    { label: 'ALL', value: 0 },
-  ];
-  const [selectedTimeRange, setSelectedTimeRange] = useState<number>(7);
+  // 日期范围选择状态
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
+  const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
+  // 日历选择器是否有光标激活
+  const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
+  // 定时器引用，用于5秒后自动收起日历选择器
+  const datePickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 
   // 策略相关状态
   const [showStrategiesModal, setShowStrategiesModal] = useState<boolean>(false);
@@ -130,6 +129,28 @@ const Dashboard: React.FC = () => {
       setStrategiesData([]);
     }
   };
+
+  // 监听showDatePicker和isDatePickerFocused状态变化，实现5秒自动收起日历选择器
+  useEffect(() => {
+    // 清除之前的定时器
+    if (datePickerTimerRef.current) {
+      clearTimeout(datePickerTimerRef.current);
+    }
+
+    // 当日历选择器显示且没有光标激活时，设置5秒后自动收起的定时器
+    if (showDatePicker && !isDatePickerFocused) {
+      datePickerTimerRef.current = setTimeout(() => {
+        setShowDatePicker(false);
+      }, 5000); // 5秒后自动收起
+    }
+
+    // 在组件卸载或重新渲染时清除定时器
+    return () => {
+      if (datePickerTimerRef.current) {
+        clearTimeout(datePickerTimerRef.current);
+      }
+    };
+  }, [showDatePicker, isDatePickerFocused]);
 
   // 生成模拟买卖信号数据
   const generateMockSignals = (): BacktestSignal[] => {
@@ -240,7 +261,7 @@ const Dashboard: React.FC = () => {
         // 根据backtest.py路由器，正确的参数名称和结构如下：
         const response = await client.post('/backtest', {
           code: symbol, // 后端期望的参数名是code而不是symbol
-          start: new Date(Date.now() - selectedTimeRange * 24 * 60 * 60 * 1000).toISOString(), // 后端期望的参数名是start而不是startDate
+          start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), // 使用默认的7天时间范围
           end: new Date().toISOString(), // 后端期望的参数名是end而不是endDate
           strategy: strategyId, // 后端期望的参数名是strategy而不是strategyId
           params: { timeframe } // 额外参数包装在params对象中
@@ -385,7 +406,7 @@ const Dashboard: React.FC = () => {
 
   // 监听变化并获取数据
   useEffect(() => {
-    if (symbol && selectedTimeRange !== undefined) {
+    if (symbol) {
       fetchData();
     }
   }, [symbol, timeframe]);
@@ -539,32 +560,30 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // 处理时间范围变更
-  const handleTimeRangeChange = (range: number) => {
-    setSelectedTimeRange(range);
-  };
+  // 已移除时间范围选择相关函数
 
   // 获取蜡烛图数据
-  const fetchData = async () => {
+  const fetchData = async (startTime?: Date, endTime?: Date) => {
     if (!symbol) return;
     
     setIsLoading(true);
     try {
       let response;
+      const params: any = {
+        code: symbol,
+        interval: timeframe
+      };
+      
+      // 如果提供了开始和结束时间，则添加到参数中
+      if (startTime && endTime) {
+        params.start = startTime.toISOString();
+        params.end = endTime.toISOString();
+      }
+      
       if (['1m', '5m', '15m', '30m', '1h', '4h'].includes(timeframe)) {
-        response = await client.get('/market/candles', {
-          params: {
-            code: symbol,
-            interval: timeframe
-          }
-        });
+        response = await client.get('/market/candles', { params });
       } else if (['1D', '1W', '1M'].includes(timeframe)) {
-        response = await client.get('/market/daily', {
-          params: {
-            code: symbol,
-            interval: timeframe
-          }
-        });
+        response = await client.get('/market/daily', { params });
       }
       
       if (response && response.data && response.data.rows) {
@@ -1148,35 +1167,113 @@ const Dashboard: React.FC = () => {
 
         {/* 图表工具栏 */}
         <div style={{ padding: '4px 8px', backgroundColor: '#1E1E2E', display: 'flex', alignItems: 'center', borderBottom: '1px solid #3E3E5A' }}>
-          {/* 时间周期选择 - 确保所有周期都可用且可点击 */}
-          <div style={{ display: 'flex', marginRight: 'auto', position: 'relative', zIndex: 10 }}>
-            {['1m', '5m', '15m', '30m', '60m', '1h', '4h', '1D', '1W', '1M'].map((period) => (
-              <Button
-                key={period}
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTimeframe(period);
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {/* 时间周期选择 - 确保所有周期都可用且可点击 */}
+            <div style={{ display: 'flex', position: 'relative', zIndex: 10 }}>
+              {['1m', '5m', '15m', '30m', '60m', '1h', '4h', '1D', '1W', '1M'].map((period) => (
+                <Button
+                  key={period}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTimeframe(period);
+                    // 切换时间周期时清除日期范围
+                    setDateRange([null, null]);
+                  }}
+                  style={{
+                    marginRight: '2px',
+                    padding: '2px 6px',
+                    backgroundColor: timeframe === period ? '#26A69A' : '#2E2E4A',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    pointerEvents: 'auto'
+                  }}
+                  className="timeframe-button"
+                >
+                  {period}
+                </Button>
+              ))}
+            </div>
+            
+            {/* 日期范围选择控件及显示 - 移至周期选择列表后面 */}
+            <div style={{ display: 'flex', alignItems: 'center', marginLeft: '8px', position: 'relative' }}>
+              {/* 显示当前选择的日期范围，可直接点击触发日历选择器 */}
+              <div 
+                onClick={() => {
+                  setShowDatePicker(!showDatePicker);
                 }}
                 style={{
-                  marginRight: '2px',
-                  padding: '2px 6px',
-                  backgroundColor: timeframe === period ? '#26A69A' : '#2E2E4A',
-                  border: 'none',
-                  color: '#fff',
+                  padding: '2px 8px',
+                  backgroundColor: '#1E1E3A',
+                  borderRadius: '4px',
                   fontSize: '11px',
-                  cursor: 'pointer',
-                  pointerEvents: 'auto'
+                  color: dateRange[0] && dateRange[1] ? '#26A69A' : '#888',
+                  minWidth: '220px',
+                  cursor: 'pointer'
                 }}
-                className="timeframe-button"
               >
-                {period}
-              </Button>
-            ))}
+                {dateRange[0] && dateRange[1] ? 
+                  `${dateRange[0].format('YYYY-MM-DD HH:mm')} - ${dateRange[1].format('YYYY-MM-DD HH:mm')}` : 
+                  '请选择日期范围'
+                }
+              </div>
+              {showDatePicker && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  zIndex: 1000,
+                  backgroundColor: '#3E3E5A',
+                  padding: '8px',
+                  borderRadius: '4px',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)'
+                }}
+                onMouseEnter={() => setIsDatePickerFocused(true)}
+                onMouseLeave={() => setIsDatePickerFocused(false)}>
+                  <DatePicker.RangePicker
+                    size="small"
+                    value={dateRange}
+                    format="YYYY-MM-DD HH:mm"
+                    showTime={{ 
+                      defaultValue: [
+                        dayjs().hour(0).minute(0),
+                        dayjs().hour(0).minute(0)
+                      ]
+                    }}
+                    // 禁用未来的时间
+                    disabledDate={(current) => {
+                      // 禁用今天之后的日期
+                      return current && current > dayjs().endOf('day');
+                    }}
+                    disabledTime={(current) => {
+                      // 禁用今天之后的时间
+                      if (current && current.isSame(dayjs(), 'day')) {
+                        // 允许选择今天的所有时间
+                        return { disabledHours: () => [], disabledMinutes: () => [], disabledSeconds: () => [] };
+                      }
+                      return {};
+                    }}
+                    onChange={(dates) => {
+                      if (dates && dates[0] && dates[1]) {
+                        setDateRange([dates[0], dates[1]]);
+                        fetchData(dates[0].toDate(), dates[1].toDate());
+                        // 选择完成后自动收起日历选择器
+                        setShowDatePicker(false);
+                      } else {
+                        setDateRange([null, null]);
+                      }
+                    }}
+                    className="custom-date-picker"
+                  />
+                </div>
+              )}
+            </div>
           </div>
           
-          {/* 图表类型选择和显示控制 - 使用相对定位调整位置 */}
-          <div style={{ display: 'flex', justifyContent: 'center', flex: 1, position: 'relative', left: '-55px' }}>
+          {/* 图表类型选择和显示控制 - 移至最右边 */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginLeft: 'auto' }}>
             <Button
               size="small"
               icon={<BarChartOutlined />}
@@ -1191,27 +1288,6 @@ const Dashboard: React.FC = () => {
               onClick={() => setChartType('line')}
               style={{ marginRight: '8px', padding: '2px 4px', backgroundColor: chartType === 'line' ? '#26A69A' : '#2E2E4A', border: 'none' }}
             />
-          </div>
-          
-          {/* 时间范围选择 */}
-          <div style={{ display: 'flex', marginLeft: 'auto' }}>
-            {timeRanges.map((range) => (
-              <Button
-                key={range.value}
-                size="small"
-                onClick={() => handleTimeRangeChange(range.value)}
-                style={{
-                  marginRight: '2px',
-                  padding: '2px 6px',
-                  backgroundColor: selectedTimeRange === range.value ? '#26A69A' : '#2E2E4A',
-                  border: 'none',
-                  color: '#fff',
-                  fontSize: '11px'
-                }}
-              >
-                {range.label}
-              </Button>
-            ))}
           </div>
         </div>
         
