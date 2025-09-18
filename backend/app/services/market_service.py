@@ -130,11 +130,14 @@ def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int
         page_size: 每页数据量，不提供则返回全部数据
     
     Returns:
-        分页数据时返回元组 (数据, 总条数)，否则返回数据
+        不使用分页时返回元组 (数据, 查询参数dict)，使用分页时返回元组 (数据, 总条数, 查询参数dict)
     """
+
     # 优化：预先验证参数，避免不必要的缓存查找和数据库查询
     if not code or not start or not end:
-        return pd.DataFrame() if page is None else (pd.DataFrame(), 0)
+        # 创建查询参数dict
+        query_params = {"code": code, "start": start, "end": end, "interval": interval}
+        return pd.DataFrame(), query_params if page is None else (pd.DataFrame(), 0, query_params)
     
     # 转换日期时间参数
     try:
@@ -176,7 +179,7 @@ def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int
         end_dt = datetime.now()
     
     # 根据interval选择表名
-    if interval == "1d":
+    if interval == "1D" or interval == "1W" or interval == "1M":
         table_name = "day_realtime"
     else:
         table_name = "minute_realtime"
@@ -197,11 +200,15 @@ def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int
             # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
             df = aggregate_kline_data(df, interval)
             
-            return df
+            # 创建查询参数dict
+            query_params = {"code": code, "start": start, "end": end, "interval": interval}
+            return df, query_params
         except Exception as e:
             # 其他异常处理
             logger.error(f"获取K线数据失败: {e}")
-            return pd.DataFrame()
+            # 创建查询参数dict
+            query_params = {"code": code, "start": start, "end": end, "interval": interval}
+            return pd.DataFrame(), query_params
     
     # 使用分页时
     offset = (page - 1) * page_size
@@ -229,10 +236,16 @@ def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int
         # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
         df = aggregate_kline_data(df, interval)
         
-        return df, total_count
+        # 创建查询参数dict
+        query_params = {"code": code, "start": start, "end": end, "interval": interval}
+        print("使用分页查询参数:", query_params)
+
+        return df, total_count, query_params
     except Exception as e:
         logger.error(f"获取分页K线数据失败: {e}")
-        return pd.DataFrame(), 0
+        # 创建查询参数dict
+        query_params = {"code": code, "start": start, "end": end, "interval": interval}
+        return pd.DataFrame(), 0, query_params
 
 @cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
 def get_predictions(code: str, start: str, end: str, interval: str = None, page: int = None, page_size: int = None):

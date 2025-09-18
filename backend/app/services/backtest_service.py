@@ -8,6 +8,8 @@ import importlib.util
 from pathlib import Path
 import logging
 import os
+from types import ModuleType
+import uuid
 
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
 DEFAULT_BACKTEST_PARAMS = {
@@ -78,17 +80,12 @@ def log_debug(message):
     if global_logging_enabled:
         backtest_logger.debug(message)
 
-def _load_data(code: str, start: str, end: str):
-    sql = """
-    SELECT datetime, open, high, low, close, volume
-    FROM minute_realtime
-    WHERE code=:code AND datetime BETWEEN :start AND :end
-    ORDER BY datetime
+def log_error(message):
     """
-    df = fetch_df(sql, code=code, start=start, end=end)
-    if "datetime" in df.columns:
-        df['datetime'] = pd.to_datetime(df['datetime'])
-    return df
+    带开关的error日志记录
+    """
+    if global_logging_enabled:
+        backtest_logger.error(message)
 
 def _load_strategy_module(strategy_name: str):
     path = STRATEGY_DIR / f"{strategy_name}.py"
@@ -99,15 +96,26 @@ def _load_strategy_module(strategy_name: str):
     spec.loader.exec_module(mod)
     return mod
 
-def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
+def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
     """Pluggable strategy backtest with fractional position sizing, slippage and fees."""
+    
+    # 打印传递进来的三个参数到终端
+    print("=== 回测参数信息 ===")
+    print("策略名称：", strategy_name)
+    print("参数配置：", params)
+    print("数据框形状：", df.shape)
+    print("数据框前5行：")
+    print(df.head())
+    print("===================")
 
     backtest_id = str(uuid.uuid4())
-    df = _load_data(code, start, end)
     if df.empty:
         return {"run_id": backtest_id, "nav": []}
 
-    mod = _load_strategy_module(strategy)
+    # 加载策略模块
+    mod = _load_strategy_module(strategy_name)
+
+    # 合并参数
     default_params = getattr(mod, "DEFAULT_PARAMS", {})
     merged_params = {**DEFAULT_BACKTEST_PARAMS, **default_params, **(params or {})}
 
@@ -115,9 +123,15 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
     global global_logging_enabled
     global_logging_enabled = bool(merged_params.get("logging_enabled", True))
     
+    # 获取标的代码
+    code = merged_params.get("code", "")
+    start = merged_params.get("start", "")
+    end = merged_params.get("end", "")
+    interval = merged_params.get("interval", "1m")
+    
     # 即使日志关闭，也要记录日志开关状态，以便调试
     if global_logging_enabled:
-        log_info(f"回测参数已合并 - 策略: {strategy}, 标的: {code}")
+        log_info(f"回测参数已合并 - 策略: {strategy_name}, 标的: {code}")
         log_info(f"合并后的完整参数: {json.dumps(merged_params, ensure_ascii=False)}")
 
     fee_rate = float(merged_params.get("fee_rate", 0.0005))
@@ -230,6 +244,9 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
             realized_pnl = None
             side = "buy" if delta_qty > 0 else "sell"
 
+            # 保存交易前的平均价格
+            pre_trade_avg_price = avg_price
+            
             if side == "buy":
                 total_cost = avg_price * current_pos_qty + exec_price * delta_qty
                 current_pos_qty += delta_qty
@@ -240,14 +257,28 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                 if current_pos_qty < 1e-9:
                     current_pos_qty = 0.0
                     avg_price = 0.0
+                # 对于部分减仓，平均价格保持不变（成本不变）
+                # 但为了明确区分交易前和交易后的平均价格，我们创建一个临时变量
+                post_trade_avg_price = avg_price
 
             nav_val = cash + current_pos_qty * price
+            
+            # 计算当前的回撤值
+            # 从trades列表中获取历史最大nav值来计算peak
+            peak = nav_val
+            if trades:
+                # 获取所有历史nav值并找到最大值
+                historical_navs = [t["nav"] for t in trades]
+                peak = max(nav_val, max(historical_navs))
+            drawdown_val = nav_val / peak - 1 if peak > 0 else 0
             
             trades.append({
                 "run_id": backtest_id, "datetime": dt, "code": code, "side": side,
                 "trade_type": trade_type, "price": float(exec_price), "qty": float(delta_qty),
-                "amount": float(amount), "fee": float(fee_amt), "avg_price": float(avg_price),
-                "nav": float(nav_val), "realized_pnl": float(realized_pnl) if pd.notna(realized_pnl) else None,
+                "amount": float(amount), "fee": float(fee_amt), "avg_price": float(pre_trade_avg_price),
+                "nav": float(nav_val), "drawdown": float(drawdown_val),
+                "current_qty": float(current_pos_qty), "current_avg_price": float(post_trade_avg_price if side == "sell" else avg_price),
+                "realized_pnl": float(realized_pnl) if pd.notna(realized_pnl) else None,
             })
 
             log_trade_debug(action=side.upper(), trade_type=trade_type, price=exec_price, qty=delta_qty,
@@ -255,66 +286,91 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                             pnl=realized_pnl, datetime=dt)
             last_trade_bar = i
 
-        if not pd.isna(nav_val):
-            peak = nav_val if not equity_curve else max(nav_val, equity_curve[-1]["nav"])
-            drawdown_val = nav_val / peak - 1 if peak > 0 else 0
-            equity_curve.append({"run_id": backtest_id, "datetime": dt, "nav": float(nav_val), "drawdown": float(drawdown_val)})
-        
-        if last_pos_qty is None or abs(current_pos_qty - last_pos_qty) > 1e-9:
-            positions.append({"run_id": backtest_id, "datetime": dt, "code": code, "qty": float(current_pos_qty), "avg_price": float(avg_price)})
-            last_pos_qty = current_pos_qty
+        # 不再单独维护equity_curve和positions列表，相关数据已整合到trades表中
+        # 仅维护nav_list用于计算最终指标
+        pass
 
         nav_list.append(nav_val)
 
-    nav_series = pd.Series(nav_list, index=data["datetime"])
+    # 明确指定index的数据类型，避免pandas自动推断触发警告
+    nav_series = pd.Series(nav_list, index=pd.Index(data["datetime"], dtype='datetime64[ns]'))
     engine = get_engine()
-    if nav_list:
-        final_capital = nav_list[-1]
-        run_data = pd.DataFrame([{
-            'run_id': backtest_id,
-            'strategy': strategy,
-            'code': code,
-            'start_time': start,
-            'end_time': end,
-            'initial_capital': initial_capital,
-            'final_capital': final_capital,
-            'paras': json.dumps(merged_params)
-        }])
-        run_data.to_sql('runs', con=engine, if_exists='append', index=False)
-
-    if trades:
-        trades_df = pd.DataFrame(
-            trades,
-            columns=[
-                "run_id", "datetime", "code", "side", "trade_type", "price", "qty", "amount",
-                "fee", "avg_price", "nav", "realized_pnl"
-            ]
-        )
-        trades_df.to_sql("trades", con=engine, if_exists="append", index=False)
-        
-    if positions:
-        pos_df = pd.DataFrame(positions, columns=["run_id", "datetime", "code", "qty", "avg_price"])
-        pos_df.to_sql("positions", con=engine, if_exists="append", index=False)
     
-    if equity_curve:
-        eq_df = pd.DataFrame(equity_curve, columns=["run_id", "datetime", "nav", "drawdown"])
-        eq_df.to_sql("equity_curve", con=engine, if_exists="append", index=False)
+    try:
+        if nav_list:
+            final_capital = nav_list[-1]
+            # 初始化指标变量
+            final_return = None
+            max_drawdown = None
+            sharpe = None
+            
+            if len(nav_list) > 1:
+                # 计算收益率
+                final_return = nav_list[-1] / initial_capital - 1
+                # 计算最大回撤
+                if trades:
+                    # 从trades列表中获取所有drawdown值并找到最小值
+                    drawdowns = [t["drawdown"] for t in trades]
+                    max_drawdown = min(drawdowns) if drawdowns else None
+                else:
+                    max_drawdown = None
+                # 计算夏普率
+                nav_series_pct_change = pd.Series(nav_list).pct_change().dropna()
+                if not nav_series_pct_change.empty and nav_series_pct_change.std() > 0:
+                    sharpe = np.sqrt(252) * nav_series_pct_change.mean() / nav_series_pct_change.std()
+            
+            # 创建runs表数据，包含直接添加的指标
+            run_data = pd.DataFrame([{
+                'run_id': backtest_id,
+                'strategy': strategy_name,
+                'code': code,
+                'start_time': start,
+                'end_time': end,
+                'interval': interval,
+                'initial_capital': initial_capital,
+                'final_capital': final_capital,
+                'final_return': final_return,
+                'max_drawdown': max_drawdown,
+                'sharpe': sharpe,
+                'paras': json.dumps(merged_params)
+            }])
+            
+            log_info(f"准备写入runs表: {backtest_id}, 策略: {strategy_name}, 代码: {code}")
+            run_data.to_sql('runs', con=engine, if_exists='append', index=False)
+            log_info(f"成功写入runs表: {backtest_id}")
+
+        if trades:
+            # 更新trades DataFrame结构，添加新的整合字段
+            trades_df = pd.DataFrame(
+                trades,
+                columns=[
+                    "run_id", "datetime", "code", "side", "trade_type", "price", "qty", "amount",
+                    "fee", "avg_price", "nav", "drawdown", "current_qty", "current_avg_price", "realized_pnl"
+                ]
+            )
+            
+            log_info(f"准备写入trades表: {backtest_id}, 交易数量: {len(trades_df)}")
+            trades_df.to_sql("trades", con=engine, if_exists="append", index=False)
+            log_info(f"成功写入trades表: {backtest_id}")
+    except Exception as e:
+        log_error(f"数据库写入失败: {str(e)}")
+        # 打印详细的错误信息，包括堆栈跟踪
+        import traceback
+        log_error(f"错误堆栈: {traceback.format_exc()}")
+        
+    # 不再写入单独的positions和equity_curve表
+    # 所有相关数据已整合到trades表中
 
     # === 【已优化】修正盈亏归因分析 ===
     metrics = []
     if len(nav_list) > 1:
+        # 年度收益率仍然写入metrics表
         final_return = nav_list[-1] / initial_capital - 1
-        metrics.append({"run_id": backtest_id, "metric_name": "final_return", "metric_value": final_return})
         days = (data["datetime"].iloc[-1] - data["datetime"].iloc[0]).days
         if days > 0:
             ann_return = (1 + final_return) ** (365.0 / days) - 1
             metrics.append({"run_id": backtest_id, "metric_name": "annual_return", "metric_value": ann_return})
-        dd = min([ec["drawdown"] for ec in equity_curve])
-        metrics.append({"run_id": backtest_id, "metric_name": "max_drawdown", "metric_value": dd})
-        nav_series_pct_change = pd.Series(nav_list).pct_change().dropna()
-        if not nav_series_pct_change.empty and nav_series_pct_change.std() > 0:
-            sharpe = np.sqrt(252) * nav_series_pct_change.mean() / nav_series_pct_change.std()
-            metrics.append({"run_id": backtest_id, "metric_name": "sharpe", "metric_value": sharpe})
+        # 注意：final_return, max_drawdown, sharpe已直接写入runs表，不再写入metrics表
     if trades:
         trades_df_final = pd.DataFrame(trades)
         closed_trades_df = trades_df_final[trades_df_final['side'] == 'sell'].copy()
@@ -345,13 +401,21 @@ def run_backtest(code: str, start: str, end: str, strategy: str, params: dict):
                     ])     
                 metrics.extend(attribution_metrics)
 
-    if metrics:
-        metrics_df = pd.DataFrame(metrics)
-        metrics_df.to_sql("metrics", con=engine, if_exists="append", index=False)
+    try:
+        if metrics:
+            metrics_df = pd.DataFrame(metrics)
+            log_info(f"准备写入metrics表: {backtest_id}, 指标数量: {len(metrics_df)}")
+            metrics_df.to_sql("metrics", con=engine, if_exists="append", index=False)
+            log_info(f"成功写入metrics表: {backtest_id}")
+    except Exception as e:
+        log_error(f"metrics表写入失败: {str(e)}")
+        # 打印详细的错误信息，包括堆栈跟踪
+        import traceback
+        log_error(f"错误堆栈: {traceback.format_exc()}")
 
     return {
         "run_id": backtest_id, "code": code, "start": start, "end": end,
-        "strategy": strategy, "params": merged_params, "nav": nav_series,
+        "strategy": strategy_name, "params": merged_params, "nav": nav_series,
         "metrics": pd.DataFrame(metrics).set_index('metric_name')['metric_value'].to_dict() if metrics else {}
     }
 

@@ -66,8 +66,6 @@ const formatPrice = (value: number) => {
   return formatPriceWithUnit(value);
 };
 
-// 格式化成交量显示，根据值的大小显示K或M单位
-
 const Dashboard: React.FC = () => {
   // 市场概览数据
   const [marketOverview, setMarketOverview] = useState<any[]>([]);
@@ -95,6 +93,10 @@ const Dashboard: React.FC = () => {
   const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
   // 定时器引用，用于5秒后自动收起日历选择器
   const datePickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 存储从API获取的查询参数
+  const [cachedQueryParams, setCachedQueryParams] = useState<any>(null);
+  // 刷新按钮加载状态
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
 
   // 策略相关状态
@@ -152,71 +154,6 @@ const Dashboard: React.FC = () => {
     };
   }, [showDatePicker, isDatePickerFocused]);
 
-  // 生成模拟买卖信号数据
-  const generateMockSignals = (): BacktestSignal[] => {
-    const signals: BacktestSignal[] = [];
-    const signalTypes: ('buy' | 'sell' | 'take_profit' | 'stop_loss' | 'force_close')[] = 
-      ['buy', 'sell', 'take_profit', 'stop_loss', 'force_close'];
-    
-    // 确保即使没有K线数据也能生成一些模拟信号
-    if (candleData && candleData.length > 0) {
-      const signalCount = Math.floor(Math.random() * 10) + 5; // 生成5-14个信号
-      
-      for (let i = 0; i < signalCount; i++) {
-        // 随机选择一个K线数据点
-        const dataIndex = Math.floor(Math.random() * (candleData.length - 10)) + 5; // 避免边界
-        const candle = candleData[dataIndex];
-        
-        // 随机选择信号类型，但确保买卖信号数量合理
-        let signalType: typeof signalTypes[number];
-        const rand = Math.random();
-        if (rand < 0.4) {
-          signalType = 'buy';
-        } else if (rand < 0.7) {
-          signalType = 'sell';
-        } else if (rand < 0.85) {
-          signalType = 'take_profit';
-        } else if (rand < 0.95) {
-          signalType = 'stop_loss';
-        } else {
-          signalType = 'force_close';
-        }
-        
-        // 基于K线价格生成信号价格
-        const basePrice = candle.close;
-        const priceVariation = basePrice * (Math.random() * 0.02 - 0.01); // ±1%的波动
-        const signalPrice = parseFloat((basePrice + priceVariation).toFixed(2));
-        
-        signals.push({
-          datetime: candle.datetime,
-          type: signalType,
-          price: signalPrice
-        });
-      }
-      
-      // 按时间排序
-      signals.sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
-    } else {
-      // 没有K线数据时，生成一些基于当前时间的模拟信号
-      const now = new Date();
-      const signalCount = Math.floor(Math.random() * 5) + 3; // 生成3-7个信号
-      
-      for (let i = 0; i < signalCount; i++) {
-        const mockDate = new Date(now.getTime() - (signalCount - i) * 3600000); // 每个信号间隔1小时
-        const mockPrice = parseFloat((Math.random() * 1000 + 50000).toFixed(2)); // 随机价格
-        const signalType = signalTypes[Math.floor(Math.random() * signalTypes.length)];
-        
-        signals.push({
-          datetime: mockDate.toISOString(),
-          type: signalType,
-          price: mockPrice
-        });
-      }
-    }
-    
-    return signals;
-  };
-
   // 运行策略回测
   const runBacktest = async (strategyId: string, strategyName: string) => {
     try {
@@ -230,79 +167,52 @@ const Dashboard: React.FC = () => {
         }
       }));
 
-      // 模拟回测延迟，提升用户体验
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // 严格检查必要的参数
+      if (!symbol) {
+        throw new Error('未选择股票代码');
+      }
       
-      // 先检查是否有K线数据，如果没有则直接使用模拟数据
+      if (!strategyName || !strategyId) {
+        throw new Error('未选择有效的策略');
+      }
+      
       if (!candleData || candleData.length === 0) {
-        console.info(`没有K线数据，直接使用模拟信号`);
-        const mockSignals = generateMockSignals();
-        
-        setStrategyBacktestStates(prev => ({
-          ...prev,
-          [strategyId]: {
-            isRunning: false,
-            signals: mockSignals,
-            hasResults: mockSignals.length > 0
-          }
-        }));
-        
-        message.warning(`策略 ${strategyName} 使用模拟数据回测，生成 ${mockSignals.length} 个信号`);
-        return;
+        throw new Error('没有可用的K线数据');
       }
       
-      try {
-        // 检查是否有有效的股票代码
-        if (!symbol) {
-          throw new Error('未选择股票代码');
+      // 准备调用后端run_backtest函数的参数
+      const backtestParams = cachedQueryParams || {
+        code: symbol,
+        interval: timeframe,
+        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        end: new Date().toISOString()
+      };
+      
+      // 打印params和strategy到控制台
+      console.log('调用后端run_backtest函数的参数:');
+      console.log('params:', backtestParams);
+      console.log('strategy:', strategyName);
+      
+      const response = await client.post('/backtest', {
+        params: backtestParams,
+        strategy: strategyName
+      });
+      
+
+      // 处理回测结果
+      const signals: BacktestSignal[] = response.data.signals || [];
+      
+      // 更新回测状态为完成
+      setStrategyBacktestStates(prev => ({
+        ...prev,
+        [strategyId]: {
+          isRunning: false,
+          signals: signals,
+          hasResults: signals.length > 0
         }
-        
-        // 修复API调用：后端实际回测端点在/api/backtest，而不是/api/strategies/backtest
-        // 根据backtest.py路由器，正确的参数名称和结构如下：
-        const response = await client.post('/backtest', {
-          code: symbol, // 后端期望的参数名是code而不是symbol
-          start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), // 使用默认的7天时间范围
-          end: new Date().toISOString(), // 后端期望的参数名是end而不是endDate
-          strategy: strategyId, // 后端期望的参数名是strategy而不是strategyId
-          params: { timeframe } // 额外参数包装在params对象中
-        });
+      }));
 
-        // 处理回测结果
-        const signals: BacktestSignal[] = response.data.signals || [];
-        
-        // 更新回测状态为完成
-        setStrategyBacktestStates(prev => ({
-          ...prev,
-          [strategyId]: {
-            isRunning: false,
-            signals: signals,
-            hasResults: signals.length > 0
-          }
-        }));
-
-        message.success(`策略 ${strategyName} 回测完成，生成 ${signals.length} 个信号`);
-      } catch (apiError: any) {
-        // 特别处理405 Method Not Allowed错误
-        const errorMessage = apiError.response?.status === 405 
-          ? `API返回405 Method Not Allowed错误，该端点可能不支持POST请求或需要不同的认证方式`
-          : `API调用失败`;
-        
-        console.warn(errorMessage, apiError);
-        
-        // API调用失败时生成模拟信号数据
-        const mockSignals = generateMockSignals();
-        
-        setStrategyBacktestStates(prev => ({
-          ...prev,
-          [strategyId]: {
-            isRunning: false,
-            signals: mockSignals,
-            hasResults: mockSignals.length > 0
-          }
-        }));
-        
-        message.warning(`策略 ${strategyName} 使用模拟数据回测，生成 ${mockSignals.length} 个信号（API错误: ${errorMessage}）`);
-      }
+      message.success(`策略 ${strategyName} 回测完成，生成 ${signals.length} 个信号`);
     } catch (error) {
       console.error(`Strategy ${strategyId} backtest failed:`, error);
       // 更新回测状态为失败
@@ -331,7 +241,17 @@ const Dashboard: React.FC = () => {
     };
     setFloatingStrategies([...floatingStrategies, newStrategy]);
     
-    // 自动运行回测
+    // 无论是否选择股票，都先设置初始状态
+    setStrategyBacktestStates(prev => ({
+      ...prev,
+      [strategyId]: {
+        isRunning: false,
+        signals: [],
+        hasResults: false
+      }
+    }));
+    
+    // 如果选择了股票，则自动运行回测
     if (symbol) {
       await runBacktest(strategyId, strategyName);
     } else {
@@ -386,12 +306,33 @@ const Dashboard: React.FC = () => {
     }
   }, [showStrategiesModal]);
   
-  // 当时间周期或symbol变化时更新市场概览数据
+  // 优化：并行处理市场概览和K线数据请求
   useEffect(() => {
-    if (symbols.length > 0) {
+    if (symbols.length > 0 && symbol) {
+      // 创建一个内存缓存键
+      const cacheKey = `${symbol}_${timeframe}`;
+      const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
+      const now = Date.now();
+      
+      // 如果距离上次请求不足500毫秒，不重复请求（防止快速切换导致的频繁请求）
+      if (lastRequestTime && now - parseInt(lastRequestTime) < 500) {
+        return;
+      }
+      
+      sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
+      
+      // 并行发起两个请求
+      Promise.all([
+        loadMarketOverview(symbols),
+        fetchData()
+      ]).catch(error => {
+        console.error('数据加载失败:', error);
+      });
+    } else if (symbols.length > 0) {
+      // 只有股票列表但没有选中股票时，只加载市场概览
       loadMarketOverview(symbols);
     }
-  }, [timeframe, symbol]);
+  }, [timeframe, symbol, symbols]);
 
   // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
   useEffect(() => {
@@ -403,15 +344,7 @@ const Dashboard: React.FC = () => {
     }
   }, [marketOverview, symbol]);
 
-
-  // 监听变化并获取数据
-  useEffect(() => {
-    if (symbol) {
-      fetchData();
-    }
-  }, [symbol, timeframe]);
-
-  // 调用API获取市场概览数据 - 使用批量查询优化性能
+  // 调用API获取市场概览数据 - 使用批量查询优化性能并添加内存缓存
   const loadMarketOverview = async (symbolsData: { code: string; name: string; exchange: string; type: string }[]) => {
     try {
       // 创建一个包含市场概览卡片symbol和选中symbol的集合，自动去重
@@ -427,6 +360,22 @@ const Dashboard: React.FC = () => {
       
       // 转换为数组并连接
       const codes = Array.from(uniqueSymbols).join(',');
+      
+      // 创建缓存键
+      const cacheKey = `market_overview_${codes}_${timeframe}`;
+      
+      // 尝试从内存缓存获取数据
+      const cachedData = sessionStorage.getItem(cacheKey);
+      if (cachedData) {
+        const parsedData = JSON.parse(cachedData);
+        // 检查缓存是否在5秒内有效
+        if (Date.now() - parsedData.timestamp < 5000) {
+          setMarketOverview(parsedData.data);
+          const lastUpdatedNow = new Date();
+          setLastUpdated(lastUpdatedNow.toLocaleTimeString());
+          return parsedData.data; // 返回缓存数据以支持Promise.all
+        }
+      }
       
       // 根据不同的时间周期设置对应的limit参数
       const timeframeToLimit = {
@@ -550,6 +499,14 @@ const Dashboard: React.FC = () => {
       // 更新最后刷新时间
       const lastUpdatedNow = new Date();
       setLastUpdated(lastUpdatedNow.toLocaleTimeString());
+      
+      // 保存到内存缓存
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        data: marketOverviewData,
+        timestamp: Date.now()
+      }));
+      
+      return marketOverviewData; // 返回数据以支持Promise.all
     } catch (error) {
       // 移除error logging以减少控制台输出
       // 直接返回空数据集，不进行降级处理
@@ -557,18 +514,18 @@ const Dashboard: React.FC = () => {
       // 更新最后刷新时间
       const now = new Date();
       setLastUpdated(now.toLocaleTimeString());
+      return []; // 返回空数组以支持Promise.all
     }
   };
 
   // 已移除时间范围选择相关函数
 
-  // 获取蜡烛图数据
-  const fetchData = async (startTime?: Date, endTime?: Date) => {
-    if (!symbol) return;
+  // 获取蜡烛图数据 - 添加内存缓存优化
+  const fetchData = async (startTime?: Date, endTime?: Date): Promise<any[]> => {
+    if (!symbol) return [];
     
     setIsLoading(true);
     try {
-      let response;
       const params: any = {
         code: symbol,
         interval: timeframe
@@ -580,21 +537,49 @@ const Dashboard: React.FC = () => {
         params.end = endTime.toISOString();
       }
       
-      if (['1m', '5m', '15m', '30m', '1h', '4h'].includes(timeframe)) {
-        response = await client.get('/market/candles', { params });
-      } else if (['1D', '1W', '1M'].includes(timeframe)) {
-        response = await client.get('/market/daily', { params });
+      // 创建缓存键
+      const cacheKey = `candle_data_${symbol}_${timeframe}_${startTime ? startTime.getTime() : '0'}_${endTime ? endTime.getTime() : '0'}`;
+      
+      // 尝试从内存缓存获取数据
+      const cachedData = sessionStorage.getItem(cacheKey);
+      if (cachedData) {
+        const parsedData = JSON.parse(cachedData);
+        // 检查缓存是否在3秒内有效（K线数据更新频率更高，缓存时间较短）
+        if (Date.now() - parsedData.timestamp < 3000) {
+          if (parsedData.query_params) {
+            setCachedQueryParams(parsedData.query_params);
+          }
+          setCandleData(parsedData.rows);
+          setIsLoading(false);
+          return parsedData.rows; // 返回缓存数据以支持Promise.all
+        }
       }
       
+      const response = await client.get('/market/candles', { params });
+      // 暂存query_params
+      if (response && response.data && response.data.query_params) {
+        setCachedQueryParams(response.data.query_params);
+      }
       if (response && response.data && response.data.rows) {
         const processedData = response.data.rows.map((item: any) => ({
           ...item,
           isUp: item.close >= item.open
         }));
         setCandleData(processedData);
+        
+        // 保存到内存缓存
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          query_params: response.data.query_params,
+          rows: processedData,
+          timestamp: Date.now()
+        }));
+        
+        return processedData; // 返回数据以支持Promise.all
       }
+      return [];
     } catch (error) {
       console.error('获取K线数据失败:', error);
+      return [];
     } finally {
       setIsLoading(false);
     }
@@ -677,13 +662,13 @@ const Dashboard: React.FC = () => {
               switch (type) {
                 case 'buy':
                   // 向上红色箭头代表买入
-                  symbol = 'path://M12,2 L12,22 M2,12 L22,12 M12,2 L18,8 M18,8 L14,8 M14,8 L14,12';
+                  symbol = 'arrow-up';
                   color = '#ff4d4f'; // 红色
                   symbolSize = 12;
                   break;
                 case 'sell':
                   // 向下绿色箭头代表卖出
-                  symbol = 'path://M12,2 L12,22 M2,12 L22,12 M12,22 L6,16 M6,16 L10,16 M10,16 L10,12';
+                  symbol = 'arrow-down';
                   color = '#52c41a'; // 绿色
                   symbolSize = 12;
                   break;
@@ -1018,17 +1003,21 @@ const Dashboard: React.FC = () => {
                 size="small" 
                 style={{ color: '#8E8EA0', fontSize: '12px', marginLeft: '8px' }}
                 onClick={async () => {
-                  if (symbols.length > 0) {
+                  if (symbols.length > 0 && !isRefreshing) {
+                    setIsRefreshing(true);
                     try {
                       await loadMarketOverview(symbols);
                       message.success('数据已刷新');
                     } catch (error) {
                       message.error('刷新失败');
+                    } finally {
+                      setIsRefreshing(false);
                     }
                   }
                 }}
+                loading={isRefreshing}
               >
-                刷新
+                {isRefreshing ? '刷新中...' : '刷新'}
               </Button>
             </div>
           )}
@@ -1291,7 +1280,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* 策略按钮区域 - 放在周期选择列表下方 */}
+        {/* 策略按钮区域 - 吸附在首页顶部工具栏下方 */}
         <div style={{ 
           padding: '4px 8px', 
           backgroundColor: '#1E1E2E', 
@@ -1300,7 +1289,9 @@ const Dashboard: React.FC = () => {
           alignItems: 'center',
           gap: '8px',
           overflowX: 'auto',
-          position: 'relative',
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
           borderBottom: '1px solid #3E3E5A'
         }}>
           {floatingStrategies.map((strategy) => {
@@ -1311,8 +1302,6 @@ const Dashboard: React.FC = () => {
               <div
                 key={strategy.id}
                 style={{
-                  position: 'relative',
-                  left: `${strategy.position.x}px`,
                   backgroundColor: backtestState?.isRunning ? '#2E4A2E' : backtestState?.hasResults ? '#2E4A4A' : '#2E2E4A',
                   border: `1px solid ${backtestState?.isRunning ? '#4E6A4E' : backtestState?.hasResults ? '#4E6A6A' : '#4E4E6A'}`,
                   borderRadius: '4px',
@@ -1355,6 +1344,41 @@ const Dashboard: React.FC = () => {
           })}
         </div>
         
+        {/* 信号说明区域 */}
+        {Object.values(strategyBacktestStates).some(state => state.hasResults && state.signals.length > 0) && (
+          <div style={{
+            padding: '8px 16px',
+            backgroundColor: '#1E1E2E',
+            borderBottom: '1px solid #3E3E5A',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px',
+            flexWrap: 'wrap'
+          }}>
+            <span style={{ color: '#8E8EA0', fontSize: '12px' }}>信号说明:</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '12px', height: '12px', color: '#ff4d4f', fontSize: '12px', textAlign: 'center' }}>↑</div>
+              <span style={{ color: '#fff', fontSize: '12px' }}>买入</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '12px', height: '12px', color: '#52c41a', fontSize: '12px', textAlign: 'center' }}>↓</div>
+              <span style={{ color: '#fff', fontSize: '12px' }}>卖出</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#ff4d4f' }}></div>
+              <span style={{ color: '#fff', fontSize: '12px' }}>止盈</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#52c41a' }}></div>
+              <span style={{ color: '#fff', fontSize: '12px' }}>止损</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '8px', height: '8px', backgroundColor: '#000000', border: '1px solid #fff' }}></div>
+              <span style={{ color: '#fff', fontSize: '12px' }}>强制平仓</span>
+            </div>
+          </div>
+        )}
+
         {/* 图表区域 - 自适应高度 */}
         <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
           {isLoading ? (

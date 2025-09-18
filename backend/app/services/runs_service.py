@@ -1,6 +1,9 @@
 
 import pandas as pd
 import numpy as np
+
+# 避免Pandas future downcasting警告
+pd.set_option('future.no_silent_downcasting', True)
 from ..db import fetch_df
 import datetime
 
@@ -110,7 +113,8 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         for col in ['max_drawdown', 'sharpe']:
             if col in df.columns:
                 # 转换为float类型，处理None值
-                df[col] = df[col].fillna(0).astype(float)
+                # 先填充空值，再进行类型推断，最后转换为浮点数以避免Pandas FutureWarning
+                df[col] = df[col].fillna(0).infer_objects(copy=False).astype(float)
         
         # 转换其他数值类型确保可序列化
         for col in df.select_dtypes(include=['number']).columns:
@@ -133,7 +137,7 @@ logger = logging.getLogger(__name__)
 def run_detail(run_id: str):
     
     # 获取基本回测信息，包含新增的paras字段
-    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, initial_capital, final_capital, created_at, paras
+    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras
                          FROM runs WHERE run_id=:rid""", rid=run_id)
     
     # 日志记录查询结果
@@ -147,6 +151,7 @@ def run_detail(run_id: str):
             "code": "未知标的",
             "start_time": "",
             "end_time": "",
+            "interval": "1m",
             "initial_capital": 0.0,
             "final_capital": 0.0,
             "created_at": datetime.datetime.now().isoformat(),
@@ -161,11 +166,29 @@ def run_detail(run_id: str):
     
     # 获取指标数据
     df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=run_id)
-    # 从equity_curve表读取数据，equity_curve表全面取代equity表
-    df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=run_id)
-    # 获取交易记录数据
+    # 从整合后的trades表中读取equity相关数据
+    # 注意：我们现在从trades表中获取nav和drawdown数据，而不是从equity_curve表
+    df_e = fetch_df("""
+        SELECT datetime, nav, drawdown 
+        FROM trades 
+        WHERE run_id=:rid 
+        ORDER BY datetime
+    """, rid=run_id)
+    
+    # 如果trades表中没有equity数据（比如没有交易的情况），我们需要处理这种边缘情况
+    if df_e.empty:
+        # 创建一个最小的equity数据集，避免前端显示为空
+        # 这里可以考虑从runs表获取初始和结束时间，创建一些基本的equity数据点
+        df_e = pd.DataFrame({
+            'datetime': [pd.Timestamp.now()],
+            'nav': [0],
+            'drawdown': [0]
+        })
+    
+    # 获取交易记录数据，包括整合后的字段
     df_t = fetch_df("""
-        SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, realized_pnl, nav
+        SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
+               realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price
         FROM trades
         WHERE run_id = :rid
         ORDER BY datetime

@@ -100,7 +100,6 @@ app.include_router(runs.router)
 app.include_router(export.router)
 
 app.include_router(tuning.router)
-app.include_router(monitor.router)
 app.include_router(trades.router)
 
 def prewarm_market_cache():

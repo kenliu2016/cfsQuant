@@ -1,5 +1,6 @@
 
-import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col } from 'antd'
+import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col, Select } from 'antd'
+const { Option } = Select
 import { useEffect, useState } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
@@ -114,7 +115,7 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
           </div>
         </div>
       ) : (
-        <div style={{ height: '100%', maxHeight: '400px', overflowY: 'auto', padding: '4px 0' }}>
+        <div style={{ height: '100%', overflowY: 'auto', padding: '4px 0' }}>
           <Tree treeData={tree} onSelect={handleSelect} />
         </div>
       )}
@@ -179,16 +180,36 @@ const UserOperationPanel = ({ form, current, onRun }: any) => {
         initialValues={{ code: 'BTCUSDT', range: [dayjs().add(-7,'day'), dayjs()] }}
         style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <Form.Item label="标的" name="code" rules={[{required:true}]} labelCol={{span:24}}>
-            <Input style={{width: '100%', maxWidth: '200px'}}/>
-          </Form.Item>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <Row gutter={[8, 0]}>
+            <Col span={12}>
+              <Form.Item label="标的" name="code" rules={[{required:true}]} labelCol={{span:24}}>
+                <Input style={{width: '100%'}}/>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="时间间隔" name="interval" labelCol={{span:24}} initialValue="1m">
+                <Select style={{width: '100%'}}>
+                  <Option value="1m">1分钟</Option>
+                  <Option value="5m">5分钟</Option>
+                  <Option value="15m">15分钟</Option>
+                  <Option value="30m">30分钟</Option>
+                  <Option value="60m">60分钟</Option>
+                  <Option value="1h">1小时</Option>
+                  <Option value="4h">4小时</Option>
+                  <Option value="1D">1天</Option>
+                  <Option value="1W">1周</Option>
+                  <Option value="1M">1月</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
           <Form.Item label="区间" name="range" rules={[{required:true}]} labelCol={{span:24}}>
             <DatePicker.RangePicker showTime size="small" style={{width: '100%'}} />
           </Form.Item>
         </div>
-        <div style={{ marginTop: '4px' }}>
-          <Button type="primary" onClick={onRun} style={{ width: '50%' }} size="middle">开始回测</Button>
+        <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
+          <Button type="primary" onClick={onRun} style={{ width: '80%' }} size="middle">开始回测</Button>
         </div>
       </Form>
     </Card>
@@ -237,7 +258,15 @@ export default function StrategyPage(){
 
   const onRun = async () => {
     const v = await form.validateFields()
-    const payload = { code: v.code, start: v.range[0].format('YYYY-MM-DD HH:mm:ss'), end: v.range[1].format('YYYY-MM-DD HH:mm:ss'), strategy: current!.name, params: {} }
+    // 将code, start, end, interval封装成Dict类型的params
+    const params = {
+      code: v.code,
+      start: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
+      end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+      interval: v.interval // 使用用户选择的时间间隔
+    }
+    // 最终payload只提交封装后的params和strategy
+    const payload = { params, strategy: current!.name }
     const r = await client.post('/backtest', payload)
     if (r.data.backtest_id){
       message.success('回测完成')

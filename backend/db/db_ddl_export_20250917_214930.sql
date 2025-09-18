@@ -1,7 +1,7 @@
 -- 数据库DDL导出
 -- 数据库: quant
 -- 主机: localhost:5432
--- 导出时间: 2025-09-13 03:56:06
+-- 导出时间: 2025-09-17 21:49:35
 -- 导出内容: 表、视图、索引、序列等
 
 SET statement_timeout = 0;
@@ -156,6 +156,9 @@ CREATE TABLE IF NOT EXISTS public.runs (
     created_at timestamp DEFAULT now(),
     run_id varchar NOT NULL,
     paras jsonb DEFAULT '{}'::jsonb,
+    final_return float8,
+    max_drawdown float8,
+    sharpe float8,
     PRIMARY KEY (run_id)
 );
 COMMENT ON COLUMN public.runs.paras IS '执行策略时的参数，以JSON格式存储';
@@ -185,29 +188,35 @@ CREATE TABLE IF NOT EXISTS public.trades (
     nav numeric,
     realized_pnl numeric,
     created_at timestamp DEFAULT now(),
-    trade_type varchar NOT NULL DEFAULT 'normal'::character varying
+    trade_type varchar NOT NULL DEFAULT 'normal'::character varying,
+    drawdown float8,
+    current_qty numeric,
+    current_avg_price numeric
 );
+COMMENT ON COLUMN public.trades.nav IS '交易时的净资产价值(Net Asset Value)';
 COMMENT ON COLUMN public.trades.trade_type IS '记录交易类型，如 ''normal'', ''take_profit'', ''stop_loss'' 等';
+COMMENT ON COLUMN public.trades.drawdown IS '交易时的回撤比例';
+COMMENT ON COLUMN public.trades.current_qty IS '交易后的数量';
+COMMENT ON COLUMN public.trades.current_avg_price IS '交易后的平均价格';
 
 -- 表: tuning_results
 CREATE TABLE IF NOT EXISTS public.tuning_results (
-    id int4 NOT NULL DEFAULT nextval('tuning_results_id_seq'::regclass),
-    task_id int4 NOT NULL,
-    run_id varchar,
+    task_id varchar NOT NULL,
+    run_id varchar NOT NULL,
     params jsonb,
     created_at timestamp DEFAULT now(),
-    PRIMARY KEY (id)
+    PRIMARY KEY (run_id, task_id)
 );
 
 -- 表: tuning_tasks
 CREATE TABLE IF NOT EXISTS public.tuning_tasks (
-    id int4 NOT NULL DEFAULT nextval('tuning_tasks_id_seq'::regclass),
+    task_id varchar NOT NULL,
     strategy text,
     status text,
     total int4,
     finished int4,
     created_at timestamp DEFAULT now(),
-    PRIMARY KEY (id)
+    PRIMARY KEY (task_id)
 );
 
 
@@ -279,7 +288,7 @@ ALTER TABLE public.trades ADD FOREIGN KEY (run_id) REFERENCES runs(run_id);
 ALTER TABLE public.tuning_results ADD FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE;
 
 -- 约束: tuning_results_task_id_fkey (表: tuning_results)
-ALTER TABLE public.tuning_results ADD FOREIGN KEY (task_id) REFERENCES tuning_tasks(id) ON DELETE CASCADE;
+ALTER TABLE public.tuning_results ADD FOREIGN KEY (task_id) REFERENCES tuning_tasks(task_id) ON DELETE CASCADE;
 
 
 -- DDL导出完成

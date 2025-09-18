@@ -58,7 +58,7 @@ python app/cli_ingest_1k_ws.py --rest-only --interval 1m
 
 # Binance 数据适配器用法示例
 1. 批量并发拉取多个交易对
-python -m app.cli_ingest_history --symbols BTCUSDT,ETHUSDT,BNBUSDT --interval 1m --start 2025-09-10 --end 2025-09-18 --force --workers 3
+python -m app.cli_ingest_history --symbols BTCUSDT,ETHUSDT,BNBUSDT --interval 1m --start 2025-09-13 --end 2025-09-17 --force --workers 3
 
 这里 --workers 3 表示同时开 3 个线程，分别拉不同交易对。
 

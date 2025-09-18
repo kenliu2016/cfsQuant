@@ -144,7 +144,7 @@ class CacheService:
 
     @staticmethod
     def set(key: str, value: Any, expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
-        """设置缓存数据，处理Timestamp对象的序列化"""
+        """设置缓存数据，处理各种不可JSON序列化类型，特别是datetime对象"""
         # 获取最新的客户端实例
         client = _redis_manager.get_client()
         
@@ -154,48 +154,113 @@ class CacheService:
         else:
             # 使用Redis，需要序列化数据
             try:
-                # 尝试直接序列化
+                # 第一次尝试：直接序列化
                 client.setex(key, expire_time, json.dumps(value))
-            except TypeError as e:
-                # 检查是否是Timestamp对象导致的序列化错误
-                if 'Timestamp' in str(e):
-                    # 处理包含Timestamp对象的数据
+            except (TypeError, OverflowError) as e:
+                # 第一次失败：使用_process_serialization_types处理
+                try:
                     processed_value = CacheService._process_serialization_types(value)
                     client.setex(key, expire_time, json.dumps(processed_value))
-                else:
-                    # 其他类型错误直接抛出
-                    raise
+                except Exception as process_error:
+                    # 第二次失败：使用自定义JSON编码器处理所有datetime类型
+                    try:
+                        from datetime import datetime, date, time as datetime_time
+                        import pandas as pd
+                        
+                        class CustomJSONEncoder(json.JSONEncoder):
+                            def default(self, obj):
+                                if isinstance(obj, (datetime, date, datetime_time)):
+                                    return obj.isoformat()
+                                elif isinstance(obj, pd.Timestamp):
+                                    return obj.isoformat()
+                                elif hasattr(obj, 'to_dict'):
+                                    return obj.to_dict()
+                                else:
+                                    try:
+                                        return str(obj)
+                                    except:
+                                        return "[Unserializable]"
+                                        
+                        encoded_value = json.dumps(value, cls=CustomJSONEncoder)
+                        client.setex(key, expire_time, encoded_value)
+                    except Exception as encoder_error:
+                        # 第三次失败：作为最后的尝试，转换为字符串
+                        try:
+                            client.setex(key, expire_time, json.dumps(str(value)))
+                        except Exception:
+                            # 所有尝试都失败，记录详细错误信息
+                            error_msg = f"缓存设置彻底失败: {key}, 原始错误: {str(e)}, 处理后错误: {str(process_error)}, 编码器错误: {str(encoder_error)}"
+                            logger.error(error_msg)
+                            # 可以选择将错误存储到一个特殊的缓存键中，以便后续调试
+                            try:
+                                error_key = f"error:{key}"
+                                error_info = {"original_error": str(e), "process_error": str(process_error), "encoder_error": str(encoder_error)}
+                                client.setex(error_key, 60 * 60, json.dumps(error_info))
+                            except:
+                                pass
                     
     @staticmethod
     def _process_serialization_types(data):
-        """递归处理数据中的不可JSON序列化类型，特别是pandas Timestamp"""
+        """递归处理数据中的不可JSON序列化类型，包括datetime、pandas Timestamp等"""
         import pandas as pd
         import numpy as np
+        from datetime import datetime, date, timedelta
         
-        if isinstance(data, pd.Timestamp):
-            # 处理pandas Timestamp对象
-            return data.strftime('%Y-%m-%d %H:%M:%S')
+        # 处理Python标准库的datetime和date对象
+        if isinstance(data, (datetime, date)):
+            return data.isoformat()
+        # 处理timedelta对象
+        elif isinstance(data, timedelta):
+            return str(data)
+        # 处理pandas Timestamp对象
+        elif isinstance(data, pd.Timestamp):
+            return data.isoformat()
+        # 处理pandas Series
         elif isinstance(data, pd.core.series.Series):
-            # 处理pandas Series
             return data.tolist()
+        # 处理numpy数组
         elif isinstance(data, np.ndarray):
-            # 处理numpy数组
             return data.tolist()
+        # 处理numpy数值类型
         elif isinstance(data, np.number):
-            # 处理numpy数值类型
             return data.item()
+        # 处理numpy日期时间类型
+        elif isinstance(data, np.datetime64):
+            # 转换为Python datetime并序列化
+            return pd.Timestamp(data).isoformat()
+        # 处理字典
         elif isinstance(data, dict):
-            # 递归处理字典
-            return {k: CacheService._process_serialization_types(v) for k, v in data.items()}
+            # 递归处理字典中的每个值
+            processed_dict = {}
+            for k, v in data.items():
+                # 确保键也是可序列化的
+                processed_key = str(k) if not isinstance(k, (str, int, float, bool, type(None))) else k
+                processed_dict[processed_key] = CacheService._process_serialization_types(v)
+            return processed_dict
+        # 处理列表
         elif isinstance(data, list):
-            # 递归处理列表
+            # 递归处理列表中的每个元素
             return [CacheService._process_serialization_types(item) for item in data]
+        # 处理元组
         elif isinstance(data, tuple):
-            # 递归处理元组
+            # 递归处理元组中的每个元素
             return tuple(CacheService._process_serialization_types(item) for item in data)
-        else:
-            # 其他类型保持不变
+        # 处理集合
+        elif isinstance(data, set):
+            # 转换为列表并递归处理
+            return [CacheService._process_serialization_types(item) for item in data]
+        # 处理字符串类型
+        elif isinstance(data, str):
+            # 字符串已经是可序列化的，直接返回
             return data
+        # 处理其他不可JSON序列化的类型
+        else:
+            # 尝试使用str()转换为字符串
+            try:
+                return str(data)
+            except Exception:
+                # 如果转换失败，返回一个占位符
+                return "[Unserializable Object]"
 
     @staticmethod
     def delete(key: str) -> None:
@@ -259,57 +324,84 @@ import pandas as pd
 import pandas as pd
 import numpy as np
 def serialize_dataframe(df: pd.DataFrame) -> List[Dict]:
-    """优化的DataFrame序列化函数，处理datetime列"""
+    """优化的DataFrame序列化函数，处理datetime列和数值类型"""
     # 避免不必要的副本
     if df.empty:
         return []
+    
+    # 创建DataFrame的副本以避免修改原始数据
+    processed_df = df.copy()
     
     # 转换DataFrame为字典列表，使用更高效的方式
     records = []
     
     # 预计算所有列名和数据类型
-    columns = df.columns.tolist()
-    dtypes = df.dtypes
+    columns = processed_df.columns.tolist()
+    dtypes = processed_df.dtypes
     
     # 预先处理datetime列的转换
     datetime_columns = [col for col in columns if pd.api.types.is_datetime64_any_dtype(dtypes[col])]
+    # 识别数值列，特别是价格相关列
+    numeric_columns = [col for col in columns if pd.api.types.is_numeric_dtype(dtypes[col])]
+    price_columns = ['open', 'high', 'low', 'close', 'volume']
     
     # 批量获取数据并处理
-    for row in df.itertuples(index=False, name=None):
+    for row in processed_df.itertuples(index=False, name=None):
         record = {}
         for i, col in enumerate(columns):
             value = row[i]
-            # 处理datetime类型
+            # 处理datetime类型，使用ISO格式以确保与反序列化兼容
             if col in datetime_columns:
                 if pd.notna(value):
-                    record[col] = value.strftime('%Y-%m-%d %H:%M:%S')
+                    record[col] = value.strftime('%Y-%m-%dT%H:%M:%S')
                 else:
                     record[col] = None
-            # 处理numpy类型
-            elif isinstance(value, np.integer):
-                record[col] = int(value)
-            elif isinstance(value, np.floating):
-                record[col] = float(value)
+            # 处理数值类型，特别是价格相关列，确保None值被正确处理
+            elif col in numeric_columns:
+                # 特殊处理价格相关列，确保即使是0也能正确序列化
+                if pd.notna(value):
+                    # 转换为基本数值类型
+                    if isinstance(value, np.integer):
+                        record[col] = int(value)
+                    elif isinstance(value, np.floating):
+                        record[col] = float(value)
+                    else:
+                        record[col] = value
+                else:
+                    record[col] = 0 if col in price_columns else None
+            # 处理字符串列
+            elif pd.api.types.is_string_dtype(dtypes[col]):
+                if pd.notna(value):
+                    record[col] = str(value)
+                else:
+                    record[col] = ''
             # 处理其他类型
             else:
-                record[col] = value
+                if pd.notna(value):
+                    record[col] = value
+                else:
+                    record[col] = None
         records.append(record)
     
     return records
 
 # 优化的DataFrame反序列化函数
 def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
-    """优化的DataFrame反序列化函数，处理datetime列，提升日线图和分时图数据处理效率"""
+    """优化的DataFrame反序列化函数，处理datetime列和数值类型，确保空值被正确处理"""
     if not data:
         return pd.DataFrame()
     
     # 快速创建DataFrame
     df = pd.DataFrame(data)
     
+    # 预定义价格相关列，确保它们被正确处理
+    price_columns = ['open', 'high', 'low', 'close', 'volume']
+    
     # 批量检测和转换datetime列，优化性能
     datetime_columns = []
+    numeric_columns = []
     
-    # 提前识别可能的datetime列
+    # 提前识别可能的datetime列和数值列
     for col in df.columns:
         if df[col].dtype == 'object':
             try:
@@ -319,10 +411,22 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
                     # 尝试转换前10个非空值作为测试，避免全量检查
                     sample_size = min(10, mask.sum())
                     sample_values = df.loc[mask, col].iloc[:sample_size]
+                    
+                    # 检查是否是datetime列
                     if all(isinstance(val, str) and (('-' in val and ':' in val) or len(val) >= 8) for val in sample_values):
                         datetime_columns.append(col)
+                    # 检查是否是数值列
+                    elif all(isinstance(val, (int, float)) or (
+                            isinstance(val, str) and val.replace('.', '', 1).isdigit()
+                        ) for val in sample_values):
+                        numeric_columns.append(col)
             except Exception:
                 continue
+    
+    # 确保价格相关列被添加到数值列列表中
+    for col in price_columns:
+        if col in df.columns and col not in numeric_columns:
+            numeric_columns.append(col)
     
     # 批量转换已识别的datetime列
     if datetime_columns:
@@ -330,17 +434,63 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
             try:
                 mask = pd.notna(df[col])
                 if mask.any():
-                    # 移除已弃用的参数，使用默认的严格模式
-                    df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], errors='coerce')
+                    # 指定常见的日期时间格式，避免格式推断警告
+                    try:
+                        # 尝试ISO格式 (YYYY-MM-DDTHH:MM:SS)
+                        df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], format='%Y-%m-%dT%H:%M:%S', errors='coerce')
+                    except:
+                        try:
+                            # 尝试日期格式 (YYYY-MM-DD)
+                            df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], format='%Y-%m-%d', errors='coerce')
+                        except:
+                            # 尝试其他常见格式
+                            df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], errors='coerce')
             except Exception:
                 # 如果转换失败，保持原数据类型
                 continue
+    
+    # 批量转换已识别的数值列，特别是价格相关列
+    if numeric_columns:
+        for col in numeric_columns:
+            try:
+                # 特殊处理价格相关列，确保即使是空字符串也能正确转换
+                if col in price_columns:
+                    # 先将空字符串和None替换为NaN
+                    df[col] = df[col].replace({ '': np.nan, None: np.nan })
+                    # 然后转换为数值类型
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    # 价格字段应该有实际数值，避免0值被错误处理
+                    # 如果有全0值，可能是数据问题，但我们不做特殊处理
+                else:
+                    # 其他数值列正常处理
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            except Exception as e:
+                # 添加日志以便调试
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"转换列 {col} 为数值类型时出错: {e}")
+                # 如果转换失败，保持原数据类型
+                continue
+    
+    # 确保所有列中的None值被正确处理，不会变成"NaT"
+    for col in df.columns:
+        # 替换空字符串为空值（非价格列）
+        if df[col].dtype == 'object' and col not in price_columns:
+            df[col] = df[col].replace('', None)
+        # 确保datetime列中的空值正确处理
+        elif pd.api.types.is_datetime64_any_dtype(df[col].dtype):
+            # 不做特殊处理，因为pandas会自动处理NaT
+            pass
+        # 确保数值列中的空值正确处理
+        elif pd.api.types.is_numeric_dtype(df[col].dtype):
+            # 不做特殊处理，因为pandas会自动处理NaN
+            pass
     
     return df
 
 
 def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
-    """缓存pandas DataFrame结果的装饰器"""
+    """缓存pandas DataFrame结果的装饰器，支持多种返回格式"""
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -357,10 +507,33 @@ def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
                     if isinstance(result_dict, dict) and 'is_paginated' in result_dict:
                         # 分页结果处理
                         df = deserialize_to_dataframe(result_dict['data'])
-                        return df, result_dict['total_count']
+                        # 记录反序列化后DataFrame的信息
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Deserialized DataFrame shape: {df.shape}")
+                            logger.debug(f"Deserialized DataFrame columns: {list(df.columns)}")
+                            if not df.empty:
+                                logger.debug(f"Deserialized DataFrame preview: {df.head(2).to_dict('records')}")
+                        
+                        # 检查是否包含query_params
+                        if 'query_params' in result_dict:
+                            if result_dict.get('is_paginated', False):
+                                # 返回3元素元组 (df, total_count, query_params)
+                                return df, result_dict['total_count'], result_dict['query_params']
+                            else:
+                                # 返回2元素元组 (df, query_params)
+                                return df, result_dict['query_params']
+                        else:
+                            # 返回2元素元组 (df, total_count)
+                            return df, result_dict['total_count']
                     else:
                         # 非分页结果处理
                         df = deserialize_to_dataframe(result_dict)
+                        # 记录反序列化后DataFrame的信息
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Deserialized DataFrame shape: {df.shape}")
+                            logger.debug(f"Deserialized DataFrame columns: {list(df.columns)}")
+                            if not df.empty:
+                                logger.debug(f"Deserialized DataFrame preview: {df.head(2).to_dict('records')}")
                         return df
                 except Exception as e:
                     logger.error(f"缓存数据解析失败: {func.__name__}, 错误: {e}")
@@ -371,20 +544,56 @@ def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
 
             # 缓存结果，处理DataFrame或元组(分页结果)
             try:
+                # 准备要缓存的数据
+                data_to_cache = None
+                df = None
+                
                 # 检查是否是分页结果（元组形式）
-                if isinstance(result, tuple) and len(result) == 2 and hasattr(result[0], 'to_dict'):
-                    df, total_count = result
-                    # 优化的序列化处理
-                    data_to_cache = {
-                        'is_paginated': True,
-                        'data': serialize_dataframe(df),
-                        'total_count': total_count
-                    }
-                    CacheService.set(key, data_to_cache, expire_time)
+                if isinstance(result, tuple):
+                    # 处理3元素元组 (df, total_count, query_params)
+                    if len(result) == 3 and hasattr(result[0], 'to_dict'):
+                        df, total_count, query_params = result
+                        # 优化的序列化处理
+                        data_to_cache = {
+                            'is_paginated': True,
+                            'data': serialize_dataframe(df),
+                            'total_count': total_count,
+                            'query_params': CacheService._process_serialization_types(query_params)
+                        }
+                    # 处理2元素元组 (df, total_count) 或 (df, query_params)
+                    elif len(result) == 2 and hasattr(result[0], 'to_dict'):
+                        df = result[0]
+                        if isinstance(result[1], int):
+                            # 分页结果 (df, total_count)
+                            total_count = result[1]
+                            data_to_cache = {
+                                'is_paginated': True,
+                                'data': serialize_dataframe(df),
+                                'total_count': total_count
+                            }
+                        else:
+                            # 非分页结果但包含query_params (df, query_params)
+                            query_params = result[1]
+                            data_to_cache = {
+                                'is_paginated': False,
+                                'data': serialize_dataframe(df),
+                                'query_params': CacheService._process_serialization_types(query_params)
+                            }
                 elif result is not None and hasattr(result, 'to_dict'):
                     # 非分页结果处理
+                    df = result
                     # 优化的序列化处理
-                    data_to_cache = serialize_dataframe(result)
+                    data_to_cache = serialize_dataframe(df)
+                
+                # 记录要序列化的DataFrame信息
+                if df is not None and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"DataFrame to serialize shape: {df.shape}")
+                    logger.debug(f"DataFrame to serialize columns: {list(df.columns)}")
+                    if not df.empty:
+                        logger.debug(f"DataFrame to serialize preview: {df.head(2).to_dict('records')}")
+                
+                # 设置缓存
+                if data_to_cache is not None:
                     CacheService.set(key, data_to_cache, expire_time)
             except Exception as e:
                 logger.error(f"缓存设置失败: {func.__name__}, 错误: {e}")
@@ -430,10 +639,13 @@ async def async_set_cache_background(key: str, data: Any, expire_time: int = DEF
     # 使用自定义线程池配置优化大数据量处理
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         # 使用超时机制确保不会长时间阻塞
-        await asyncio.wait_for(
-            loop.run_in_executor(executor, CacheService.set, key, data, expire_time),
-            timeout=10
-        )
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(executor, CacheService.set, key, data, expire_time),
+                timeout=10
+            )
+        except Exception as e:
+            logger.error(f"异步缓存设置失败: {key}, 错误: {str(e)}")
 
 # 异步缓存设置函数
 def async_cache_set(key: str, value: Any, expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
