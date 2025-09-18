@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 _tasks = {}  # task_id -> status dict
 
-def start_tuning_async(strategy: str, code: str, start: str, end: str, params_grid: Dict[str, list]):
+def start_tuning_async(strategy: str, code: str, start: str, end: str, params_grid: Dict[str, list], interval: str = '1m'):
+    from ..services.market_service import get_candles
     task_id = str(uuid.uuid4())
     total = 1
     if params_grid:
@@ -33,6 +34,7 @@ def start_tuning_async(strategy: str, code: str, start: str, end: str, params_gr
         task_data = {
             'task_id': task_id,  # 直接使用UUID作为task_id
             'strategy': strategy,
+            'interval': interval,
             'status': 'pending',
             'total': total,
             'finished': 0,
@@ -50,10 +52,32 @@ def start_tuning_async(strategy: str, code: str, start: str, end: str, params_gr
             db_task_id = _tasks[task_id].get('db_id')
             keys = list(params_grid.keys()) if params_grid else []
             grids = [params_grid[k] for k in keys] if params_grid else []
+            
+            # 获取K线数据
+            candles_result = get_candles(code, start, end, interval)
+            # 根据返回值类型确定如何获取DataFrame
+            if isinstance(candles_result, tuple):
+                # 如果是元组，根据长度决定是两个值还是三个值的情况
+                if len(candles_result) == 3:
+                    df, _, _ = candles_result
+                else:
+                    df, _ = candles_result
+            else:
+                # 否则直接使用
+                df = candles_result
+            
             for vals in itertools.product(*grids) if keys else [()]:
                 p = {k:v for k,v in zip(keys, vals)} if keys else {}
-                # call run_backtest; it persists runs and returns run_id
-                backtest_result = run_backtest(code, start, end, strategy, p)
+                # 构建完整的参数对象，包含interval
+                full_params = {
+                    'code': code,
+                    'start': start,
+                    'end': end,
+                    'interval': interval,
+                    **p
+                }
+                # 调用run_backtest函数，传入正确的参数
+                backtest_result = run_backtest(df, full_params, strategy)
                 # 确保run_id是字符串类型
                 run_id = str(backtest_result.get('run_id'))
                 _tasks[task_id]['runs'].append({'params':p, 'run_id': run_id})

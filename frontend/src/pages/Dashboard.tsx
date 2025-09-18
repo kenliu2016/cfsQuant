@@ -118,12 +118,11 @@ const Dashboard: React.FC = () => {
   
   // 从API获取策略数据
   const fetchStrategiesFromAPI = async () => {
-    console.log('fetchStrategiesFromAPI called');
+
     try {
       const response = await client.get('/strategies');
       // 假设后端返回的数据结构是 { rows: [{ id: string, name: string }] }
       const strategies = response.data.rows || response.data || [];
-      console.log('Strategies data from API:', strategies);
       setStrategiesData(strategies);
     } catch (error) {
       console.error('Failed to fetch strategies from API:', error);
@@ -187,11 +186,6 @@ const Dashboard: React.FC = () => {
         start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
         end: new Date().toISOString()
       };
-      
-      // 打印params和strategy到控制台
-      console.log('调用后端run_backtest函数的参数:');
-      console.log('params:', backtestParams);
-      console.log('strategy:', strategyName);
       
       const response = await client.post('/backtest', {
         params: backtestParams,
@@ -261,15 +255,12 @@ const Dashboard: React.FC = () => {
   
   // 在组件挂载时就加载策略数据
   useEffect(() => {
-    console.log('Component mounted, loading strategies data...');
     fetchStrategiesFromAPI();
   }, []);
   
   // 在打开策略对话框时也加载策略数据
   useEffect(() => {
-    console.log('showStrategiesModal changed:', showStrategiesModal);
     if (showStrategiesModal) {
-      console.log('Modal opened, refreshing strategies data...');
       fetchStrategiesFromAPI();
     }
   }, [showStrategiesModal]);
@@ -299,9 +290,7 @@ const Dashboard: React.FC = () => {
 
   // 在打开策略对话框时获取策略数据
   useEffect(() => {
-    console.log('useEffect triggered - showStrategiesModal:', showStrategiesModal, 'strategiesData:', strategiesData);
     if (showStrategiesModal) {
-      console.log('Calling fetchStrategiesFromAPI...');
       fetchStrategiesFromAPI();
     }
   }, [showStrategiesModal]);

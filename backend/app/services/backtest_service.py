@@ -98,15 +98,6 @@ def _load_strategy_module(strategy_name: str):
 
 def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
     """Pluggable strategy backtest with fractional position sizing, slippage and fees."""
-    
-    # 打印传递进来的三个参数到终端
-    print("=== 回测参数信息 ===")
-    print("策略名称：", strategy_name)
-    print("参数配置：", params)
-    print("数据框形状：", df.shape)
-    print("数据框前5行：")
-    print(df.head())
-    print("===================")
 
     backtest_id = str(uuid.uuid4())
     if df.empty:
@@ -279,6 +270,8 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 "nav": float(nav_val), "drawdown": float(drawdown_val),
                 "current_qty": float(current_pos_qty), "current_avg_price": float(post_trade_avg_price if side == "sell" else avg_price),
                 "realized_pnl": float(realized_pnl) if pd.notna(realized_pnl) else None,
+                "close_price": float(price) if not pd.isna(price) else None,
+                "current_cash": float(cash)
             })
 
             log_trade_debug(action=side.upper(), trade_type=trade_type, price=exec_price, qty=delta_qty,
@@ -303,6 +296,10 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
             final_return = None
             max_drawdown = None
             sharpe = None
+            win_rate = None
+            trade_count = None
+            total_fee = None
+            total_profit = None
             
             if len(nav_list) > 1:
                 # 计算收益率
@@ -318,6 +315,17 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 nav_series_pct_change = pd.Series(nav_list).pct_change().dropna()
                 if not nav_series_pct_change.empty and nav_series_pct_change.std() > 0:
                     sharpe = np.sqrt(252) * nav_series_pct_change.mean() / nav_series_pct_change.std()
+
+                # 计算交易相关指标
+                if trades:
+                    trade_count = len(trades)
+                    # 计算总手续费
+                    total_fee = sum(t["fee"] for t in trades if "fee" in t and t["fee"] is not None)
+                    # 计算总收益
+                    total_profit = sum(t["realized_pnl"] for t in trades if "realized_pnl" in t and t["realized_pnl"] is not None)
+                    # 计算胜率
+                    winning_trades = [t for t in trades if "realized_pnl" in t and t["realized_pnl"] is not None and t["realized_pnl"] > 0]
+                    win_rate = len(winning_trades) / trade_count if trade_count > 0 else 0
             
             # 创建runs表数据，包含直接添加的指标
             run_data = pd.DataFrame([{
@@ -332,12 +340,12 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 'final_return': final_return,
                 'max_drawdown': max_drawdown,
                 'sharpe': sharpe,
+                'win_rate': win_rate,
+                'trade_count': trade_count,
+                'total_fee': total_fee,
+                'total_profit': total_profit,
                 'paras': json.dumps(merged_params)
             }])
-            
-            log_info(f"准备写入runs表: {backtest_id}, 策略: {strategy_name}, 代码: {code}")
-            run_data.to_sql('runs', con=engine, if_exists='append', index=False)
-            log_info(f"成功写入runs表: {backtest_id}")
 
         if trades:
             # 更新trades DataFrame结构，添加新的整合字段
@@ -345,7 +353,7 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 trades,
                 columns=[
                     "run_id", "datetime", "code", "side", "trade_type", "price", "qty", "amount",
-                    "fee", "avg_price", "nav", "drawdown", "current_qty", "current_avg_price", "realized_pnl"
+                    "fee", "avg_price", "nav", "drawdown", "current_qty", "current_avg_price", "realized_pnl", "close_price", "current_cash",
                 ]
             )
             
@@ -387,9 +395,7 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 trade_attribution['win_rate'] = (trade_attribution['winning_trades'] / trade_attribution['total_trades']).fillna(0)
                 trade_attribution['avg_pnl'] = (trade_attribution['total_pnl'] / trade_attribution['total_trades']).fillna(0)
             
-                log_info("盈亏归因分析结果:")
-                log_info(trade_attribution.to_string(index=False))
-
+                #盈亏归因分析结果
                 attribution_metrics = []
                 for _, row in trade_attribution.iterrows():
                     ttype = row['trade_type']

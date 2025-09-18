@@ -1,17 +1,8 @@
 import client from '../api/client'
 import dayjs from 'dayjs'
 import { useState, useEffect, useCallback } from 'react'
-import { Form } from 'antd'
-import { Select } from 'antd'
-import { InputNumber } from 'antd'
-import { Button } from 'antd'
-import { Divider } from 'antd'
-import { Card } from 'antd'
-import { List } from 'antd'
-import { Progress } from 'antd'
-import { Input } from 'antd'
-import { message } from 'antd'
-import { DatePicker } from 'antd'
+import { Form, Row, Col, Card, Button, Select, InputNumber, List, Progress, message, Tooltip, Input, DatePicker } from 'antd'
+import { InfoCircleOutlined, SettingOutlined, PlayCircleOutlined } from '@ant-design/icons'
 
 // 定义参数配置类型
 interface ParamConfig {
@@ -225,7 +216,8 @@ export default function Tuning(){
       params: paramsGrid, 
       code: v.code, 
       start: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
-      end: v.range[1].format('YYYY-MM-DD HH:mm:ss') 
+      end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+      interval: v.interval
     };
     
     try {
@@ -279,148 +271,419 @@ export default function Tuning(){
   // 渲染参数设置表单
   const renderParamSettings = () => {
     if (Object.keys(strategyParams).length === 0) {
-      return <div>请先选择策略</div>;
+      return (
+        <Card className="empty-state-card">
+          <div className="empty-state-content">
+            <InfoCircleOutlined className="empty-state-icon" />
+            <p>请先选择策略</p>
+          </div>
+        </Card>
+      );
     }
     
     return (
-      <div style={{maxHeight: 400, overflowY: 'auto'}}>
-        {Object.entries(strategyParams).map(([key, param]) => {
-          const isBoolean = param.type === 'boolean';
-          return (
-            <div key={key} style={{marginBottom: 8, display: 'flex', alignItems: 'center'}}>
-              <div style={{fontWeight: 'bold', width: 120, paddingRight: 8}}>{key}</div>
-              
-              <Form.Item
-                name={['paramsConfig', key, 'currentValue']}
-                initialValue={param.default}
-                style={{margin: '0 8px', width: 80}}
-              >
-                {isBoolean ? (
-                  <Select style={{width: '100%'}}>
-                    <Select.Option value={true}>True</Select.Option>
-                    <Select.Option value={false}>False</Select.Option>
-                  </Select>
-                ) : (
-                  <InputNumber style={{width: '100%'}} placeholder="值" />
+      <Card title="参数配置" className="params-config-card">
+        <div className="params-config-scrollable">
+          {Object.entries(strategyParams).map(([key, param]) => {
+            const isBoolean = param.type === 'boolean';
+            return (
+              <Row key={key} gutter={[16, 16]} className="param-row" align="middle">
+                <Col xs={24} sm={8} md={6} className="param-name">
+                  <Tooltip title={`默认值: ${param.default}`}>
+                    <div className="param-name-text">{key}</div>
+                  </Tooltip>
+                </Col>
+                
+                <Col xs={24} sm={16} md={4}>
+                  <Form.Item
+                    name={['paramsConfig', key, 'currentValue']}
+                    initialValue={param.default}
+                    noStyle
+                  >
+                    {isBoolean ? (
+                      <Select className="param-value-select">
+                        <Select.Option value={true}>True</Select.Option>
+                        <Select.Option value={false}>False</Select.Option>
+                      </Select>
+                    ) : (
+                      <InputNumber className="param-value-input" placeholder="值" />
+                    )}
+                  </Form.Item>
+                </Col>
+                
+                {!isBoolean && (
+                  <Col xs={24} md={14}>
+                    <Row gutter={[8, 8]} align="middle">
+                      <Col xs={8}>
+                        <Form.Item
+                          name={['paramsConfig', key, 'min']}
+                          noStyle
+                        >
+                          <InputNumber min={0} placeholder="最小" className="param-range-input" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8}>
+                        <Form.Item
+                          name={['paramsConfig', key, 'max']}
+                          noStyle
+                        >
+                          <InputNumber min={0} placeholder="最大" className="param-range-input" />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={8}>
+                        <Form.Item
+                          name={['paramsConfig', key, 'step']}
+                          noStyle
+                        >
+                          <InputNumber min={0.0001} placeholder="步长" className="param-range-input" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </Col>
                 )}
-              </Form.Item>
-              
-              {!isBoolean && (
-                <>
-                  <Form.Item
-                    name={['paramsConfig', key, 'min']}
-                    style={{margin: '0 8px', width: 80}}
-                  >
-                    <InputNumber min={0} style={{width: '100%'}} placeholder="最小" />
-                  </Form.Item>
-                  
-                  <Form.Item
-                    name={['paramsConfig', key, 'max']}
-                    style={{margin: '0 8px', width: 80}}
-                  >
-                    <InputNumber min={0} style={{width: '100%'}} placeholder="最大" />
-                  </Form.Item>
-                  
-                  <Form.Item
-                    name={['paramsConfig', key, 'step']}
-                    style={{margin: '0 8px', width: 80}}
-                  >
-                    <InputNumber min={0.0001} style={{width: '100%'}} placeholder="步长" />
-                  </Form.Item>
-                </>
-              )}
-              
-              <Form.Item
-                name={['paramsConfig', key, 'type']}
-                initialValue={isBoolean ? 'list' : 'range'}
-                hidden
-              >
-                <Input />
-              </Form.Item>
-              
-              {isBoolean && (
+                
                 <Form.Item
-                  name={['paramsConfig', key, 'options']}
-                  initialValue={[true, false]}
+                  name={['paramsConfig', key, 'type']}
+                  initialValue={isBoolean ? 'list' : 'range'}
                   hidden
+                  noStyle
                 >
                   <Input />
                 </Form.Item>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                
+                {isBoolean && (
+                  <Form.Item
+                    name={['paramsConfig', key, 'options']}
+                    initialValue={[true, false]}
+                    hidden
+                    noStyle
+                  >
+                    <Input />
+                  </Form.Item>
+                )}
+              </Row>
+            );
+          })}
+        </div>
+      </Card>
     );
   };
   
   return (
-    <Card title='参数寻优'>
-      <Form form={form} layout="vertical" initialValues={{ 
-        code: 'BTCUSDT', 
-        range: [dayjs().add(-30, 'day'), dayjs()],
-        paramsConfig: {}
-      }}>
-        <Form.Item label="策略" name="strategy" rules={[{required: true}]}>
-          <Select
-            placeholder="请选择策略"
-            style={{width: 220}}
-            showSearch
-            filterOption={false}
-            onSearch={handleStrategySearch}
-            onChange={handleStrategyChange}
-            options={filteredStrategies}
-          />
-        </Form.Item>
-        <Form.Item label="标的" name="code" rules={[{required: true}]}>
-          <Select
-            placeholder="请选择或输入标的"
-            style={{width: 220}}
-            showSearch
-            filterOption={false}
-            onSearch={handleSymbolSearch}
-            options={filteredSymbols}
-          />
-        </Form.Item>
-        <Form.Item label="区间" name="range" rules={[{required: true}]}>
-          <DatePicker.RangePicker showTime />
-        </Form.Item>
+    <div className="tuning-page">
+      <Card title={<div className="card-title"><SettingOutlined className="title-icon" /> 参数寻优</div>} className="main-card">
+        <Form form={form} layout="vertical" initialValues={{ 
+          code: 'BTCUSDT', 
+          range: [dayjs().add(-30, 'day'), dayjs()],
+          interval: '1m',
+          paramsConfig: {} 
+        }}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Item label="策略" name="strategy" rules={[{required: true}]}>
+                <Select
+                  placeholder="请选择策略"
+                  showSearch
+                  filterOption={false}
+                  onSearch={handleStrategySearch}
+                  onChange={handleStrategyChange}
+                  options={filteredStrategies}
+                  className="form-select"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Item label="标的" name="code" rules={[{required: true}]}>
+                <Select
+                  placeholder="请选择或输入标的"
+                  showSearch
+                  filterOption={false}
+                  onSearch={handleSymbolSearch}
+                  options={filteredSymbols}
+                  className="form-select"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Item label="时间间隔" name="interval">
+                <Select className="form-select">
+                  <Select.Option value="1m">1分钟</Select.Option>
+                  <Select.Option value="5m">5分钟</Select.Option>
+                  <Select.Option value="15m">15分钟</Select.Option>
+                  <Select.Option value="30m">30分钟</Select.Option>
+                  <Select.Option value="60m">60分钟</Select.Option>
+                  <Select.Option value="1h">1小时</Select.Option>
+                  <Select.Option value="4h">4小时</Select.Option>
+                  <Select.Option value="1D">1天</Select.Option>
+                  <Select.Option value="1W">1周</Select.Option>
+                  <Select.Option value="1M">1月</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Item label="区间" name="range" rules={[{required: true}]}>
+                <DatePicker.RangePicker showTime className="form-datepicker" />
+              </Form.Item>
+            </Col>
+          </Row>
         
-        <Divider>参数范围设置</Divider>
-        {renderParamSettings()}
+          <div className="params-section">
+            {renderParamSettings()}
+          </div>
         
-        <Button 
-          type="primary" 
-          onClick={onRun}
-          disabled={Object.keys(strategyParams).length === 0}
-          style={{marginTop: 16}}
-        >
-          开始寻优
-        </Button>
-      </Form>
+          <div className="action-section">
+            <Button 
+              type="primary" 
+              onClick={onRun}
+              disabled={Object.keys(strategyParams).length === 0}
+              size="large"
+              icon={<PlayCircleOutlined />}
+              className="run-button"
+            >
+              开始寻优
+            </Button>
+          </div>
+        </Form>
 
-      {status && (
-        <div style={{marginTop: 16}}>
-          <div>任务: {task}</div>
-          <div>状态: {status.status}</div>
-          <Progress percent={status.total && status.finished ? Math.round((status.finished / status.total) * 100) : 0} />
-          <List 
-            size="small" 
-            header={<div>已完成组合</div>} 
-            dataSource={status.runs || []} 
-            renderItem={item => (
-              <List.Item>
-                <div>
-                  <strong>参数:</strong> {JSON.stringify(item.params)}
-                  <br />
-                  <strong>Run ID:</strong> {item.run_id}
+        {status && (
+          <Card title="寻优状态" className="status-card" style={{marginTop: 16}}>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={8}>
+                <div className="status-info">
+                  <p className="status-label">任务ID:</p>
+                  <p className="status-value">{task}</p>
                 </div>
-              </List.Item>
-            )}
-            style={{maxHeight: 200, overflow: 'auto'}} 
-          />
-        </div>
-      )}
-    </Card>
+              </Col>
+              <Col xs={24} md={8}>
+                <div className="status-info">
+                  <p className="status-label">当前状态:</p>
+                  <p className="status-value">{status.status}</p>
+                </div>
+              </Col>
+              <Col xs={24} md={8}>
+                <div className="status-info">
+                  <p className="status-label">进度:</p>
+                  <p className="status-value">
+                    {status.finished || 0}/{status.total || 0}
+                  </p>
+                </div>
+              </Col>
+            </Row>
+            
+            <Progress 
+              percent={status.total && status.finished ? Math.round((status.finished / status.total) * 100) : 0} 
+              strokeColor={{'0%': '#108ee9', '100%': '#87d068'}} 
+              className="status-progress"
+            />
+            
+            <List 
+              size="small" 
+              header={<div className="runs-header">已完成组合</div>} 
+              dataSource={status.runs || []} 
+              renderItem={item => (
+                <List.Item className="run-item">
+                  <div className="run-info">
+                    <strong>参数:</strong> {JSON.stringify(item.params)}
+                    <br />
+                    <strong>Run ID:</strong> {item.run_id}
+                  </div>
+                </List.Item>
+              )}
+              className="runs-list"
+            />
+          </Card>
+        )}
+      </Card>
+      
+      {/* 内联样式定义 */}
+      <style>
+      {`
+        .tuning-page {
+          padding: 20px;
+          min-height: 100vh;
+          background-color: #f0f2f5;
+        }
+        
+        .main-card {
+          border-radius: 8px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          overflow: hidden;
+        }
+        
+        .card-title {
+          display: flex;
+          align-items: center;
+          font-size: 18px;
+          font-weight: 600;
+        }
+        
+        .title-icon {
+          margin-right: 8px;
+        }
+        
+        .form-select {
+          width: 100%;
+          min-width: 200px;
+        }
+        
+        .form-datepicker {
+          width: 100%;
+        }
+        
+        .params-section {
+          margin-top: 24px;
+        }
+        
+        .params-config-card {
+          border: 1px solid #d9d9d9;
+          border-radius: 6px;
+          overflow: hidden;
+        }
+        
+        .params-config-scrollable {
+          max-height: 400px;
+          overflow-y: auto;
+          padding: 16px;
+        }
+        
+        .params-config-scrollable::-webkit-scrollbar {
+          width: 6px;
+        }
+        
+        .params-config-scrollable::-webkit-scrollbar-track {
+          background: #f1f1f1;
+        }
+        
+        .params-config-scrollable::-webkit-scrollbar-thumb {
+          background: #c1c1c1;
+          border-radius: 3px;
+        }
+        
+        .params-config-scrollable::-webkit-scrollbar-thumb:hover {
+          background: #a8a8a8;
+        }
+        
+        .param-row {
+          padding: 8px 0;
+          border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .param-row:last-child {
+          border-bottom: none;
+        }
+        
+        .param-name {
+          font-weight: 600;
+        }
+        
+        .param-name-text {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        
+        .param-value-select,
+        .param-value-input,
+        .param-range-input {
+          width: 100%;
+        }
+        
+        .empty-state-card {
+          border: 1px dashed #d9d9d9;
+          background-color: #fafafa;
+          height: 200px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .empty-state-content {
+          text-align: center;
+          color: #999;
+        }
+        
+        .empty-state-icon {
+          font-size: 48px;
+          margin-bottom: 16px;
+          color: #bfbfbf;
+        }
+        
+        .action-section {
+          margin-top: 24px;
+          display: flex;
+          justify-content: center;
+          padding: 16px 0;
+        }
+        
+        .run-button {
+          padding: 0 32px;
+          font-size: 16px;
+        }
+        
+        .status-card {
+          border-radius: 6px;
+          margin-top: 24px !important;
+        }
+        
+        .status-info {
+          display: flex;
+          flex-direction: column;
+        }
+        
+        .status-label {
+          font-size: 12px;
+          color: #666;
+          margin: 0;
+          margin-bottom: 4px;
+        }
+        
+        .status-value {
+          font-size: 14px;
+          font-weight: 500;
+          margin: 0;
+          word-break: break-all;
+        }
+        
+        .status-progress {
+          margin: 16px 0;
+        }
+        
+        .runs-header {
+          font-weight: 600;
+          font-size: 14px;
+          padding: 8px 0;
+        }
+        
+        .runs-list {
+          max-height: 200px;
+          overflow-y: auto;
+        }
+        
+        .run-item {
+          padding: 8px 0;
+          border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .run-item:last-child {
+          border-bottom: none;
+        }
+        
+        .run-info {
+          word-break: break-all;
+          font-size: 13px;
+        }
+        
+        @media (max-width: 768px) {
+          .tuning-page {
+            padding: 12px;
+          }
+          
+          .form-select {
+            min-width: auto;
+          }
+        }
+      `}
+      </style>
+    </div>
   );
 }

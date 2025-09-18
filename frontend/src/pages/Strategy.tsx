@@ -37,7 +37,6 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
               </div>
             )
           })))
-          console.log('使用缓存的策略数据')
           return
         }
       }
@@ -165,7 +164,7 @@ const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete, codeLoading
 }
 
 // 用户操作区组件
-const UserOperationPanel = ({ form, current, onRun }: any) => {
+const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
   if (!current) {
     return <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       请选择策略后进行操作
@@ -209,8 +208,10 @@ const UserOperationPanel = ({ form, current, onRun }: any) => {
           </Form.Item>
         </div>
         <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
-          <Button type="primary" onClick={onRun} style={{ width: '80%' }} size="middle">开始回测</Button>
-        </div>
+              <Button type="primary" onClick={onRun} style={{ width: '80%' }} size="middle" loading={isBacktesting}>
+                {isBacktesting ? '回测中...' : '开始回测'}
+              </Button>
+            </div>
       </Form>
     </Card>
   )
@@ -225,6 +226,7 @@ export default function StrategyPage(){
   const [newDescription, setNewDescription] = useState('')
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [codeLoading, setCodeLoading] = useState<boolean>(false)
+  const [isBacktesting, setIsBacktesting] = useState<boolean>(false)
   
   const refreshStrategyTree = () => {
     // 清除localStorage中的策略缓存
@@ -257,19 +259,27 @@ export default function StrategyPage(){
   }
 
   const onRun = async () => {
-    const v = await form.validateFields()
-    // 将code, start, end, interval封装成Dict类型的params
-    const params = {
-      code: v.code,
-      start: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
-      end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
-      interval: v.interval // 使用用户选择的时间间隔
-    }
-    // 最终payload只提交封装后的params和strategy
-    const payload = { params, strategy: current!.name }
-    const r = await client.post('/backtest', payload)
-    if (r.data.backtest_id){
-      message.success('回测完成')
+    try {
+      setIsBacktesting(true)
+      const v = await form.validateFields()
+      // 将code, start, end, interval封装成Dict类型的params
+      const params = {
+        code: v.code,
+        start: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
+        end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+        interval: v.interval // 使用用户选择的时间间隔
+      }
+      // 最终payload只提交封装后的params和strategy
+      const payload = { params, strategy: current!.name }
+      const r = await client.post('/backtest', payload)
+      if (r.data.backtest_id){
+        message.success('回测完成')
+      }
+    } catch (error) {
+      console.error('回测失败:', error)
+      message.error('回测失败: ' + (error instanceof Error ? error.message : '未知错误'))
+    } finally {
+      setIsBacktesting(false)
     }
   }
 
@@ -348,7 +358,7 @@ export default function StrategyPage(){
             </div>
             {/* 左下：执行参数和按钮 */}
             <div style={{ height: '36%' }}>
-              <UserOperationPanel form={form} current={current} onRun={onRun} />
+              <UserOperationPanel form={form} current={current} onRun={onRun} isBacktesting={isBacktesting} />
             </div>
           </Col>
           {/* 右侧：代码编辑区 */}

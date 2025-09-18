@@ -5,6 +5,7 @@ import client from '../api/client'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
+import { ReloadOutlined, DownloadOutlined } from '@ant-design/icons'
 
 
 // 格式化日期时间函数
@@ -13,82 +14,28 @@ const formatDateTime = (dateString: string) => {
   return dayjs(dateString).format('YYYY-MM-DD HH:mm:ss')
 }
 
-// 处理交易点数据的辅助函数
-const processTradePoints = (klineData: any[], trades?: any[]) => {
-  const buyPoints: any[] = [];
-  const sellPoints: any[] = [];
-  
-  // 如果有交易记录，匹配交易点
-  if (Array.isArray(trades) && trades.length > 0) {
-    console.log(`[K线图准备] 开始匹配交易点，共有${trades.length}条交易记录`);
-    
-    // 创建K线时间到索引的映射，允许1分钟内的误差
-    const timeMap = new Map<string, number>();
-    klineData.forEach((item, index) => {
-      try {
-        const klineTime = new Date(item.datetime).getTime();
-        // 以1分钟为间隔创建映射
-        const key = Math.floor(klineTime / 60000).toString();
-        timeMap.set(key, index);
-      } catch (error) {
-        console.warn(`[K线图准备] 无法解析时间格式: ${item.datetime}`, error);
-      }
-    });
-    
-    console.log(`[K线图准备] 时间映射表大小: ${timeMap.size}`);
-    
-    // 匹配交易点
-    trades.forEach((trade, index) => {
-      try {
-        if (!trade || !trade.trade_time || !trade.trade_type) {
-          console.warn(`[K线图准备] 无效的交易记录 #${index}:`, trade);
-          return;
-        }
-        
-        const tradeTime = new Date(trade.trade_time).getTime();
-        const key = Math.floor(tradeTime / 60000).toString();
-        const klineIndex = timeMap.get(key);
-        
-        if (klineIndex !== undefined && klineData[klineIndex]) {
-          const price = klineData[klineIndex].close;
-          const point = [klineData[klineIndex].datetime, price];
-          
-          if (trade.trade_type === 'buy') {
-            buyPoints.push({
-              name: '买入',
-              value: point,
-              itemStyle: { color: '#52c41a' }
-            });
-          } else if (trade.trade_type === 'sell') {
-            sellPoints.push({
-              name: '卖出',
-              value: point,
-              itemStyle: { color: '#f5222d' }
-            });
-          }
-          console.log(`[K线图准备] 匹配到交易点 #${index}:`, point);
-        } else {
-          console.log(`[K线图准备] 未匹配到交易点时间: ${trade.trade_time}`);
-        }
-      } catch (error) {
-        console.warn(`[K线图准备] 处理交易记录 #${index}时出错:`, error);
-      }
-    });
-  }
-  
-  // 不再生成测试交易点，只使用真实交易数据
-  if (buyPoints.length === 0 && sellPoints.length === 0) {
-    console.log('[K线图准备] 没有交易点数据，使用真实数据');
-  }
-  
-  console.log(`[K线图准备] 最终买入点数量: ${buyPoints.length}, 卖出点数量: ${sellPoints.length}`);
-  
-  return { buyPoints, sellPoints };
-};
+
 
 // 创建K线图配置的辅助函数
-const createKlineChartConfig = (klineData: any[], tradeData: { buyPoints: any[], sellPoints: any[] }) => {
-  // 预处理时间格式，确保正确显示分钟级数据
+const createKlineChartConfig = (klineData: any[], tradesData: any[]) => {
+  // 判断数据周期类型（分钟级、日线、周线、月线）
+  const determineTimePeriod = () => {
+    if (klineData.length < 2) return 'day'; // 默认日线
+    
+    const date1 = new Date(klineData[0].datetime);
+    const date2 = new Date(klineData[1].datetime);
+    const diffMinutes = (date2.getTime() - date1.getTime()) / (1000 * 60);
+    
+    if (diffMinutes < 60) return 'minute'; // 分钟级
+    if (diffMinutes < 60 * 24) return 'hour'; // 小时级
+    if (diffMinutes < 60 * 24 * 7) return 'day'; // 日线
+    if (diffMinutes < 60 * 24 * 30) return 'week'; // 周线
+    return 'month'; // 月线
+  };
+  
+  const timePeriod = determineTimePeriod();
+  
+  // 预处理时间格式，根据周期显示不同格式
   const dates = klineData.map(item => {
     const date = new Date(item.datetime);
     const year = date.getFullYear();
@@ -96,83 +43,269 @@ const createKlineChartConfig = (klineData: any[], tradeData: { buyPoints: any[],
     const day = date.getDate().toString().padStart(2, '0');
     const hours = date.getHours().toString().padStart(2, '0');
     const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
+    
+    // 完整时间格式用于tooltip显示
+    return {
+      full: `${year}-${month}-${day} ${hours}:${minutes}`,
+      display: timePeriod === 'minute' || timePeriod === 'hour' 
+        ? `${hours}:${minutes}` 
+        : `${month}-${day}`
+    };
   });
   
-  // 准备K线数据和成交量数据
-  const candlestickData = klineData.map((item, index) => [dates[index], item.open, item.close, item.low, item.high]);
-  const volumeData = klineData.map((item, index) => [dates[index], item.volume]);
+  // 准备K线数据
+  const candlestickData = klineData.map((item, index) => [dates[index].full, item.open, item.close, item.low, item.high]);
   
-  console.log(`[K线图准备] K线数据点数量: ${candlestickData.length}, 成交量数据点数量: ${volumeData.length}`);
-  if (candlestickData.length > 0) {
-    console.log(`[K线图准备] 第一条K线数据:`, candlestickData[0]);
-  }
+  // 计算价格范围，设置最佳显示比例
+  let priceMin = Infinity;
+  let priceMax = -Infinity;
+  klineData.forEach(item => {
+    priceMin = Math.min(priceMin, item.low);
+    priceMax = Math.max(priceMax, item.high);
+  });
   
-  // 构建ECharts配置
-  const option = {
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
-      formatter: function(params: any[]) {
-        let result = params[0] ? params[0].axisValue + '<br/>' : '';
-        params.forEach((param: any) => {
-          if (param.seriesName === 'K线') {
-            result += `开盘: ${param.data[1]}<br/>`;
-            result += `收盘: ${param.data[2]}<br/>`;
-            result += `最低: ${param.data[3]}<br/>`;
-            result += `最高: ${param.data[4]}<br/>`;
-          }
+  // 添加10%的边距，使图表显示更完整
+  const priceRange = priceMax - priceMin;
+  const yAxisMin = priceMin - priceRange * 0.1;
+  const yAxisMax = priceMax + priceRange * 0.1;
+  
+  // 创建自定义格式化函数，根据当前数据范围动态调整刻度
+  const getYAxisFormatter = () => {
+    const range = yAxisMax - yAxisMin;
+    // 根据价格范围确定小数点位数
+    if (range >= 10000) return (value: number) => (value / 1000).toFixed(0) + 'k';
+    if (range >= 1000) return (value: number) => (value / 1000).toFixed(1) + 'k';
+    if (range >= 100) return (value: number) => value.toFixed(0);
+    if (range >= 10) return (value: number) => value.toFixed(1);
+    return (value: number) => value.toFixed(2);
+  };
+  
+  const yAxisFormatter = getYAxisFormatter();
+  
+  // 确定默认显示的范围，确保能看到最新数据
+  const getDefaultZoomRange = () => {
+    const totalPoints = klineData.length;
+    if (totalPoints <= 50) return { start: 0, end: 100 }; // 数据点少于50个，显示全部
+    if (totalPoints <= 200) return { start: 50, end: 100 }; // 显示后50%
+    if (totalPoints <= 500) return { start: 80, end: 100 }; // 显示后20%
+    return { start: 90, end: 100 }; // 显示后10%
+  };
+  
+  const defaultZoom = getDefaultZoomRange();
+  
+  // 定义信号类型为元组
+    type SignalData = [string, number, number, string]; // [时间, 价格, 数量, 方向]
+    
+    // 处理交易数据，提取买卖信号
+    const buySignals: SignalData[] = [];
+    const sellSignals: SignalData[] = [];
+    
+    // 确保tradesData是数组
+    if (Array.isArray(tradesData)) {
+      tradesData.forEach(trade => {
+        if (!trade || typeof trade !== 'object') return;
+        
+        // 提取必要的字段
+        const { side, datetime, price, qty } = trade;
+        if (!side || !datetime || typeof price !== 'number' || typeof qty !== 'number') {
+          return;
+        }
+        
+        // 找到对应的K线数据点的索引
+        const klineIndex = klineData.findIndex(item => {
+          // 比较日期时间，由于可能存在精度问题，使用字符串比较或时间戳比较
+          const klineTime = new Date(item.datetime).getTime();
+          const tradeTime = new Date(datetime).getTime();
+          // 认为交易发生在K线对应的时间段内
+          return Math.abs(tradeTime - klineTime) < 3600000; // 误差在1小时内
         });
+        
+        if (klineIndex >= 0) {
+          // 构建信号数据点并指定类型
+          const signalData: SignalData = [dates[klineIndex].full, price, qty, side];
+          
+          if (side.toLowerCase() === 'buy') {
+            buySignals.push(signalData);
+          } else if (side.toLowerCase() === 'sell') {
+            sellSignals.push(signalData);
+          }
+        }
+      });
+    }
+    
+    // 合并所有买卖信号并按时间排序
+    // 确保严格按照时间先后顺序排列，这对于正确连接信号点至关重要
+    const allSignals = [...buySignals, ...sellSignals].sort((a, b) => {
+      const timeA = new Date(a[0]).getTime();
+      const timeB = new Date(b[0]).getTime();
+      // 严格按时间戳排序，确保连接顺序正确
+      return timeA - timeB;
+    });
+
+    // 构建ECharts配置
+    const option = {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'cross',
+          lineStyle: {
+            color: '#999'
+          },
+          label: {
+            backgroundColor: '#6a7985'
+          }
+        },
+        formatter: function(params: any[]) {
+          if (!params || params.length === 0) return '';
+          
+          // 查找K线数据
+          let klineData = params.find(param => param.seriesName === 'K线');
+          
+          // 查找交易信号数据
+          const signalParams = params.filter(param => 
+            param.seriesName === '交易信号'
+          );
+          
+          // 如果没有K线数据但有信号数据，尝试根据信号的时间找到对应的K线数据
+          if (!klineData && signalParams.length > 0) {
+            const signalTime = signalParams[0].axisValue;
+            klineData = params.find(param => param.axisValue === signalTime && param.seriesName === 'K线');
+          }
+          
+          // 如果有交易信号数据但没有K线数据，直接显示交易信号信息
+          if (!klineData && signalParams.length > 0) {
+            let result = signalParams[0].axisValue + '<br/>';
+            signalParams.forEach(param => {
+              const signalIndex = param.dataIndex;
+              const signal = allSignals[signalIndex];
+              
+              if (signal) {
+                const side = signal[3];
+                const qty = signal[2];
+                const price = signal[1];
+                const signalType = side.toLowerCase() === 'buy' ? '买入' : '卖出';
+                const signalColor = side.toLowerCase() === 'buy' ? '#14b143' : '#ef232a';
+                result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + price + '</span><br/>';
+                result += '<span style="color: ' + signalColor + '">' + signalType + '数量: ' + qty + '</span><br/>';
+              }
+            });
+            return result;
+          }
+          
+          if (!klineData) return '';
+          
+          let result = klineData.axisValue + '<br/>';
+        result += '<span style="color: #ef232a">开盘: ' + klineData.data[1] + '</span><br/>';
+        const closeColor = klineData.data[2] >= klineData.data[1] ? '14b143' : 'ef232a';
+        result += '<span style="color: #' + closeColor + '">收盘: ' + klineData.data[2] + '</span><br/>';
+        result += '<span style="color: #8c8c8c">最低: ' + klineData.data[3] + '</span><br/>';
+        result += '<span style="color: #8c8c8c">最高: ' + klineData.data[4] + '</span><br/>';
+        
+        // 计算涨跌幅
+        const change = ((klineData.data[2] - klineData.data[1]) / klineData.data[1] * 100).toFixed(2);
+        const color = klineData.data[2] >= klineData.data[1] ? '14b143' : 'ef232a';
+        result += '<span style="color: #' + color + '">涨跌幅: ' + change + '%</span><br/>';
+        
+        // 添加交易信号信息 - 使用更简单的方式直接通过dataIndex获取信号
+        if (signalParams.length > 0) {
+          signalParams.forEach(param => {
+            const signalIndex = param.dataIndex;
+            const signal = allSignals[signalIndex];
+            
+            if (signal) {
+              const side = signal[3];
+              const qty = signal[2];
+              const price = signal[1];
+              const signalType = side.toLowerCase() === 'buy' ? '买入' : '卖出';
+              const signalColor = side.toLowerCase() === 'buy' ? '#14b143' : '#ef232a';
+              result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + price + '</span><br/>';
+              result += '<span style="color: ' + signalColor + '">' + signalType + '数量: ' + qty + '</span><br/>';
+            }
+          });
+        }
+        
         return result;
       }
     },
     legend: {
-      data: ['K线', '买入点', '卖出点']
+      show: false,
+      data: ['K线']
     },
+    // 添加缩放组件
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        start: defaultZoom.start,
+        end: defaultZoom.end,
+        zoomLock: false,
+        filterMode: 'filter'
+      },
+      {
+        show: true,
+        type: 'slider',
+        start: defaultZoom.start,
+        end: defaultZoom.end,
+        handleIcon: 'M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7v-1.2h6.6z M13.3,22H6.7v-1.2h6.6z M13.3,19.6H6.7v-1.2h6.6z',
+        handleSize: '80%',
+        handleStyle: {
+          color: '#fff',
+          shadowBlur: 3,
+          shadowColor: 'rgba(0, 0, 0, 0.6)',
+          shadowOffsetX: 2,
+          shadowOffsetY: 2
+        }
+      }
+    ],
     grid: [
-      { left: '10%', right: '10%', top: '15%', height: '50%' },
-      { left: '10%', right: '10%', bottom: '10%', height: '20%' }
+      { left: '3%', right: '3%', top: '5%', bottom: '10%', height: 'auto' }
     ],
     xAxis: [
       {
         type: 'category',
-        data: dates,
+        data: dates.map(date => date.full), // 使用完整时间用于数据匹配
         axisLabel: {
-          color: '#8E8EA0',
-          // 简化interval配置，确保分钟级数据能正确显示
-          interval: function(_index: number, _value: string) {
-            const totalPoints = dates.length;
-            // 动态调整显示的标签数量，避免标签重叠
-            if (totalPoints < 50) return 0; // 显示所有标签
-            if (totalPoints < 200) return Math.floor(totalPoints / 10); // 显示约1/10的数据点
-            return Math.floor(totalPoints / 20); // 显示约1/20的数据点
+          show: false // 去掉横坐标刻度标签
+        },
+        axisLine: {
+          lineStyle: {
+            color: '#8E8EA0'
           }
         },
-        gridIndex: 0
-      },
-      {
-        type: 'category',
-        data: dates,
-        axisLabel: {
+        splitLine: {
           show: false
-        },
-        gridIndex: 1,
-        show: false
+        }
       }
     ],
     yAxis: [
       {
         type: 'value',
-        scale: true,
-        gridIndex: 0,
-        splitLine: { show: false }
-      },
-      {
-        type: 'value',
-        scale: true,
-        gridIndex: 1,
-        splitLine: { show: false },
-        show: false
+        scale: true, // 开启自动缩放，根据当前视图中的数据动态调整yAxis范围
+        min: function(value: any) {
+          // 自定义最小值计算，确保有一定的边距
+          return value.min - (value.max - value.min) * 0.05;
+        },
+        max: function(value: any) {
+          // 自定义最大值计算，确保有一定的边距
+          return value.max + (value.max - value.min) * 0.05;
+        },
+        axisLabel: {
+          color: '#8E8EA0',
+          formatter: yAxisFormatter
+        },
+        axisLine: {
+          show: true,
+          lineStyle: {
+            color: '#8E8EA0'
+          }
+        },
+        splitLine: {
+          show: true,
+          lineStyle: {
+            color: '#f0f0f0',
+            type: 'dashed'
+          }
+        }
       }
     ],
     series: [
@@ -180,54 +313,136 @@ const createKlineChartConfig = (klineData: any[], tradeData: { buyPoints: any[],
         name: 'K线',
         type: 'candlestick',
         data: candlestickData.map(item => item.slice(1)),
-        xAxisIndex: 0,
-        yAxisIndex: 0,
         itemStyle: {
-          color: '#ef232a',
-          color0: '#14b143',
-          borderColor: '#ef232a',
-          borderColor0: '#14b143'
-        }
+          color: '#14b143',  // 绿色表示涨（收盘价高于开盘价）
+          color0: '#ef232a', // 红色表示跌（收盘价低于开盘价）
+          borderColor: '#14b143',
+          borderColor0: '#ef232a'
+        },
+        emphasis: {
+          itemStyle: {
+            borderWidth: 2
+          }
+        },
+        barWidth: '60%', // 设置K线柱宽度，使显示更美观
+        barMaxWidth: 50, // 最大宽度限制
+        barMinWidth: 1 // 最小宽度限制
       },
+      // 合并的交易信号系列
       {
-        name: '成交量',
-        type: 'bar',
-        data: volumeData.map((item, index) => [
-          item[1],
-          item[1] > 0 ? (candlestickData[index][1] < candlestickData[index][2] ? '#14b143' : '#ef232a') : '#888'
-        ]),
-        xAxisIndex: 1,
-        yAxisIndex: 1,
+        name: '交易信号',
+        type: 'scatter', // 改为scatter类型以避免线条显示
+        data: allSignals.map(signal => [signal[0], signal[1]]),
+        // 使用自定义symbol函数根据信号方向返回不同的图标
+        symbol: (_value: any, params: any) => {
+          // 获取当前数据点对应的信号对象
+          const signal = allSignals[params.dataIndex];
+          // 对于买入信号使用三角形
+          if (signal && signal[3].toLowerCase() === 'buy') {
+            return 'triangle';
+          }
+          // 对于卖出信号使用SVG路径定义真正的倒三角形
+          return 'path://M0,10 L10,0 L-10,0 Z';
+        },
+        symbolSize: 12,
+        // 移除偏移量，确保图标可见
+        symbolOffset: [0, 0],
+        // 使用自定义itemStyle函数根据信号方向返回不同的颜色
         itemStyle: {
-          color: function(params: any) {
-            return params.data[1];
+          color: (params: any) => {
+            // 获取当前数据点对应的信号对象
+            const signal = allSignals[params.dataIndex];
+            // 根据信号方向返回不同的颜色
+            return signal && signal[3].toLowerCase() === 'buy' ? '#14b143' : '#ef232a';
+          }
+        },
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 4,
+            shadowColor: 'rgba(0, 0, 0, 0.3)'
+          }
+        },
+        // 明确设置tooltip配置，确保交易信号点能正确显示tooltip
+        tooltip: {
+          show: true,
+          formatter: function(params: any) {
+            // 获取信号对象
+            const signalIndex = params.dataIndex;
+            const signal = allSignals[signalIndex];
+            
+            if (signal) {
+              // 从信号对象中获取时间、价格、数量和方向
+              const time = signal[0];
+              const price = signal[1];
+              const qty = signal[2];
+              const side = signal[3];
+              
+              // 格式化输出
+              const signalType = side.toLowerCase() === 'buy' ? '买入' : '卖出';
+              const signalColor = side.toLowerCase() === 'buy' ? '#14b143' : '#ef232a';
+              
+              // 确保显示时间信息
+              let result = time + '<br/>';
+              
+              // 添加K线信息
+              // 尝试根据信号的时间找到对应的K线数据
+              const klineData = candlestickData.find(kline => kline[0] === time);
+              
+              if (klineData) {
+                result += '<span style="color: #ef232a">开盘: ' + klineData[1] + '</span><br/>';
+                const closeColor = klineData[2] >= klineData[1] ? '14b143' : 'ef232a';
+                result += '<span style="color: #' + closeColor + '">收盘: ' + klineData[2] + '</span><br/>';
+                result += '<span style="color: #8c8c8c">最低: ' + klineData[3] + '</span><br/>';
+                result += '<span style="color: #8c8c8c">最高: ' + klineData[4] + '</span><br/>';
+                
+                // 计算涨跌幅
+                const change = ((klineData[2] - klineData[1]) / klineData[1] * 100).toFixed(2);
+                const color = klineData[2] >= klineData[1] ? '14b143' : 'ef232a';
+                result += '<span style="color: #' + color + '">涨跌幅: ' + change + '%</span><br/>';
+                
+                // 添加分隔线
+                result += '<hr style="border: none; border-top: 1px solid #ddd; margin: 5px 0;">';
+              }
+              
+              // 添加交易信号信息
+              result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + price + '</span><br/>';
+              result += '<span style="color: ' + signalColor + '">' + signalType + '数量: ' + qty + '</span><br/>';
+              
+              return result;
+            }
+            
+            // 如果没有信号数据，使用全局formatter
+            return option.tooltip.formatter([params]);
           }
         }
       },
-      {
-        name: '买入点',
-        type: 'scatter',
-        data: tradeData.buyPoints.map(item => item.value),
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        itemStyle: {
-          color: '#52c41a'
-        }
-      },
-      {
-        name: '卖出点',
-        type: 'scatter',
-        data: tradeData.sellPoints.map(item => item.value),
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        itemStyle: {
-          color: '#f5222d'
+
+    ],
+    animation: true,
+    animationDuration: 1000,
+    animationEasing: 'cubicOut',
+    // 图表拖拽和平移配置
+    graphic: {
+      type: 'group',
+      left: 'center',
+      top: 'top'
+    },
+    // 工具箱配置
+    toolbox: {
+      show: true,
+      right: 10,
+      top: 10,
+      feature: {
+        dataZoom: {
+          yAxisIndex: false
+        },
+        brush: {
+          type: ['rect', 'polygon', 'clear']
         }
       }
-    ]
+    }
   };
   
-  console.log(`[K线图准备] K线图配置创建完成，买入点数量: ${tradeData.buyPoints.length}, 卖出点数量: ${tradeData.sellPoints.length}`);
   return option;
 };
 
@@ -244,6 +459,8 @@ const Reports = () => {
   const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [currentRunKlineData, setCurrentRunKlineData] = useState<any[]>([])
+  // 保存当前查看的回测ID
+  const [currentRunId, setCurrentRunId] = useState<string>('')
   // 分页状态
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(20)
@@ -276,7 +493,7 @@ const Reports = () => {
         params.sortOrder = sortOrder
       }
       
-      console.log('发送到后端的API请求参数:', params);
+
       const res = await client.get('/runs', {
         params: params
       })
@@ -307,10 +524,11 @@ const Reports = () => {
   // 加载回测详情
   const loadRunDetail = async (runId: string) => {
     try {
-      const res = await client.get(`/runs/${runId}`)
+      const res = await client.get('/runs/' + runId)
       setCurrentRunDetail(res.data.info || {})
       setCurrentRunEquity(res.data.equity || [])
       setCurrentRunTrades(res.data.trades || [])
+      setCurrentRunId(runId) // 保存当前查看的回测ID
       setDetailModalVisible(true)
       
       // 同时加载K线数据
@@ -322,7 +540,7 @@ const Reports = () => {
         // 如果interval不存在或不在有效列表中，使用默认值1D
         if (!interval || !validIntervals.includes(interval)) {
           interval = '1m';
-          console.log(`使用默认interval: ${interval}，原interval值: ${res.data.info.interval}`);
+
         }
         
         await loadKlineData(res.data.info.code, res.data.info.start_time, res.data.info.end_time, interval)
@@ -336,8 +554,6 @@ const Reports = () => {
   // 加载K线数据
   const loadKlineData = async (code: string, start: string, end: string, interval: string) => {
     try {
-      console.log(`[K线数据请求] 请求参数: code=${code}, start=${start}, end=${end}, interval=${interval}`)
-      
       // 使用客户端发送请求
       const res = await client.get('/market/candles', {
         params: {
@@ -348,34 +564,25 @@ const Reports = () => {
         }
       })
       
-      console.log(`[K线数据响应] 状态码: ${res.status}, 响应数据:`, res.data)
-      
       // 验证数据结构
       if (res.data && Array.isArray(res.data.rows)) {
-        console.log(`[K线数据验证] 有效数据行数: ${res.data.rows.length}`)
         if (res.data.rows.length > 0) {
-          console.log(`[K线数据样例] 前2条数据:`, res.data.rows.slice(0, 2))
           // 检查第一条数据的字段结构
-          console.log(`[K线数据字段检查] 包含字段: ${Object.keys(res.data.rows[0]).join(', ')}`)
         }
         setCurrentRunKlineData(res.data.rows)
       } else {
-        console.error(`[K线数据错误] 数据结构不正确，rows字段不存在或不是数组:`, res.data)
         // 生成模拟数据以便图表能够渲染
         const mockData = generateMockKlineData(code, start, end, interval)
-        console.log(`[K线数据模拟] 生成模拟数据:`, mockData)
         setCurrentRunKlineData(mockData)
       }
       
       // 添加一个小延迟后再次打印currentRunKlineData状态
       setTimeout(() => {
-        console.log(`[K线数据状态] 100ms后currentRunKlineData状态:`, currentRunKlineData.length, '行数据')
       }, 100)
     } catch (error) {
       console.error('加载K线数据失败:', error)
       // 生成模拟数据以便图表能够渲染
       const mockData = generateMockKlineData(code || 'BTCUSDT', start || new Date().toISOString(), end || new Date().toISOString(), interval || '1m')
-      console.log(`[K线数据模拟] 错误时生成模拟数据:`, mockData)
       setCurrentRunKlineData(mockData)
     }
   }
@@ -430,8 +637,6 @@ const Reports = () => {
       currentDate = new Date(currentDate.getTime() + intervalMs);
       basePrice = close;
     }
-    
-    console.log(`[模拟数据生成] 生成${mockRows.length}条K线数据，格式与后端返回保持一致`);
     return mockRows;
   }
   
@@ -442,136 +647,48 @@ const Reports = () => {
     setDetailModalVisible(false)
   }
 
-  // 准备收益曲线数据
-  const prepareEquityChartData = useMemo(() => {
-    if (!currentRunEquity || currentRunEquity.length === 0) {
-      return null
-    }
 
-    const dates = currentRunEquity.map(item => dayjs(item.datetime).format('YYYY-MM-DD HH:mm'))
-    const nav = currentRunEquity.map(item => item.nav)
-    const drawdown = currentRunEquity.map(item => item.drawdown)
-
-    return {
-      tooltip: {
-        trigger: 'axis',
-        formatter: (params: any[]) => {
-          let result = `${params[0].axisValue}<br/>`
-          params.forEach(param => {
-            result += `${param.seriesName}: ${param.value}<br/>`
-          })
-          return result
-        }
-      },
-      legend: {
-        data: ['净值', '回撤']
-      },
-      xAxis: {
-        type: 'category',
-        data: dates,
-        axisLabel: {
-          interval: Math.floor(dates.length / 10), // 控制显示的标签数量
-          rotate: 45
-        }
-      },
-      yAxis: [
-        {
-          type: 'value',
-          name: '净值',
-          position: 'left'
-        },
-        {
-          type: 'value',
-          name: '回撤',
-          position: 'right',
-          axisLabel: {
-            formatter: '{value}%'
-          }
-        }
-      ],
-      series: [
-        {
-          name: '净值',
-          type: 'line',
-          data: nav,
-          smooth: true,
-          yAxisIndex: 0
-        },
-        {
-          name: '回撤',
-          type: 'line',
-          data: drawdown,
-          smooth: true,
-          yAxisIndex: 1,
-          lineStyle: {
-            color: '#f5222d'
-          }
-        }
-      ]
-    }
-  }, [currentRunEquity])
 
   // 准备带有买卖点的K线图数据
-  const prepareKlineWithTradesData = useMemo(() => {
-    console.log(`[K线图准备] 开始处理K线数据，数据长度: ${currentRunKlineData ? currentRunKlineData.length : 0}`);
-    
+  const prepareKlineWithTradesData = useMemo(() => {   
     // 如果没有数据，返回null让组件显示加载状态或提示信息
     if (!currentRunKlineData || currentRunKlineData.length === 0) {
-      console.warn('[K线图准备] K线数据为空，等待加载真实数据');
       return null;
     }
 
-    // 打印前两条数据，检查数据结构
-    if (currentRunKlineData.length > 0) {
-      console.log(`[K线图准备] 前两条K线数据:`, currentRunKlineData.slice(0, 2));
-      console.log(`[K线图准备] 第一条数据字段:`, Object.keys(currentRunKlineData[0]));
-      console.log(`[K线图准备] close类型:`, typeof currentRunKlineData[0].close);
-      console.log(`[K线图准备] volume类型:`, typeof currentRunKlineData[0].volume);
-    }
-
     // 验证数据格式
-    const validRows = currentRunKlineData.filter((item, index) => {
+    const validRows = currentRunKlineData.filter((item, _index) => {
       if (!item || typeof item !== 'object') {
-        console.warn(`[K线图准备] 数据项${index}不是对象:`, item);
         return false;
       }
       if (!('datetime' in item)) {
-        console.warn(`[K线图准备] 数据项${index}缺少datetime字段:`, item);
         return false;
       }
       if (!('open' in item)) {
-        console.warn(`[K线图准备] 数据项${index}缺少open字段:`, item);
         return false;
       }
       if (!('high' in item)) {
-        console.warn(`[K线图准备] 数据项${index}缺少high字段:`, item);
         return false;
       }
       if (!('low' in item)) {
-        console.warn(`[K线图准备] 数据项${index}缺少low字段:`, item);
         return false;
       }
       if (!('close' in item)) {
-        console.warn(`[K线图准备] 数据项${index}缺少close字段:`, item);
         return false;
       }
       if (!('volume' in item)) {
-        console.warn(`[K线图准备] 数据项${index}缺少volume字段:`, item);
         return false;
       }
       if (typeof item.close !== 'number') {
-        console.warn(`[K线图准备] 数据项${index}的close不是数字:`, item.close);
         return false;
       }
       if (typeof item.volume !== 'number') {
-        console.warn(`[K线图准备] 数据项${index}的volume不是数字:`, item.volume);
         return false;
       }
       return true;
     });
     
     if (validRows.length === 0) {
-      console.error('[K线图准备] 没有有效的K线数据行');
       // 作为最后的手段，生成一些简单的模拟数据，确保图表能够显示
       const simpleMockData = [];
       const now = new Date();
@@ -589,20 +706,12 @@ const Reports = () => {
           code: 'BTCUSDT'
         });
       }
-      console.log(`[K线图准备] 生成简单模拟数据:`, simpleMockData.length, '条数据');
-      // 处理交易点数据
-      const { buyPoints, sellPoints } = processTradePoints(simpleMockData, currentRunTrades);
-      // 创建并返回K线图配置
-      return createKlineChartConfig(simpleMockData, { buyPoints, sellPoints });
+      // 创建并返回K线图配置，传递空的交易数据
+    return createKlineChartConfig(simpleMockData, []);
     }
     
-    console.log(`[K线图准备] 有效K线数据行数: ${validRows.length}, 交易记录数量: ${currentRunTrades ? currentRunTrades.length : 0}`);
-    
-    // 处理交易点数据
-    const { buyPoints, sellPoints } = processTradePoints(validRows, currentRunTrades);
-    
-    // 创建并返回K线图配置
-    return createKlineChartConfig(validRows, { buyPoints, sellPoints });
+    // 创建并返回K线图配置，同时传递交易数据
+    return createKlineChartConfig(validRows, currentRunTrades);
   }, [currentRunKlineData, currentRunTrades]);
 
   // 标的搜索处理
@@ -641,11 +750,10 @@ const Reports = () => {
 
   // 处理排序变化
   const handleTableChange = (_pagination: any, _filters: any, sorter: any) => {
-    console.log('接收到的排序参数:', sorter);
     // 确保排序字段和排序顺序都不为空
     if (sorter.field && sorter.order) {
       // 直接使用Table组件传递的排序字段，确保与columns中的key一致
-      console.log('设置排序字段:', sorter.field, '排序顺序:', sorter.order);
+
       // 立即更新排序状态，这样用户可以立即看到排序指示器的变化
       setSortField(sorter.field);
       setSortOrder(sorter.order);
@@ -655,7 +763,6 @@ const Reports = () => {
       
       // 注意：实际的数据重新加载会由useEffect处理，这里不再重复调用loadRuns
     } else {
-      console.log('无效的排序参数:', sorter);
     }
   }
 
@@ -684,9 +791,34 @@ const Reports = () => {
 
   const columns = [
     { title:'策略', dataIndex:'strategy', key:'strategy' },
-    { title:'标的', dataIndex:'code', key:'code' },
     {
-      title:'总收益率', 
+      title:'交易次数',
+      dataIndex:'trade_count',
+      key:'trade_count',
+      sorter: (a: any, b: any) => {
+        const countA = a.trade_count || 0;
+        const countB = b.trade_count || 0;
+        return countB - countA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        return record.trade_count || 0;
+      }
+    },
+    {
+      title:'胜率',
+      dataIndex:'win_rate',
+      key:'win_rate',
+      sorter: (a: any, b: any) => {
+        const rateA = a.win_rate || 0;
+        const rateB = b.win_rate || 0;
+        return rateB - rateA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        return record.win_rate ? (record.win_rate * 100).toFixed(2) + '%' : '0.00%';
+      }
+    },
+    {
+      title:'收益率', 
       dataIndex:'totalReturn',
       key:'totalReturn',
       sorter: (a: any, b: any) => {
@@ -708,6 +840,19 @@ const Reports = () => {
       }
     },
     {
+      title:'夏普率', 
+      dataIndex:'sharpe',
+      key:'sharpe',
+      sorter: (a: any, b: any) => {
+        const sharpeA = a.sharpe || 0;
+        const sharpeB = b.sharpe || 0;
+        return sharpeB - sharpeA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        return record.sharpe ? record.sharpe.toFixed(2) : '0.00';
+      }
+    },
+    {
       title:'最大回撤', 
       dataIndex:'maxDrawdown',
       key:'maxDrawdown',
@@ -721,16 +866,29 @@ const Reports = () => {
       }
     },
     {
-      title:'夏普率', 
-      dataIndex:'sharpe',
-      key:'sharpe',
+      title:'总收益',
+      dataIndex:'total_profit',
+      key:'total_profit',
       sorter: (a: any, b: any) => {
-        const sharpeA = a.sharpe || 0;
-        const sharpeB = b.sharpe || 0;
-        return sharpeB - sharpeA; // 降序排列
+        const profitA = a.total_profit || 0;
+        const profitB = b.total_profit || 0;
+        return profitB - profitA; // 降序排列
       },
       render: (_: any, record: any) => {
-        return record.sharpe ? record.sharpe.toFixed(2) : '0.00';
+        return record.total_profit ? record.total_profit.toFixed(2) : '0.00';
+      }
+    },
+    {
+      title:'总手续费',
+      dataIndex:'total_fee',
+      key:'total_fee',
+      sorter: (a: any, b: any) => {
+        const feeA = a.total_fee || 0;
+        const feeB = b.total_fee || 0;
+        return feeB - feeA; // 降序排列
+      },
+      render: (_: any, record: any) => {
+        return record.total_fee ? record.total_fee.toFixed(2) : '0.00';
       }
     },
     { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime },
@@ -755,8 +913,6 @@ const Reports = () => {
 
   // 监听排序状态变化，触发数据重新加载
   useEffect(() => {
-    console.log('排序状态变化 - 准备重新加载数据:', { sortField, sortOrder, currentPage, pageSize });
-    
     // 只有当sortField有实际值时才触发重新加载，避免不必要的刷新
     if (sortField && sortField.trim() !== '') {
       loadRuns(currentPage, pageSize)
@@ -772,11 +928,11 @@ const Reports = () => {
   }, [currentPage, pageSize])
 
   return (
-    <>      <Card title='Reports'>
-        <Space style={{marginBottom:12}}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>      <Card title='回测报告' className="shadow-lg" style={{ borderRadius: '12px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <Space style={{marginBottom:16, display: 'flex', flexWrap: 'wrap', gap: 16}}>
           <Select
             placeholder="请选择或输入标的"
-            style={{ width: 220, marginRight: 16 }}
+            style={{ width: 220 }}
             showSearch
             filterOption={false}
             allowClear
@@ -785,12 +941,13 @@ const Reports = () => {
             value={searchText}
             onChange={(value) => {
               setSearchText(value)
-              handleSearchChange()
-            }}
-          />
+                handleSearchChange()
+              }}
+              className="transition-all duration-300 hover:shadow-md"
+            />
           <Select
             placeholder="请选择或输入策略"
-            style={{ width: 220, marginRight: 16 }}
+            style={{ width: 220 }}
             showSearch
             filterOption={false}
             allowClear
@@ -801,8 +958,15 @@ const Reports = () => {
               setStrategySearchText(value)
               handleSearchChange()
             }}
+            className="transition-all duration-300 hover:shadow-md"
           />
-          <Button onClick={() => loadRuns(currentPage, pageSize, true)}>刷新</Button>
+          <Button 
+            icon={<ReloadOutlined />}
+            onClick={() => loadRuns(currentPage, pageSize, true)}
+            className="transition-all duration-300 hover:shadow-md"
+          >
+            刷新
+          </Button>
         </Space>
         <Table 
           rowKey="run_id" 
@@ -812,13 +976,14 @@ const Reports = () => {
             selectedRowKeys: selected, 
             onChange: (keys)=> setSelected(keys as string[]) 
           }} 
+          className="shadow-sm rounded-lg overflow-hidden"
           pagination={{
             current: currentPage,
             pageSize: pageSize,
             total: total,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 条记录`,
+            showTotal: (total) => '共 ' + total + ' 条记录',
             pageSizeOptions: ['10', '20', '50', '100'],
             onChange: handlePageChange,
             onShowSizeChange: handlePageChange
@@ -826,93 +991,122 @@ const Reports = () => {
           onChange={handleTableChange}
           loading={loading} // 添加loading属性，在加载数据时显示loading效果
         />
-
-
       </Card>
 
       {/* 详情弹窗 */}
       <Modal
-        title="回测详情"
-        open={detailModalVisible}
-        onCancel={handleCloseDetailModal}
-        footer={null}
-        width={1200}
-        style={{ maxHeight: '90vh', minWidth: '1000px' }}
-        styles={{ body: { overflowY: 'auto', padding: '16px' } }}
-      >
+          title="回测详情"
+          open={detailModalVisible}
+          onCancel={handleCloseDetailModal}
+          footer={null}
+          width={1200}
+          style={{ height: '90vh', minWidth: '1000px', position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)' }}
+          className="transition-all duration-300"
+          styles={{
+            body: { overflowY: 'auto', padding: '0' },
+            content: { borderRadius: '8px', height: '100%' },
+            wrapper: { display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }
+          }}
+        >
         {currentRunDetail && (
           <Tabs>
             {/* 基本信息 */}
             <Tabs.TabPane tab="基本信息" key="1">
-              <div style={{padding: 16}}>
-                <div style={{display: 'flex', justifyContent: 'space-between', gap: 24}}>
-                  {/* 左侧基本信息 */}
-                  <div style={{width: '45%'}}>
-                    <h3 style={{marginBottom: 16}}>基本信息</h3>
-                    <Space direction="vertical" style={{width: '100%'}}>
-                      <div>
-                        <strong>策略名称:</strong> {currentRunDetail.strategy}
+              <div style={{padding: 24}}>
+                <div style={{marginBottom: 24}}>
+                  <h3 style={{marginBottom: 16, fontSize: '16px', fontWeight: 600, color: '#262626'}}>基本信息</h3>
+                  <Card style={{borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)'}}>
+                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, padding: '8px 0'}}>
+                      {/* 第一行：运行ID，策略名称，标的代码，时间间隔 */}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>运行ID</span>
+                        <span style={{fontSize: '13px', color: '#595959', wordBreak: 'break-all'}}>{currentRunDetail.run_id || '-'}</span>
                       </div>
-                      <div>
-                        <strong>标的代码:</strong> {currentRunDetail.code}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>策略名称</span>
+                        <span style={{fontSize: '14px', color: '#262626', fontWeight: 500}}>{currentRunDetail.strategy || '-'}</span>
                       </div>
-                      <div>
-                        <strong>回测时间范围:</strong> {formatDateTime(currentRunDetail.start_time)} 至 {formatDateTime(currentRunDetail.end_time)}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>标的代码</span>
+                        <span style={{fontSize: '14px', color: '#262626', fontWeight: 500}}>{currentRunDetail.code || '-'}</span>
                       </div>
-                      <div>
-                        <strong>初始资金:</strong> {currentRunDetail.initial_capital}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>时间间隔</span>
+                        <span style={{fontSize: '14px', color: '#262626', fontWeight: 500}}>{currentRunDetail.interval || '-'}</span>
                       </div>
-                      <div>
-                        <strong>最终资金:</strong> {currentRunDetail.final_capital}
+                      
+                      {/* 第二行：创建时间，回测时间范围（占两列），初始资金 */}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>创建时间</span>
+                        <span style={{fontSize: '13px', color: '#595959'}}>{currentRunDetail.created_at ? formatDateTime(currentRunDetail.created_at) : '-'}</span>
                       </div>
-                      <div>
-                        <strong>运行ID:</strong> {currentRunDetail.run_id}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px', gridColumn: 'span 2'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>回测时间范围</span>
+                        <span style={{fontSize: '14px', color: '#262626'}}>{currentRunDetail.start_time ? formatDateTime(currentRunDetail.start_time) : '-'} 至 {currentRunDetail.end_time ? formatDateTime(currentRunDetail.end_time) : '-'}</span>
                       </div>
-                      <div>
-                        <strong>创建时间:</strong> {formatDateTime(currentRunDetail.created_at)}
+                      <div style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                        <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>初始资金</span>
+                        <span style={{fontSize: '14px', color: '#262626', fontWeight: 500}}>{currentRunDetail.initial_capital || '-'}</span>
                       </div>
-                    </Space>
-                  </div>
-                  
-                  {/* 右侧回测参数 */}
-                  <div style={{width: '45%'}}>
-                    <h3 style={{marginBottom: 16}}>回测参数</h3>
-                    {currentRunDetail.paras ? (
-                      <Space direction="vertical" style={{width: '100%'}}>
+                    </div>
+                  </Card>
+                </div>
+                
+                {currentRunDetail.paras && Object.keys(currentRunDetail.paras).length > 0 && (
+                  <div>
+                    <h3 style={{marginBottom: 16, fontSize: '16px', fontWeight: 600, color: '#262626'}}>回测参数</h3>
+                    <Card style={{borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)'}}>
+                      <div style={{display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, padding: '8px 0'}}>
                         {Object.entries(currentRunDetail.paras).map(([key, value]) => (
-                          <div key={key}>
-                            <strong>{key}:</strong> {typeof value === 'object' && value !== null ? JSON.stringify(value).toString() : String(value)}
+                          <div key={key} style={{display: 'flex', flexDirection: 'column', padding: '0 16px'}}>
+                            <span style={{fontSize: '12px', color: '#262626', fontWeight: 'bold', marginBottom: '4px'}}>{key}</span>
+                            <span style={{fontSize: '13px', color: '#595959', wordBreak: 'break-all'}}>
+                              {typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : String(value)}
+                            </span>
                           </div>
                         ))}
-                      </Space>
-                    ) : (
-                      <div>暂无回测参数</div>
-                    )}
+                      </div>
+                    </Card>
                   </div>
-                </div>
+                )}
               </div>
             </Tabs.TabPane>
 
             {/* 结果指标 */}
             <Tabs.TabPane tab="结果指标" key="2">
-              <div style={{padding: 16}}>
+              <div style={{padding: 24}}>
+                <h3 style={{marginBottom: 24, fontSize: '16px', fontWeight: 600, color: '#262626'}}>关键指标</h3>
                 <Space direction="vertical" style={{width: '100%'}}>
-                  <Space style={{width: '100%', justifyContent: 'space-between'}}>
-                    <Statistic title="初始资金" value={currentRunDetail.initial_capital} />
-                    <Statistic title="最终资金" value={currentRunDetail.final_capital} />
-                    <Statistic title="总收益率" value={((currentRunDetail.final_capital - currentRunDetail.initial_capital) / currentRunDetail.initial_capital * 100).toFixed(2)} suffix="%" />
-                  </Space>
-                  {currentRunEquity.length > 0 && (
-                    <Space style={{width: '100%', justifyContent: 'space-between'}}>
+                  {/* 第一行：初始资金、收益率、胜率、夏普率 */}
+                  <Space style={{width: '100%', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16}}>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
+                      <Statistic title="初始资金" value={currentRunDetail.initial_capital} precision={2} />
+                    </Card>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
                       <Statistic 
-                        title="最大回撤" 
-                        value={(currentRunEquity.reduce((max, item) => Math.min(max, item.drawdown), 0) * 100).toFixed(2)} 
+                        title="收益率" 
+                        value={((currentRunDetail.final_capital - currentRunDetail.initial_capital) / currentRunDetail.initial_capital * 100).toFixed(2)} 
                         suffix="%" 
-                        valueStyle={{ color: '#f5222d' }}
+                        valueStyle={{
+                          color: ((currentRunDetail.final_capital - currentRunDetail.initial_capital) / currentRunDetail.initial_capital * 100) >= 0 ? '#52c41a' : '#f5222d'
+                        }}
                       />
+                    </Card>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
+                      <Statistic 
+                        title="胜率" 
+                        value={(currentRunDetail.win_rate * 100).toFixed(2)} 
+                        suffix="%" 
+                      />
+                    </Card>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
                       <Statistic 
                         title="夏普率" 
                         value={(() => {
+                          // 优先使用后端计算的夏普率，如果不存在则使用前端计算的值
+                          if (currentRunDetail.sharpe) {
+                            return currentRunDetail.sharpe.toFixed(2);
+                          }
                           // 简单计算夏普率（假设无风险利率为0）
                           const returns = currentRunEquity.map((item: any, index: number) => {
                             if (index === 0) return 0
@@ -927,28 +1121,52 @@ const Reports = () => {
                           return stdDev === 0 ? 0 : (meanReturn / stdDev * Math.sqrt(252)).toFixed(2) // 假设252个交易日
                         })()}
                       />
-                    </Space>
-                  )}
+                    </Card>
+                  </Space>
+                  
+                  {/* 第二行：最终资金、总收益、交易次数、最大回撤 */}
+                  <Space style={{width: '100%', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16}}>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
+                      <Statistic title="最终资金" value={currentRunDetail.final_capital} precision={2} />
+                    </Card>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
+                      <div style={{textAlign: 'center', width: '100%'}}>
+                        <Statistic 
+                          title="总收益(包含浮盈)" 
+                          value={currentRunDetail.final_capital - currentRunDetail.initial_capital} 
+                          precision={2} 
+                          valueStyle={{
+                            color: (currentRunDetail.final_capital - currentRunDetail.initial_capital) >= 0 ? '#52c41a' : '#f5222d',
+                            textAlign: 'center'
+                          }}
+                          suffix={<div style={{fontSize: '12px', color: '#8c8c8c', textAlign: 'center'}}>
+                            已实现盈利: {currentRunDetail.total_profit?.toFixed(2)}
+                          </div>}
+                        />
+                      </div>
+                    </Card>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
+                      <Statistic title="交易次数" value={currentRunDetail.trade_count || 0} />
+                    </Card>
+                    <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
+                      <Statistic 
+                        title="最大回撤" 
+                        value={(currentRunDetail.max_drawdown ? currentRunDetail.max_drawdown * 100 : 
+                                (currentRunEquity.length > 0 ? currentRunEquity.reduce((max, item) => Math.min(max, item.drawdown), 0) * 100 : 0)).toFixed(2)} 
+                        suffix="%" 
+                        valueStyle={{ color: '#f5222d' }}
+                      />
+                    </Card>
+                  </Space>
                 </Space>
               </div>
             </Tabs.TabPane>
 
-            {/* 收益曲线 */}
-            <Tabs.TabPane tab="收益曲线" key="3">
-              <div style={{padding: 16, height: 400}}>
-                {prepareEquityChartData ? (
-                  <ReactECharts option={prepareEquityChartData} style={{height: '100%'}} />
-                ) : (
-                  <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}>
-                    暂无收益曲线数据
-                  </div>
-                )}
-              </div>
-            </Tabs.TabPane>
+
 
             {/* 交易图表 */}
-            <Tabs.TabPane tab="K线交易图" key="5">
-              <div style={{padding: 0, height: 550}}>
+            <Tabs.TabPane tab="K线交易图" key="4">
+              <div style={{padding: 24, height: 600}}>
                 {prepareKlineWithTradesData ? (
                   <ReactECharts option={prepareKlineWithTradesData} style={{height: '100%'}} />
                 ) : (
@@ -959,73 +1177,95 @@ const Reports = () => {
               </div>
             </Tabs.TabPane>
 
-            {/* 模拟交易记录 */}
-            <Tabs.TabPane tab="交易记录" key="4">
-              <div style={{ padding: '8px 0', maxHeight: '600px', overflow: 'auto' }}>
-                <div style={{ marginBottom: 16, textAlign: 'right' }}>
-                  <Button 
+            {/* 交易记录 */}
+            <Tabs.TabPane tab="交易记录" key="5">
+                <Card style={{borderRadius: '8px', border: '1px solid #f0f0f0', boxShadow: 'none', overflow: 'auto'}}>
+                  <Table 
+                    dataSource={currentRunTrades}
+                    rowKey={(record: any) => record.datetime + '-' + record.side}
+                    pagination={{pageSize: 15, size: 'small' as const}}
+                    scroll={{ x: '1800px', y: 'calc(100% - 140px)' }}
+                    className="transition-all duration-300"
+                    rowClassName={() => 'custom-row'}
+                    columns={[
+                      {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160, ellipsis: false},
+                      {title: '标的', dataIndex: 'code', key: 'code', width: 100},
+                      {title: '方向', dataIndex: 'side', key: 'side', width: 80},
+                      {title: '交易类型', dataIndex: 'trade_type', key: 'trade_type', width: 100},
+                      {title: '交易前均价', dataIndex: 'avg_price', key: 'avg_price', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 120},
+                      {title: '交易价格', dataIndex: 'price', key: 'price', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 100},
+                      {title: '交易数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value ? value.toString() : '-', width: 100},
+                      {title: '交易金额', dataIndex: 'amount', key: 'amount', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 120},
+                      {title: '交易后均价', dataIndex: 'current_avg_price', key: 'current_avg_price', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 120},
+                      {title: '持仓数量', dataIndex: 'current_qty', key: 'current_qty', render: (value: number) => value ? value.toString() : '-', width: 120},
+                      {title: '实现盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? (
+                        <span style={{color: value >= 0 ? '#52c41a' : '#f5222d'}}>
+                          {value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))}
+                        </span>
+                      ) : '-', width: 120},
+                      {title: '持有现金', dataIndex: 'current_cash', key: 'current_cash', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 120},
+                      {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 100}
+                    ]}
+                  >
+                 </Table>
+                 <Button 
+                    type="primary" 
+                    icon={<DownloadOutlined />}
+                    size="small"
                     onClick={() => {
                       if (currentRunTrades.length === 0) {
                         message.warning('没有可导出的交易记录');
                         return;
                       }
-                       
+                        
                       // 准备导出数据
                       const exportData = currentRunTrades.map(trade => ({
                         '时间': formatDateTime(trade.datetime),
                         '标的': trade.code,
                         '方向': trade.side,
                         '交易类型': trade.trade_type || 'normal',
-                        '价格': trade.price.toFixed(Math.min(4, trade.price.toString().split('.')[1]?.length || 0)),
-                        '数量': trade.qty.toFixed(Math.min(4, trade.qty.toString().split('.')[1]?.length || 0)),
-                        '金额': trade.amount.toFixed(Math.min(4, trade.amount.toString().split('.')[1]?.length || 0)),
-                        '费用': trade.fee.toFixed(Math.min(4, trade.fee.toString().split('.')[1]?.length || 0)),
-                        '盈亏': trade.realized_pnl ? trade.realized_pnl.toFixed(Math.min(4, trade.realized_pnl.toString().split('.')[1]?.length || 0)) : '-',
-                        '净值': trade.nav ? trade.nav.toFixed(Math.min(4, trade.nav.toString().split('.')[1]?.length || 0)) : '-'
+                        '交易前均价': trade.avg_price ? trade.avg_price.toFixed(Math.min(4, trade.avg_price.toString().split('.')[1]?.length || 0)) : '-',
+                        '交易价格': trade.price.toFixed(Math.min(4, trade.price.toString().split('.')[1]?.length || 0)),
+                        '交易数量': trade.qty.toFixed(Math.min(4, trade.qty.toString().split('.')[1]?.length || 0)),
+                        '交易金额': trade.amount.toFixed(Math.min(4, trade.amount.toString().split('.')[1]?.length || 0)),
+                        '手续费': trade.fee.toFixed(Math.min(4, trade.fee.toString().split('.')[1]?.length || 0)),
+                        '交易后均价': trade.current_avg_price ? trade.current_avg_price.toFixed(Math.min(4, trade.current_avg_price.toString().split('.')[1]?.length || 0)) : '-',
+                        '当前价格': trade.close_price ? trade.close_price.toFixed(Math.min(4, trade.close_price.toString().split('.')[1]?.length || 0)) : '-',
+                        '持仓数量': trade.current_qty ? trade.current_qty.toFixed(Math.min(4, trade.current_qty.toString().split('.')[1]?.length || 0)) : '-',
+                        '实现盈亏': trade.realized_pnl ? trade.realized_pnl.toFixed(Math.min(4, trade.realized_pnl.toString().split('.')[1]?.length || 0)) : '-',
+                        '持有现金': trade.current_cash ? trade.current_cash.toFixed(Math.min(4, trade.current_cash.toString().split('.')[1]?.length || 0)) : '-',
+                        '净值': trade.nav ? trade.nav.toFixed(Math.min(4, trade.nav.toString().split('.')[1]?.length || 0)) : '-' 
                       }));
-                       
+                        
                       // 创建工作表
                       const ws = XLSX.utils.json_to_sheet(exportData);
-                      
+                       
                       // 创建工作簿
                       const wb = XLSX.utils.book_new();
                       XLSX.utils.book_append_sheet(wb, ws, '交易记录');
-                      
-                      // 生成文件名，使用回测ID和当前日期
-                      const filename = `交易记录_${currentRunDetail.id || 'unknown'}_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`;
-                      
+                       
+                      // 生成文件名，使用保存的回测ID和当前日期
+                      const filename = '交易记录_' + (currentRunId || 'unknown') + '_' + dayjs().format('YYYYMMDD_HHmmss') + '.xlsx';
+                       
                       // 导出文件
                       XLSX.writeFile(wb, filename);
                       message.success('交易记录导出成功');
                     }}
                   >
                     导出Excel
-                  </Button>
-                </div>
-                <Table 
-                  dataSource={currentRunTrades}
-                  rowKey={(record: any) => `${record.datetime}-${record.side}`}
-                  pagination={{pageSize: 10}}
-                  scroll={{ x: '1200px' }}
-                  columns={[
-                    {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160},
-                    {title: '标的', dataIndex: 'code', key: 'code', width: 100},
-                    {title: '方向', dataIndex: 'side', key: 'side', width: 80},
-                    {title: '交易类型', dataIndex: 'trade_type', key: 'trade_type', width: 100},
-                    {title: '价格', dataIndex: 'price', key: 'price', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
-                    {title: '数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
-                    {title: '金额', dataIndex: 'amount', key: 'amount', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
-                    {title: '费用', dataIndex: 'fee', key: 'fee', render: (value: number) => value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)), width: 100},
-                    {title: '盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 100},
-                    {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => value ? value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0)) : '-', width: 100}
-                  ]}
-                />
-              </div>
+                 </Button>
+              </Card>
+              <style>{`
+                  .custom-row { height: 32px; line-height: 32px; }
+                  .ant-table-thead > tr > th { height: 36px !important; padding: 0 12px; white-space: nowrap; }
+                  .ant-table-tbody > tr > td { padding: 0 12px !important; border-bottom: 1px solid #f5f5f5; white-space: nowrap; }
+                  .ant-table-row { transition: all 0.3s; }
+                  .ant-table-fixed-left { position: sticky !important; left: 0 !important; z-index: 2 !important; }
+                  .ant-table-pagination { margin-top: 8px; margin-bottom: 8px; }
+                `}</style>
             </Tabs.TabPane>
-          </Tabs>
-        )}
-      </Modal>
-    </>
+          </Tabs>        )}
+      </Modal>    </div>
   )
 }
 

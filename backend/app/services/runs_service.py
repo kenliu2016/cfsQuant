@@ -25,7 +25,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     # 计算偏移量
     offset = (page - 1) * limit
     
-    # 构建基本查询，使用左连接获取metrics表中的max_drawdown和sharpe指标
+    # 构建基本查询，直接从runs表获取指标（不再从metrics表查询）
     base_sql = """
     SELECT 
         r.run_id, 
@@ -37,17 +37,13 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         r.final_capital, 
         r.created_at,
         
-        -- 获取最大回撤指标
-        (SELECT metric_value 
-         FROM metrics m1 
-         WHERE m1.run_id = r.run_id AND m1.metric_name = 'max_drawdown' 
-         LIMIT 1) as max_drawdown,
-        
-        -- 获取夏普率指标
-        (SELECT metric_value 
-         FROM metrics m2 
-         WHERE m2.run_id = r.run_id AND m2.metric_name = 'sharpe' 
-         LIMIT 1) as sharpe
+        -- 直接从runs表获取指标
+        r.max_drawdown, 
+        r.sharpe,
+        r.win_rate, 
+        r.trade_count, 
+        r.total_fee, 
+        r.total_profit
     
     FROM runs r
     """
@@ -74,7 +70,11 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         'sharpe': 'sharpe',
         'strategy': 'r.strategy',
         'code': 'r.code',
-        'created_at': 'r.created_at'
+        'created_at': 'r.created_at',
+        'win_rate': 'r.win_rate',
+        'trade_count': 'r.trade_count',
+        'total_fee': 'r.total_fee',
+        'total_profit': 'r.total_profit'
     }
     
     # 处理排序参数
@@ -109,8 +109,8 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
                 # 处理None值
                 df[col] = df[col].fillna('')
         
-        # 确保max_drawdown和sharpe字段存在且为数值类型
-        for col in ['max_drawdown', 'sharpe']:
+        # 确保所有指标字段存在且为数值类型
+        for col in ['max_drawdown', 'sharpe', 'win_rate', 'trade_count', 'total_fee', 'total_profit']:
             if col in df.columns:
                 # 转换为float类型，处理None值
                 # 先填充空值，再进行类型推断，最后转换为浮点数以避免Pandas FutureWarning
@@ -136,8 +136,8 @@ logger = logging.getLogger(__name__)
 
 def run_detail(run_id: str):
     
-    # 获取基本回测信息，包含新增的paras字段
-    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras
+    # 获取基本回测信息，包含新增的paras字段和所有指标
+    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit
                          FROM runs WHERE run_id=:rid""", rid=run_id)
     
     # 日志记录查询结果
@@ -165,7 +165,47 @@ def run_detail(run_id: str):
         }
     
     # 获取指标数据
-    df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=run_id)
+    df_m = fetch_df("""SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid""", rid=run_id)
+
+    # 从runs表获取主要指标并添加到metrics列表中（如果metrics表中不存在）
+    if not df_run.empty:
+        run_data = df_run.iloc[0]
+        
+        # 检查并添加sharpe指标
+        if 'sharpe' in run_data and pd.notna(run_data['sharpe']) and not any(df_m['metric_name'] == 'sharpe'):
+            sharpe_row = pd.DataFrame([{'metric_name': 'sharpe', 'metric_value': float(run_data['sharpe'])}])
+            df_m = pd.concat([df_m, sharpe_row], ignore_index=True)
+            
+        # 检查并添加max_drawdown指标
+        if 'max_drawdown' in run_data and pd.notna(run_data['max_drawdown']) and not any(df_m['metric_name'] == 'max_drawdown'):
+            max_drawdown_row = pd.DataFrame([{'metric_name': 'max_drawdown', 'metric_value': float(run_data['max_drawdown'])}])
+            df_m = pd.concat([df_m, max_drawdown_row], ignore_index=True)
+            
+        # 检查并添加final_return指标
+        if 'final_capital' in run_data and 'initial_capital' in run_data and pd.notna(run_data['final_capital']) and pd.notna(run_data['initial_capital']) and run_data['initial_capital'] > 0 and not any(df_m['metric_name'] == 'final_return'):
+            final_return = float(run_data['final_capital']) / float(run_data['initial_capital']) - 1
+            final_return_row = pd.DataFrame([{'metric_name': 'final_return', 'metric_value': final_return}])
+            df_m = pd.concat([df_m, final_return_row], ignore_index=True)
+            
+        # 检查并添加win_rate指标
+        if 'win_rate' in run_data and pd.notna(run_data['win_rate']) and not any(df_m['metric_name'] == 'win_rate'):
+            win_rate_row = pd.DataFrame([{'metric_name': 'win_rate', 'metric_value': float(run_data['win_rate'])}])
+            df_m = pd.concat([df_m, win_rate_row], ignore_index=True)
+            
+        # 检查并添加trade_count指标
+        if 'trade_count' in run_data and pd.notna(run_data['trade_count']) and not any(df_m['metric_name'] == 'trade_count'):
+            trade_count_row = pd.DataFrame([{'metric_name': 'trade_count', 'metric_value': float(run_data['trade_count'])}])
+            df_m = pd.concat([df_m, trade_count_row], ignore_index=True)
+            
+        # 检查并添加total_fee指标
+        if 'total_fee' in run_data and pd.notna(run_data['total_fee']) and not any(df_m['metric_name'] == 'total_fee'):
+            total_fee_row = pd.DataFrame([{'metric_name': 'total_fee', 'metric_value': float(run_data['total_fee'])}])
+            df_m = pd.concat([df_m, total_fee_row], ignore_index=True)
+            
+        # 检查并添加total_profit指标
+        if 'total_profit' in run_data and pd.notna(run_data['total_profit']) and not any(df_m['metric_name'] == 'total_profit'):
+            total_profit_row = pd.DataFrame([{'metric_name': 'total_profit', 'metric_value': float(run_data['total_profit'])}])
+            df_m = pd.concat([df_m, total_profit_row], ignore_index=True)
     # 从整合后的trades表中读取equity相关数据
     # 注意：我们现在从trades表中获取nav和drawdown数据，而不是从equity_curve表
     df_e = fetch_df("""
@@ -188,7 +228,7 @@ def run_detail(run_id: str):
     # 获取交易记录数据，包括整合后的字段
     df_t = fetch_df("""
         SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
-               realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price
+               realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
         FROM trades
         WHERE run_id = :rid
         ORDER BY datetime
