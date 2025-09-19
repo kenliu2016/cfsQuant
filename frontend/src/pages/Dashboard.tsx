@@ -10,8 +10,9 @@ import { formatPriceWithUnit } from '../utils/priceFormatter';
 // 定义回测结果类型
 interface BacktestSignal {
   datetime: string;
-  type: 'buy' | 'sell' | 'take_profit' | 'stop_loss' | 'force_close';
+  side: 'buy' | 'sell';
   price: number;
+  qty: number;
 }
 
 // 定义策略回测状态类型
@@ -192,7 +193,7 @@ const Dashboard: React.FC = () => {
         strategy: strategyName
       });
       
-
+      console.log('Backtest response:', response.data);
       // 处理回测结果
       const signals: BacktestSignal[] = response.data.signals || [];
       
@@ -257,14 +258,14 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchStrategiesFromAPI();
   }, []);
-  
-  // 在打开策略对话框时也加载策略数据
+
+  // 在打开策略对话框时加载策略数据
   useEffect(() => {
     if (showStrategiesModal) {
       fetchStrategiesFromAPI();
     }
   }, [showStrategiesModal]);
-  
+
   // 加载symbol数据和市场概览数据
   useEffect(() => {
     const loadSymbols = async () => {
@@ -288,12 +289,7 @@ const Dashboard: React.FC = () => {
   }, []);
 
 
-  // 在打开策略对话框时获取策略数据
-  useEffect(() => {
-    if (showStrategiesModal) {
-      fetchStrategiesFromAPI();
-    }
-  }, [showStrategiesModal]);
+
   
   // 优化：并行处理市场概览和K线数据请求
   useEffect(() => {
@@ -575,7 +571,6 @@ const Dashboard: React.FC = () => {
   };
 
   // 图表配置
-  // 图表配置
   const chartOption = useMemo(() => {
     if (!candleData || candleData.length === 0) {
       // 提供默认的空图表配置，防止option为null/undefined
@@ -616,68 +611,55 @@ const Dashboard: React.FC = () => {
 
     // 准备回测信号数据
     const allSignals: any[] = [];
-    const signalTypes = ['buy', 'sell', 'take_profit', 'stop_loss', 'force_close'] as const;
+    const signalTypes = ['buy', 'sell'] as const;
     
     // 遍历所有策略的回测结果
     Object.entries(strategyBacktestStates).forEach(([strategyId, state]) => {
       if (state.hasResults && state.signals.length > 0) {
         // 为每种信号类型创建一个series
         signalTypes.forEach(type => {
-          const signalsOfType = state.signals.filter((signal: BacktestSignal) => signal.type === type);
+          const signalsOfType = state.signals.filter((signal: BacktestSignal) => signal.side === type);
           if (signalsOfType.length > 0) {
             // 查找信号对应的K线数据点索引
-            const dataPoints = signalsOfType.map((signal: BacktestSignal) => {
-              const signalDate = new Date(signal.datetime).getTime();
-              // 找到最接近的K线数据点
-              const closestIndex = candleData.findIndex(candle => {
-                const candleDate = new Date(candle.datetime).getTime();
-                // 考虑到可能的时间不精确匹配，使用一个时间窗口
-                return Math.abs(candleDate - signalDate) < 60 * 1000; // 1分钟内
-              });
-              
-              if (closestIndex !== -1) {
-                return [closestIndex, signal.price];
-              }
-              return null;
+              const dataPoints = signalsOfType.map((signal: BacktestSignal) => {
+                const signalDate = new Date(signal.datetime).getTime();
+                // 找到最接近的K线数据点
+                let closestIndex = -1;
+                let minTimeDiff = Infinity;
+                
+                // 遍历所有K线数据点，找到时间差最小的那个
+                for (let i = 0; i < candleData.length; i++) {
+                  const candleDate = new Date(candleData[i].datetime).getTime();
+                  const timeDiff = Math.abs(candleDate - signalDate);
+                  
+                  // 扩大时间窗口到5分钟，提高匹配成功率
+                  if (timeDiff < 5 * 60 * 1000 && timeDiff < minTimeDiff) {
+                    minTimeDiff = timeDiff;
+                    closestIndex = i;
+                  }
+                }
+                
+                if (closestIndex !== -1) {
+                  return [closestIndex, signal.price];
+                }
+                return null;
             }).filter(Boolean) as [number, number][];
             
             if (dataPoints.length > 0) {
               // 根据信号类型设置不同的样式
-              // 严格按照规范：向上红色箭头代表买入，向下绿色箭头代表卖出，红色圆圈代表止盈，绿色圆圈代表止损，黑色方块代表强制平仓
-              let symbol = 'circle';
               let color = '#fff';
               let symbolSize = 8;
               
               switch (type) {
                 case 'buy':
-                  // 向上红色箭头代表买入
-                  symbol = 'arrow-up';
-                  color = '#ff4d4f'; // 红色
+                  // 向上绿色箭头代表买入
+                  color = '#52c41a'; // 绿色
                   symbolSize = 12;
                   break;
                 case 'sell':
-                  // 向下绿色箭头代表卖出
-                  symbol = 'arrow-down';
-                  color = '#52c41a'; // 绿色
-                  symbolSize = 12;
-                  break;
-                case 'take_profit':
-                  // 红色圆圈代表止盈
-                  symbol = 'circle';
+                  // 向下红色箭头代表卖出
                   color = '#ff4d4f'; // 红色
-                  symbolSize = 10;
-                  break;
-                case 'stop_loss':
-                  // 绿色圆圈代表止损
-                  symbol = 'circle';
-                  color = '#52c41a'; // 绿色
-                  symbolSize = 10;
-                  break;
-                case 'force_close':
-                  // 黑色方块代表强制平仓
-                  symbol = 'rect';
-                  color = '#000000'; // 黑色
-                  symbolSize = 8;
+                  symbolSize = 12;
                   break;
               }
               
@@ -687,26 +669,27 @@ const Dashboard: React.FC = () => {
                 data: dataPoints,
                 xAxisIndex: 0,
                 yAxisIndex: 0,
-                symbol: symbol,
+                // 使用自定义symbol函数根据信号方向返回不同的图标
+                symbol: (_value: any) => {
+                  // 对于买入信号使用三角形
+                  if (type === 'buy') {
+                    return 'triangle';
+                  }
+                  // 对于卖出信号使用SVG路径定义真正的倒三角形
+                  return 'path://M0,10 L10,0 L-10,0 Z';
+                },
                 symbolSize: symbolSize,
+                // 设置偏移量使图标与K线有一定距离
+                symbolOffset: type === 'buy' ? [0, symbolSize*1.5] : [0, -symbolSize*1.5],
                 itemStyle: {
                   color: color,
                   borderWidth: 1,
                   borderColor: '#fff'
                 },
-                tooltip: {
-                  formatter: function(params: any) {
-                    const signalIndex = params.data[0];
-                    const signalPrice = params.data[1];
-                    const signalTime = dates[signalIndex];
-                    const signalTypeMap: Record<string, string> = {
-                      'buy': '买入',
-                      'sell': '卖出',
-                      'take_profit': '止盈',
-                      'stop_loss': '止损',
-                      'force_close': '强制平仓'
-                    };
-                    return `${signalTime}<br/>${signalTypeMap[type]}: ${formatPrice(signalPrice)}`;
+                emphasis: {
+                  itemStyle: {
+                    shadowBlur: 4,
+                    shadowColor: 'rgba(0, 0, 0, 0.3)'
                   }
                 }
               });
@@ -743,23 +726,95 @@ const Dashboard: React.FC = () => {
           type: 'cross',
           lineStyle: { color: '#4E4E6A' }
         },
-        formatter: function(params: any) {
+        formatter: function(params: any[]) {
   if (!params || params.length === 0) return '';
   
-  let result = `${params[0].axisValue}<br/>`;
-   // 获取当前数据点的索引
-  const dataIndex = params[0].dataIndex;
-    // 确保candleData存在且有对应的数据
-  if (candleData && candleData[dataIndex]) {
+  // 查找K线数据
+  let klineData = params.find(param => param.seriesName === 'K线图' || param.seriesName === '折线图');
+  
+  // 查找成交量数据
+  const volumeData = params.find(param => param.seriesName === '成交量');
+  
+  // 查找信号数据
+  const signalParams = params.filter(param => param.seriesName.includes('_buy') || param.seriesName.includes('_sell'));
+  
+  // 获取当前数据点的索引
+  const dataIndex = klineData?.dataIndex || volumeData?.dataIndex || 0;
+  const timeValue = klineData?.axisValue || volumeData?.axisValue || (signalParams.length > 0 ? signalParams[0].axisValue : '');
+  
+  let result = timeValue + '<br/>';
+  
+  // 如果有K线数据，显示K线信息
+  if (klineData && candleData && candleData[dataIndex]) {
       const candle = candleData[dataIndex];
-      result += `Open: ${(candle.open)}<br/>`;
-      result += `Close: ${(candle.close)}<br/>`;
-      result += `Low: ${(candle.low)}<br/>`;
-      result += `High: ${(candle.high)}<br/>`;
-      if (candle.volume) {
-        result += `Volume: ${(candle.volume)}`;
+      result += '<span style="color: #ef232a">开盘: ' + candle.open + '</span><br/>';
+      const closeColor = candle.close >= candle.open ? '52c41a' : 'ff4d4f';
+      result += '<span style="color: #' + closeColor + '">收盘: ' + candle.close + '</span><br/>';
+      result += '<span style="color: #8c8c8c">最低: ' + candle.low + '</span><br/>';
+      result += '<span style="color: #8c8c8c">最高: ' + candle.high + '</span><br/>';
+      
+      // 计算涨跌幅
+      const change = ((candle.close - candle.open) / candle.open * 100).toFixed(2);
+      const changeColor = candle.close >= candle.open ? '52c41a' : 'ff4d4f';
+      result += '<span style="color: #' + changeColor + '">涨跌幅: ' + change + '%</span><br/>';
+      
+      // 如果有信号，添加分隔线
+      if (signalParams.length > 0) {
+        result += '<hr style="border: none; border-top: 1px solid #4E4E6A; margin: 5px 0;">';
       }
   }
+  
+  // 如果有成交量数据，显示成交量信息
+  if (volumeData && candleData && candleData[dataIndex] && candleData[dataIndex].volume) {
+    const volume = candleData[dataIndex].volume;
+    const volumeColor = candleData[dataIndex] && candleData[dataIndex].isUp !== undefined ? 
+                       (candleData[dataIndex].isUp ? '#52c41a' : '#ff4d4f') : '#8c8c8c';
+    result += '<span style="color: ' + volumeColor + '">成交量: ' + formatVolume(volume) + '</span><br/>';
+  }
+  
+  // 显示信号信息
+   if (signalParams.length > 0) {
+     // 去重相同位置的信号
+     const uniqueSignals: any[] = [];
+     const signalKeys = new Set<string>();
+     
+     signalParams.forEach(param => {
+       const signalKey = `${param.data[0]}-${param.data[1]}`;
+       if (!signalKeys.has(signalKey)) {
+         signalKeys.add(signalKey);
+         uniqueSignals.push(param);
+       }
+     });
+     
+     uniqueSignals.forEach(param => {
+      const signalIndex = param.data[0];
+      const signalPrice = param.data[1];
+      const isBuy = param.seriesName.includes('_buy');
+      const signalType = isBuy ? '买入' : '卖出';
+      const signalColor = isBuy ? '#52c41a' : '#ff4d4f';
+      
+      result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + formatPrice(signalPrice) + '</span><br/>';
+      
+      // 尝试查找对应的信号对象获取更多信息
+      for (const [strategyId, state] of Object.entries(strategyBacktestStates)) {
+        if (state.hasResults && state.signals) {
+          const signalObj = state.signals.find((s: BacktestSignal) => {
+            const signalDate = new Date(s.datetime).getTime();
+            const candleDate = new Date(candleData[signalIndex]?.datetime).getTime();
+            return Math.abs(candleDate - signalDate) < 5 * 60 * 1000 && 
+                   Math.abs(s.price - signalPrice) < 0.0001 && 
+                   s.side === (isBuy ? 'buy' : 'sell');
+          });
+          
+          if (signalObj && signalObj.qty) {
+            result += '<span style="color: ' + signalColor + '">' + signalType + '数量: ' + signalObj.qty + '</span><br/>';
+            break;
+          }
+        }
+      }
+    });
+  }
+  
   return result;
 }
       },
@@ -867,7 +922,7 @@ const Dashboard: React.FC = () => {
     };
 
     return option;
-  }, [candleData, chartType, timeframe, formatPrice]);
+  }, [candleData, chartType, timeframe, formatPrice, strategyBacktestStates]);
 
   // 打开策略选择对话框
 
@@ -1346,24 +1401,12 @@ const Dashboard: React.FC = () => {
           }}>
             <span style={{ color: '#8E8EA0', fontSize: '12px' }}>信号说明:</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div style={{ width: '12px', height: '12px', color: '#ff4d4f', fontSize: '12px', textAlign: 'center' }}>↑</div>
-              <span style={{ color: '#fff', fontSize: '12px' }}>买入</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div style={{ width: '12px', height: '12px', color: '#52c41a', fontSize: '12px', textAlign: 'center' }}>↓</div>
+              <div style={{ width: '12px', height: '12px', color: '#ff4d4f', fontSize: '12px', textAlign: 'center' }}>▼</div>
               <span style={{ color: '#fff', fontSize: '12px' }}>卖出</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#ff4d4f' }}></div>
-              <span style={{ color: '#fff', fontSize: '12px' }}>止盈</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#52c41a' }}></div>
-              <span style={{ color: '#fff', fontSize: '12px' }}>止损</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div style={{ width: '8px', height: '8px', backgroundColor: '#000000', border: '1px solid #fff' }}></div>
-              <span style={{ color: '#fff', fontSize: '12px' }}>强制平仓</span>
+              <div style={{ width: '12px', height: '12px', color: '#52c41a', fontSize: '12px', textAlign: 'center' }}>▲</div>
+              <span style={{ color: '#fff', fontSize: '12px' }}>买入</span>
             </div>
           </div>
         )}

@@ -6,9 +6,6 @@ router = APIRouter(prefix="/api", tags=["backtest"])
 @router.post("/backtest", response_model=BacktestResp)
 async def backtest(req: BacktestRequest):
     
-    # 打印所有请求参数到终端
-    print("run_backtest请求参数：", req.params)
-    
     # 从params中获取所有需要的字段
     code = req.params['code']
     start = req.params['start']
@@ -28,14 +25,17 @@ async def backtest(req: BacktestRequest):
     else:
         # 否则直接使用
         df = candles_result
-       # 打印srategy参数到终端
-    print("run_backtest请求参数：", req.strategy)
-    print("run_backtest请求参数：", df.head())    # 调用重构后的run_backtest方法，使用req.params作为参数
+        
+    # 调用重构后的run_backtest方法，使用req.params作为参数
     backtest_result = run_backtest(df, req.params, req.strategy)
     
     # 从结果中提取run_id作为backtest_id
     backtest_id = backtest_result["run_id"] if isinstance(backtest_result, dict) and "run_id" in backtest_result else str(backtest_result)
-    return {"backtest_id": backtest_id, "status":"finished"}
+    return {
+        "backtest_id": backtest_id,
+        "status": "finished",
+        "signals": backtest_result.get("signals", [])  # 添加这一行
+    }
 
 @router.get("/backtest/{backtest_id}/results")
 async def backtest_results(backtest_id: str):

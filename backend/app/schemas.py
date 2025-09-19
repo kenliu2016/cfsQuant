@@ -24,8 +24,28 @@ class BacktestRequest(BaseModel):
             if field not in v:
                 raise ValueError(f"Missing required field in params: {field}")
         return v
+class BacktestSignal(BaseModel):
+    datetime: str
+    side: str
+    price: float
+    qty: float
+
+    @validator('datetime', pre=True)
+    def validate_datetime(cls, v):
+        # 使用 pre=True 确保在字段类型验证前运行
+        if hasattr(v, 'strftime'):
+            # 如果是Timestamp或datetime对象，转换为字符串
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(v, str):
+            # 如果已经是字符串，直接返回
+            return v
+        else:
+            # 其他情况转换为字符串
+            return str(v)
+
 class BacktestResp(BaseModel):
     backtest_id: str
     status: str
+    signals: List[BacktestSignal] = []
 class HealthResp(BaseModel):
     status: str

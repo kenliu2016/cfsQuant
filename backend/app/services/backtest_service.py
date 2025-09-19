@@ -23,7 +23,7 @@ DEFAULT_BACKTEST_PARAMS = {
     "cooldown_bars": 240,         # (引擎参数)冷却周期（单位bar）
     "stop_loss_pct": 0.25,        # (引擎参数)跌破下限百分比止损
     "take_profit_pct": 0.15,      # (引擎参数)超过收益百分比止盈
-    "logging_enabled": False,      # (通用参数)日志总开关
+    "logging_enabled": True,      # (通用参数)日志总开关
 }
 
 # --- 日志记录器配置 ---
@@ -33,7 +33,7 @@ from ..common import setup_logger_with_file_handler
 backtest_logger = setup_logger_with_file_handler(
     logger_name="backtest_service",
     log_filename="backtest_trades_debug.log",
-    log_level=logging.DEBUG,
+    log_level=logging.INFO,
     mode='w'  # 使用'w'模式在每次回测时覆盖日志
 )
 
@@ -153,6 +153,7 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
     current_pos_qty = 0.0
     avg_price = 0.0
     nav_list, trades, positions, equity_curve = [], [], [], []
+    signals = []
     last_trade_bar = -9999
     last_pos_qty = None
 
@@ -278,6 +279,22 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                             fee=fee_amt, slippage=dynamic_slippage, position_cost=avg_price,
                             pnl=realized_pnl, datetime=dt)
             last_trade_bar = i
+            
+
+            # 确保datetime字段是字符串类型
+            dt_str = dt
+            if hasattr(dt, 'strftime'):
+                dt_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            elif not isinstance(dt, str):
+                dt_str = str(dt)
+
+            # 添加交易信号到signals列表
+            signals.append({
+                "datetime": dt_str,
+                "side": side,
+                "price": float(exec_price),
+                "qty": float(abs(delta_qty))
+            })
 
         # 不再单独维护equity_curve和positions列表，相关数据已整合到trades表中
         # 仅维护nav_list用于计算最终指标
@@ -346,6 +363,11 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 'total_profit': total_profit,
                 'paras': json.dumps(merged_params)
             }])
+            
+            # 先写入runs表，确保run_id存在，避免外键约束错误
+            log_info(f"准备写入runs表: {backtest_id}")
+            run_data.to_sql("runs", con=engine, if_exists="append", index=False)
+            log_info(f"成功写入runs表: {backtest_id}")
 
         if trades:
             # 更新trades DataFrame结构，添加新的整合字段
@@ -418,11 +440,12 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
         # 打印详细的错误信息，包括堆栈跟踪
         import traceback
         log_error(f"错误堆栈: {traceback.format_exc()}")
-
+    
     return {
         "run_id": backtest_id, "code": code, "start": start, "end": end,
         "strategy": strategy_name, "params": merged_params, "nav": nav_series,
-        "metrics": pd.DataFrame(metrics).set_index('metric_name')['metric_value'].to_dict() if metrics else {}
+        "metrics": pd.DataFrame(metrics).set_index('metric_name')['metric_value'].to_dict() if metrics else {},
+        "signals": signals
     }
 
 def get_backtest_result(backtest_id: str):
