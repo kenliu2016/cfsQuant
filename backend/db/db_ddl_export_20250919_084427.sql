@@ -1,7 +1,7 @@
 -- 数据库DDL导出
 -- 数据库: quant
 -- 主机: localhost:5432
--- 导出时间: 2025-09-17 21:49:35
+-- 导出时间: 2025-09-19 08:44:32
 -- 导出内容: 表、视图、索引、序列等
 
 SET statement_timeout = 0;
@@ -159,9 +159,18 @@ CREATE TABLE IF NOT EXISTS public.runs (
     final_return float8,
     max_drawdown float8,
     sharpe float8,
+    interval varchar,
+    win_rate float8,
+    trade_count int4,
+    total_fee float8,
+    total_profit float8,
     PRIMARY KEY (run_id)
 );
 COMMENT ON COLUMN public.runs.paras IS '执行策略时的参数，以JSON格式存储';
+COMMENT ON COLUMN public.runs.win_rate IS '胜率 - 盈利交易占总交易的比例';
+COMMENT ON COLUMN public.runs.trade_count IS '交易次数 - 总交易笔数';
+COMMENT ON COLUMN public.runs.total_fee IS '总手续费 - 所有交易的手续费总和';
+COMMENT ON COLUMN public.runs.total_profit IS '总收益 - 所有交易的盈亏总和';
 
 -- 表: strategies
 CREATE TABLE IF NOT EXISTS public.strategies (
@@ -191,13 +200,16 @@ CREATE TABLE IF NOT EXISTS public.trades (
     trade_type varchar NOT NULL DEFAULT 'normal'::character varying,
     drawdown float8,
     current_qty numeric,
-    current_avg_price numeric
+    current_avg_price numeric,
+    close_price numeric,
+    current_cash numeric
 );
 COMMENT ON COLUMN public.trades.nav IS '交易时的净资产价值(Net Asset Value)';
 COMMENT ON COLUMN public.trades.trade_type IS '记录交易类型，如 ''normal'', ''take_profit'', ''stop_loss'' 等';
 COMMENT ON COLUMN public.trades.drawdown IS '交易时的回撤比例';
 COMMENT ON COLUMN public.trades.current_qty IS '交易后的数量';
 COMMENT ON COLUMN public.trades.current_avg_price IS '交易后的平均价格';
+COMMENT ON COLUMN public.trades.current_cash IS '交易后的现金余额';
 
 -- 表: tuning_results
 CREATE TABLE IF NOT EXISTS public.tuning_results (

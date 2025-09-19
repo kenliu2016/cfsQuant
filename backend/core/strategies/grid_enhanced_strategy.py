@@ -12,7 +12,6 @@ DEFAULT_PARAMS = {
     "trend_window": 480,          # (策略参数)趋势过滤窗口
     "adx_threshold": 30,          # (策略参数)新增ADX阈值
     "stop_loss_range_multiplier": 0.6, # (策略参数)网格下方止损范围乘数
-    "cooldown_bars": 240         # (引擎参数)冷却时间（单位：bar）
 }
 
 def run(df: pd.DataFrame, params: dict):

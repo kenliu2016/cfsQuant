@@ -136,17 +136,19 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
     stop_loss_pct = float(merged_params.get("stop_loss_pct", 0.15))
     take_profit_pct = float(merged_params.get("take_profit_pct", 0.25))
 
-    try:
-        # 保存原始datetime列，避免策略执行时丢失
-        original_datetime = df['datetime'].copy()
-        df = mod.run(df, merged_params)
-        # 确保datetime列存在，如果不存在则恢复原始列
-        if 'datetime' not in df.columns:
-            df['datetime'] = original_datetime
-    except Exception as e:
-        raise RuntimeError(f"Strategy execution failed: {e}")
-    if "position" not in df.columns:
-        raise ValueError("Strategy must output 'position' column")
+        # 在调用策略前，捕获原始时间戳（更稳健）
+    if "datetime" in df.columns:
+        original_datetime = pd.to_datetime(df["datetime"]).copy()
+    else:
+        # 如果没有 datetime 列，尝试用 index
+        original_datetime = pd.to_datetime(df.index).copy()
+    # 调用策略
+    df = mod.run(df.copy(), merged_params)
+    # 确保最终 df 有 datetime 列
+    if 'datetime' not in df.columns:
+        df['datetime'] = original_datetime.values if len(original_datetime) == len(df) else original_datetime
+    df['datetime'] = pd.to_datetime(df['datetime'])
+
 
     data = df.reset_index()
     cash = initial_capital
@@ -232,7 +234,6 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
             if abs(amount) < min_trade_amount and not is_risk_trade:
                 continue
 
-            cash -= (amount + fee_amt)
             realized_pnl = None
             side = "buy" if delta_qty > 0 else "sell"
 
@@ -243,9 +244,12 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
                 total_cost = avg_price * current_pos_qty + exec_price * delta_qty
                 current_pos_qty += delta_qty
                 avg_price = total_cost / current_pos_qty if current_pos_qty > 0 else 0.0
+                cash -= (abs(amount) + fee_amt)
             else:
-                realized_pnl = (exec_price - avg_price) * abs(delta_qty) - fee_amt
+                realized_pnl = (exec_price - pre_trade_avg_price) * abs(delta_qty) - fee_amt
+                realized_pnl = (exec_price - pre_trade_avg_price) * abs(delta_qty) - fee_amt
                 current_pos_qty += delta_qty
+                cash += (abs(amount) - fee_amt)
                 if current_pos_qty < 1e-9:
                     current_pos_qty = 0.0
                     avg_price = 0.0
@@ -441,6 +445,21 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
         import traceback
         log_error(f"错误堆栈: {traceback.format_exc()}")
     
+    # 写入 equity_curve 表（放在 run_backtest 的数据库写入 try 块内，确保 engine 已创建）
+    try:
+        if nav_list:
+            equity_df = pd.DataFrame({
+                "run_id": backtest_id,
+                "datetime": pd.to_datetime(data["datetime"]),
+                "nav": nav_list,
+                # drawdown 已在 trades 中按 trade 记录，可用 trades 中的最大drawdown或重新计算
+                "drawdown": pd.Series(nav_list).cummax().subtract(pd.Series(nav_list)).div(pd.Series(nav_list).cummax()).fillna(0)
+            })
+            equity_df.to_sql("equity_curve", con=engine, if_exists="append", index=False)
+            log_info(f"成功写入 equity_curve: {len(equity_df)} 条")
+    except Exception as e:
+        log_error(f"写入 equity_curve 失败: {e}")
+
     return {
         "run_id": backtest_id, "code": code, "start": start, "end": end,
         "strategy": strategy_name, "params": merged_params, "nav": nav_series,
