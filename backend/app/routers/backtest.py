@@ -34,7 +34,8 @@ async def backtest(req: BacktestRequest):
     return {
         "backtest_id": backtest_id,
         "status": "finished",
-        "signals": backtest_result.get("signals", [])  # 添加这一行
+        "signals": backtest_result.get("signals", []),  # 添加这一行
+        "grid_levels": backtest_result.get("grid_levels", [])  # 添加这一行
     }
 
 @router.get("/backtest/{backtest_id}/results")

@@ -93,14 +93,25 @@ def save_strategy_code(strategy_name: str, code: str):
     
     # 从代码中提取DEFAULT_PARAMS并更新到数据库
     try:
-        # 使用Python re模块支持的语法匹配DEFAULT_PARAMS = { ... }
-        import re
-        # 使用非贪婪匹配来处理多行参数定义
-        params_match = re.search(r"DEFAULT_PARAMS\s*=\s*(\{.*?\})", code, re.DOTALL)
-        
-        if params_match:
-            params_str = params_match.group(1)
-            logger.debug(f"提取到参数字符串: {params_str}")
+        # 使用更可靠的字符串处理方法提取DEFAULT_PARAMS
+        params_start = code.find('DEFAULT_PARAMS = {')
+        if params_start != -1:
+            # 找到起始位置后的第一个左花括号
+            brace_start = code.find('{', params_start)
+            if brace_start != -1:
+                # 计算匹配的右花括号位置
+                brace_count = 1
+                params_str = '{'
+                i = brace_start + 1
+                while i < len(code) and brace_count > 0:
+                    if code[i] == '{':
+                        brace_count += 1
+                    elif code[i] == '}':
+                        brace_count -= 1
+                    params_str += code[i]
+                    i += 1
+                
+                logger.debug(f"提取到参数字符串: {params_str}")
             
             # 尝试解析参数
             try:
@@ -127,7 +138,10 @@ def save_strategy_code(strategy_name: str, code: str):
                 # 1. 处理Python风格的布尔值 (True/False -> true/false)
                 json_friendly_str = cleaned_params_str.replace('True', 'true').replace('False', 'false')
                 
-                # 2. 处理末尾多余的逗号
+                # 2. 处理Python风格的None值 (None -> null)
+                json_friendly_str = json_friendly_str.replace('None', 'null')
+                
+                # 3. 处理末尾多余的逗号
                 # 匹配模式：任何行末的逗号，后面跟右花括号或换行
                 import re
                 json_friendly_str = re.sub(r',\s*(}|$)', '\g<1>', json_friendly_str)

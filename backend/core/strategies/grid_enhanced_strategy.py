@@ -19,7 +19,7 @@ def run(df: pd.DataFrame, params: dict):
     动态网格策略核心逻辑
     :param df: 包含价格数据的DataFrame，必须有'open', 'high', 'low', 'close'列
     :param params: 策略参数
-    :return: 包含'position'列的DataFrame
+    :return: 字典，包含DataFrame和网格级别数据
     """
     try:
         df = df.copy()
@@ -27,7 +27,7 @@ def run(df: pd.DataFrame, params: dict):
         # 确保DataFrame不为空
         if df.empty:
             df['position'] = 0.0
-            return df
+            return {'data': df, 'grid_levels': []}
         
         # 确保必要的列存在
         required_columns = ['open', 'high', 'low', 'close']
@@ -109,14 +109,64 @@ def run(df: pd.DataFrame, params: dict):
         
         # 移除中间计算列，只保留回测引擎需要的列
         final_cols = ['open', 'high', 'low', 'close', 'volume', 'position']
-        df = df[[col for col in final_cols if col in df.columns]]
+        df_result = df[[col for col in final_cols if col in df.columns]]
         
-        return df
+        # === 7. 计算网格级别数据 ===
+        # 获取最近一次的网格参数
+        last_idx = df.index[-1]
+        current_lower = df.loc[last_idx, 'grid_lower']
+        current_upper = df.loc[last_idx, 'grid_upper']
+        current_range = current_upper - current_lower
+        
+        # 获取中枢价格
+        current_mean = df.loc[last_idx, 'rolling_mean']
+        
+        # 生成网格级别并添加名称
+        grid_levels = []
+        
+        # 添加中枢价格（价格中枢）
+        grid_levels.append({
+            'name': '价格中枢',
+            'price': current_mean
+        })
+        
+        # 生成中枢线以上的网格线（卖出线）
+        sell_count = 2  # 卖出线数量
+        for i in range(1, sell_count + 1):
+            grid_price = current_mean + (current_range / 5) * i
+            grid_levels.append({
+                'name': f'卖出#{i}',
+                'price': grid_price
+            })
+        
+        # 生成中枢线以下的网格线（买入线）
+        buy_count = 2  # 买入线数量
+        for i in range(1, buy_count + 1):
+            grid_price = current_mean - (current_range / 5) * i
+            grid_levels.append({
+                'name': f'买入#{i}',
+                'price': grid_price
+            })
+        
+        # 添加止损线（作为额外的买入线）
+        stop_loss_multiplier = params.get('stop_loss_range_multiplier', 1.0)
+        stop_loss_price = current_lower - (current_range * stop_loss_multiplier)
+        grid_levels.append({
+            'name': '止损线',
+            'price': stop_loss_price
+        })
+        
+        # 按价格排序
+        grid_levels.sort(key=lambda x: x['price'])
+        
+        return {'data': df_result, 'grid_levels': grid_levels}
     except Exception as e:
-        # 如果发生任何异常，返回一个带有position=0的DataFrame
+        # 如果发生任何异常，仍然返回字典格式，确保包含grid_levels字段
         print(f"策略执行出错: {str(e)}")
         df_copy = df.copy()
         df_copy['position'] = 0.0
         # 确保只返回需要的列
         final_cols = ['open', 'high', 'low', 'close', 'volume', 'position']
-        return df_copy[[col for col in final_cols if col in df_copy.columns]]
+        df_result = df_copy[[col for col in final_cols if col in df_copy.columns]]
+        # 即使异常也返回空对象数组格式
+        return {'data': df_result, 'grid_levels': []}

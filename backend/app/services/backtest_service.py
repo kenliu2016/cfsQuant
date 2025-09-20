@@ -143,7 +143,17 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
         # 如果没有 datetime 列，尝试用 index
         original_datetime = pd.to_datetime(df.index).copy()
     # 调用策略
-    df = mod.run(df.copy(), merged_params)
+    result = mod.run(df.copy(), merged_params)
+    
+    # 检查结果类型，如果是DataFrame，则兼容旧版本策略
+    if isinstance(result, pd.DataFrame):
+        df = result
+        grid_levels = []  # 旧版本策略没有网格级别数据
+    else:
+        # 新版本策略返回字典，包含dataframe和其他信息
+        df = result.get('data', pd.DataFrame())
+        grid_levels = result.get('grid_levels', [])
+    
     # 确保最终 df 有 datetime 列
     if 'datetime' not in df.columns:
         df['datetime'] = original_datetime.values if len(original_datetime) == len(df) else original_datetime
@@ -460,15 +470,65 @@ def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
     except Exception as e:
         log_error(f"写入 equity_curve 失败: {e}")
 
+    # 如果是网格增强策略，保存网格参数和级别
+    if grid_levels:
+        try:
+            # 检查grid_levels中的元素类型，确保是字典格式
+            if grid_levels and isinstance(grid_levels[0], dict):
+                # 提取字典中的price值和name值
+                grid_data = []
+                for idx, level in enumerate(grid_levels):
+                    # 确保level包含必要的字段
+                    if 'price' in level:
+                        grid_data.append({
+                            "run_id": backtest_id,
+                            "level": idx,
+                            "name": level.get('name', ''),
+                            "price": level['price']
+                        })
+                
+                if grid_data:
+                    grid_df = pd.DataFrame(grid_data)
+                    # 使用正确的表名和列名
+                    grid_df.to_sql("grid_levels", con=engine, if_exists="append", index=False)
+                    log_info(f"成功写入grid_levels: {len(grid_df)} 条")
+        except Exception as e:
+            log_error(f"写入grid_levels失败: {e}")
+            # 打印详细的错误信息，包括堆栈跟踪
+            import traceback
+            log_error(f"错误堆栈: {traceback.format_exc()}")
+
     return {
         "run_id": backtest_id, "code": code, "start": start, "end": end,
         "strategy": strategy_name, "params": merged_params, "nav": nav_series,
         "metrics": pd.DataFrame(metrics).set_index('metric_name')['metric_value'].to_dict() if metrics else {},
-        "signals": signals
+        "signals": signals,
+        "grid_levels": grid_levels  # 返回网格级别数据
     }
 
 def get_backtest_result(backtest_id: str):
     from ..db import fetch_df
     df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=backtest_id)
     df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
-    return {'metrics': df_m.to_dict(orient='records'), 'equity': df_e.to_dict(orient='records')}
+    
+    # 获取网格级别数据（如果存在）
+    try:
+        # 查询所有列，确保获取完整的数据结构
+        df_g = fetch_df("SELECT level, name, price FROM grid_levels WHERE run_id=:rid ORDER BY level", rid=backtest_id)
+        if not df_g.empty:
+            # 构建前端期望的字典格式
+            grid_levels = []
+            for _, row in df_g.iterrows():
+                grid_level = {'price': row['price']}
+                # 如果有name列，也添加进去
+                if 'name' in row and pd.notna(row['name']):
+                    grid_level['name'] = row['name']
+                grid_levels.append(grid_level)
+        else:
+            grid_levels = []
+    except Exception as e:
+        # 如果表不存在或查询失败，返回空列表
+        grid_levels = []
+        log_error(f"获取grid_levels失败: {e}")
+        
+    return {'metrics': df_m.to_dict(orient='records'), 'equity': df_e.to_dict(orient='records'), 'grid_levels': grid_levels}

@@ -43,9 +43,14 @@ class BacktestSignal(BaseModel):
             # 其他情况转换为字符串
             return str(v)
 
+class GridLevel(BaseModel):
+    name: str
+    price: float
+
 class BacktestResp(BaseModel):
     backtest_id: str
     status: str
     signals: List[BacktestSignal] = []
+    grid_levels: List[GridLevel] = []  # 修改为GridLevel对象数组
 class HealthResp(BaseModel):
     status: str

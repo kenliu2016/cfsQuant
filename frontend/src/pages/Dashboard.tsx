@@ -15,11 +15,18 @@ interface BacktestSignal {
   qty: number;
 }
 
+// 定义网格级别类型
+interface GridLevel {
+  name: string;
+  price: number;
+}
+
 // 定义策略回测状态类型
 interface StrategyBacktestState {
   isRunning: boolean;
   signals: BacktestSignal[];
   hasResults: boolean;
+  gridLevels?: GridLevel[]; // 网格级别数据（包含名称和价格）
 }
 
 // 解析CSV数据
@@ -157,15 +164,44 @@ const Dashboard: React.FC = () => {
   // 运行策略回测
   const runBacktest = async (strategyId: string, strategyName: string) => {
     try {
-      // 更新回测状态为运行中
-      setStrategyBacktestStates(prev => ({
-        ...prev,
-        [strategyId]: {
-          isRunning: true,
-          signals: [],
-          hasResults: false
+      // 更新回测状态：设置当前策略为运行中，并清空所有其他策略的结果数据
+      setStrategyBacktestStates(prev => {
+        // 创建一个新的状态对象
+        const newState: Record<string, StrategyBacktestState> = {};
+        
+        // 遍历所有策略ID
+        Object.keys(prev).forEach(id => {
+          if (id === strategyId) {
+            // 当前要运行的策略：设置为运行中状态
+            newState[id] = {
+              isRunning: true,
+              signals: [],
+              gridLevels: [],
+              hasResults: false
+            };
+          } else {
+            // 其他策略：保留基本信息，但清空信号和网格级别数据
+            newState[id] = {
+              ...prev[id],
+              signals: [],
+              gridLevels: [],
+              hasResults: false
+            };
+          }
+        });
+        
+        // 如果这是一个新策略（之前不存在），也设置为运行中状态
+        if (!prev[strategyId]) {
+          newState[strategyId] = {
+            isRunning: true,
+            signals: [],
+            gridLevels: [],
+            hasResults: false
+          };
         }
-      }));
+        
+        return newState;
+      });
 
       // 严格检查必要的参数
       if (!symbol) {
@@ -196,6 +232,7 @@ const Dashboard: React.FC = () => {
       console.log('Backtest response:', response.data);
       // 处理回测结果
       const signals: BacktestSignal[] = response.data.signals || [];
+      const gridLevels: GridLevel[] = response.data.grid_levels || [];
       
       // 更新回测状态为完成
       setStrategyBacktestStates(prev => ({
@@ -203,7 +240,8 @@ const Dashboard: React.FC = () => {
         [strategyId]: {
           isRunning: false,
           signals: signals,
-          hasResults: signals.length > 0
+          hasResults: signals.length > 0,
+          gridLevels: gridLevels
         }
       }));
 
@@ -216,6 +254,7 @@ const Dashboard: React.FC = () => {
         [strategyId]: {
           isRunning: false,
           signals: [],
+          gridLevels: [],
           hasResults: false
         }
       }));
@@ -225,16 +264,30 @@ const Dashboard: React.FC = () => {
 
   // 处理添加策略并自动运行回测
   const handleAddStrategy = async (strategyId: string, strategyName: string) => {
-    // 添加策略到浮动策略列表
-    const newStrategy = {
-      id: strategyId,
-      name: strategyName,
-      position: {
-        x: 10 + floatingStrategies.length * 150, // 水平位置错开
-        y: 0 // 垂直位置在这个布局中不那么重要了
-      }
-    };
-    setFloatingStrategies([...floatingStrategies, newStrategy]);
+    // 检查是否已存在同名策略
+    const existingIndex = floatingStrategies.findIndex(s => s.name === strategyName);
+    
+    if (existingIndex >= 0) {
+      // 存在同名策略，覆盖它
+      const updatedStrategies = [...floatingStrategies];
+      updatedStrategies[existingIndex] = {
+        id: strategyId,
+        name: strategyName,
+        position: updatedStrategies[existingIndex].position // 保留原位置
+      };
+      setFloatingStrategies(updatedStrategies);
+    } else {
+      // 不存在同名策略，添加新策略
+      const newStrategy = {
+        id: strategyId,
+        name: strategyName,
+        position: {
+          x: 10 + floatingStrategies.length * 150, // 水平位置错开
+          y: 0 // 垂直位置在这个布局中不那么重要了
+        }
+      };
+      setFloatingStrategies([...floatingStrategies, newStrategy]);
+    }
     
     // 无论是否选择股票，都先设置初始状态
     setStrategyBacktestStates(prev => ({
@@ -242,7 +295,8 @@ const Dashboard: React.FC = () => {
       [strategyId]: {
         isRunning: false,
         signals: [],
-        hasResults: false
+        hasResults: false,
+        gridLevels: []
       }
     }));
     
@@ -796,7 +850,7 @@ const Dashboard: React.FC = () => {
       result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + formatPrice(signalPrice) + '</span><br/>';
       
       // 尝试查找对应的信号对象获取更多信息
-      for (const [strategyId, state] of Object.entries(strategyBacktestStates)) {
+      for (const [_strategyId, state] of Object.entries(strategyBacktestStates)) {
         if (state.hasResults && state.signals) {
           const signalObj = state.signals.find((s: BacktestSignal) => {
             const signalDate = new Date(s.datetime).getTime();
@@ -917,7 +971,64 @@ const Dashboard: React.FC = () => {
           yAxisIndex: 1
         },
         // 买卖信号标记
-        ...allSignals
+        ...allSignals,
+        // 网格线标记
+        {
+          name: '网格线',
+          type: 'line',
+          data: [], // 空数据，只显示markLine
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          showSymbol: false,
+          lineStyle: {
+            color: 'transparent' // 隐藏主线条
+          },
+          markLine: {
+            silent: true,
+            symbol: ['none', 'none'], // 去掉箭头
+            lineStyle: {
+              color: '#6C6C8A',
+              type: 'dashed',
+              width: 1
+            },
+            data: (() => {
+              // 收集所有策略的网格线数据
+              const gridLines: any[] = [];
+              Object.entries(strategyBacktestStates).forEach(([_strategyId, state]) => {
+                if (state.hasResults && state.gridLevels && state.gridLevels.length > 0) {
+                  // 遍历网格线数据
+                  state.gridLevels.forEach((level: GridLevel) => {
+                    // 根据网格线名称确定颜色
+                    let lineColor = '#FFFFFF'; // 默认白色（价格中枢）
+                    if (level.name.includes('卖出')) {
+                      lineColor = '#ff4d4f'; // 红色（卖出线）
+                    } else if (level.name.includes('买入') || level.name.includes('止损')) {
+                      lineColor = '#52c41a'; // 绿色（买入线）
+                    }
+                    
+                    // 添加水平线配置
+                    gridLines.push({
+                      yAxis: level.price,
+                      lineStyle: {
+                        color: lineColor,
+                        type: 'dashed',
+                        width: 1
+                      },
+                      label: {
+                        formatter: `${level.name}: ${formatPrice(level.price)}`,
+                        position: 'insideStartTop',
+                        distance: 5,
+                        color: lineColor,
+                        fontSize: 10
+                      }
+                    });
+                  });
+                }
+              });
+              return gridLines;
+            })()
+          }
+        }
       ]
     };
 
