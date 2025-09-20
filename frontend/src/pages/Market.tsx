@@ -4,10 +4,28 @@ import { Card, Form, Select, DatePicker, Tabs, Spin } from 'antd'
 import client from '../api/client'
 import dayjs from 'dayjs'
 import ReactECharts from 'echarts-for-react'
+import { formatPriceWithUnit } from '../utils/priceFormatter'
 
 const { RangePicker } = DatePicker
 
 type Row = { datetime: string; open:number; high:number; low:number; close:number; volume:number }
+
+// 计算移动平均线
+const calculateMA = (data: Row[], dayCount: number): (number | null)[] => {
+  const result: (number | null)[] = []
+  for (let i = 0, len = data.length; i < len; i++) {
+    if (i < dayCount - 1) {
+      result.push(null)
+      continue
+    }
+    let sum = 0
+    for (let j = 0; j < dayCount; j++) {
+      sum += data[i - j].close
+    }
+    result.push(Number((sum / dayCount).toFixed(2)))
+  }
+  return result
+}
 
 export default function Market() {
   const [form] = Form.useForm()
@@ -240,95 +258,132 @@ export default function Market() {
     }
   }, [intraday])
   
-  // 使用useCallback缓存价格格式化函数
+  // 使用useCallback缓存价格格式化函数，统一调用工具函数
   const formatPrice = useCallback((value: number) => {
-    if (value >= 1000000) {
-      return Math.round(value / 1000000) + 'M';
-    } else if (value >= 1000) {
-      return Math.round(value / 1000) + 'K';
-    } else {
-      return Math.round(value).toString();
-    }
+    return formatPriceWithUnit(value);
   }, []);
   
   // 使用useMemo缓存图表配置对象，避免每次渲染都重新创建
-  const candleOption = useMemo(() => {
-    // 预计算图表需要的数据，避免在配置对象中多次map
-    const dateTimes = []
-    const candlestickData = []
-    const volumeData = []
-    
-    for (let i = 0; i < daily.length; i++) {
-      const row = daily[i]
-      dateTimes.push(row.datetime)
-      candlestickData.push([row.open, row.close, row.low, row.high])
-      volumeData.push(row.volume)
-    }
-    
-    return {
-      tooltip: { trigger: 'axis' },
-      axisPointer: { type: 'cross' },
-      xAxis: [
-        {
-          type: 'category', 
-          data: dateTimes, 
-          scale: true,
-          axisLabel: {
-            formatter: (value: string) => {
-              // 日线图横坐标显示月-日
-              return dayjs(value).format('MM-DD');
+    const candleOption = useMemo(() => {
+      // 预计算图表需要的数据，避免在配置对象中多次map
+      const dateTimes = []
+      const candlestickData = []
+      const volumeData = []
+      
+      for (let i = 0; i < daily.length; i++) {
+        const row = daily[i]
+        dateTimes.push(row.datetime)
+        candlestickData.push([row.open, row.close, row.low, row.high])
+        volumeData.push(row.volume)
+      }
+      
+      // 计算5日、10日和20日均线
+      const ma5 = calculateMA(daily, 5)
+      const ma10 = calculateMA(daily, 10)
+      const ma20 = calculateMA(daily, 20)
+      
+      return {
+        tooltip: { trigger: 'axis' },
+        axisPointer: { type: 'cross' },
+        legend: {
+          data: ['K', '5日均线', '10日均线', '20日均线', 'Volume'],
+          top: 10
+        },
+        xAxis: [
+          {
+            type: 'category', 
+            data: dateTimes, 
+            scale: true,
+            axisLabel: {
+              formatter: (value: string) => {
+                // 日线图横坐标显示月-日
+                return dayjs(value).format('MM-DD');
+              },
+              show: true, // 确保刻度可见
+              color: '#333', // 设置刻度颜色
+              rotate: 45, // 旋转标签避免重叠
+              interval: (_index: number) => {
+                // 简化的间隔逻辑，确保至少有刻度显示
+                const totalPoints = daily.length;
+                if (totalPoints === 0) return false;
+                if (totalPoints <= 10) return 0; // 显示所有
+                if (totalPoints <= 30) return Math.floor(totalPoints / 10);
+                if (totalPoints <= 60) return Math.floor(totalPoints / 20);
+                return Math.floor(totalPoints / 30);
+              }
             },
-            show: true, // 确保刻度可见
-            color: '#333', // 设置刻度颜色
-            rotate: 45, // 旋转标签避免重叠
-            interval: (_index: number) => {
-              // 简化的间隔逻辑，确保至少有刻度显示
-              const totalPoints = daily.length;
-              if (totalPoints === 0) return false;
-              if (totalPoints <= 10) return 0; // 显示所有
-              if (totalPoints <= 30) return Math.floor(totalPoints / 10);
-              if (totalPoints <= 60) return Math.floor(totalPoints / 20);
-              return Math.floor(totalPoints / 30);
+            axisLine: { show: true }, // 显示坐标轴轴线
+            axisTick: { show: true } // 显示坐标轴刻度
+          }, 
+          {
+            type:'category', 
+            gridIndex:1, 
+            data: dateTimes, 
+            axisLabel:{show:false}
+          }
+        ],
+        yAxis: [
+          {
+            scale: true,
+            min: priceRange.min,
+            max: priceRange.max,
+            axisLabel: {
+              formatter: formatPrice,
+              interval: 'auto' // 自动调整纵坐标刻度间隔
+            }
+          }, 
+          {
+            gridIndex:1,
+            axisLabel: {
+              formatter: formatPrice,
+              interval: 'auto' // 自动调整交易量纵坐标刻度间隔
+            }
+          }
+        ],
+        grid:[{ left:40, right:20, height: '55%' }, { left:40, right:20, top: '65%', height: '20%' }],
+        series: [
+          {
+            type:'candlestick', 
+            name:'K', 
+            data: candlestickData,
+            itemStyle: {
+              color: '#ef232a',
+              color0: '#14b143',
+              borderColor: '#ef232a',
+              borderColor0: '#14b143'
             }
           },
-          axisLine: { show: true }, // 显示坐标轴轴线
-          axisTick: { show: true } // 显示坐标轴刻度
-        }, 
-        {
-          type:'category', 
-          gridIndex:1, 
-          data: dateTimes, 
-          axisLabel:{show:false}
-        }
-      ],
-      yAxis: [
-        {
-          scale: true,
-          min: priceRange.min,
-          max: priceRange.max,
-          axisLabel: {
-            formatter: formatPrice,
-            interval: 'auto' // 自动调整纵坐标刻度间隔
-          }
-        }, 
-        {
-          gridIndex:1,
-          axisLabel: {
-            formatter: formatPrice,
-            interval: 'auto' // 自动调整交易量纵坐标刻度间隔
-          }
-        }
-      ],
-      grid:[{ left:40, right:20, height: '55%' }, { left:40, right:20, top: '65%', height: '20%' }],
-      series: [
-        { type:'candlestick', name:'K', data: candlestickData },
-        { type:'bar', name:'Volume', xAxisIndex:1, yAxisIndex:1, data: volumeData }
-      ],
-      // 开启ECharts性能优化
-      animation: false,
-      animationThreshold: 2000
-    }
-  }, [daily, priceRange, formatPrice])
+          {
+            type:'line', 
+            name:'5日均线', 
+            data: ma5, 
+            smooth: true, 
+            lineStyle: { color: '#ff9900', width: 1.5 },
+            showSymbol: false
+          },
+          {
+            type:'line', 
+            name:'10日均线', 
+            data: ma10, 
+            smooth: true, 
+            lineStyle: { color: '#0099ff', width: 1.5 },
+            showSymbol: false
+          },
+          {
+            type:'line', 
+            name:'20日均线', 
+            data: ma20, 
+            smooth: true, 
+            lineStyle: { color: '#ff00ff', width: 1.5 },
+            showSymbol: false
+          },
+          { type:'bar', name:'Volume', xAxisIndex:1, yAxisIndex:1, data: volumeData }
+        ],
+        // 开启ECharts性能优化
+        animation: false,
+        animationThreshold: 2000
+      }
+    }, [daily, priceRange, formatPrice, calculateMA])
 
   // 使用useMemo缓存markLines计算结果
   const markLines = useMemo(() => {
@@ -362,15 +417,19 @@ export default function Market() {
   const lineOption = useMemo(() => {
     // 预计算图表需要的数据
     const dateTimes = []
-    const closePrices = []
+    const candlestickData = []
     const volumeData = []
     
     for (let i = 0; i < intraday.length; i++) {
       const row = intraday[i]
       dateTimes.push(row.datetime)
-      closePrices.push(row.close)
+      candlestickData.push([row.open, row.close, row.low, row.high])
       volumeData.push(row.volume)
     }
+    
+    // 计算交易量的5日和10日均线
+    const volMA5 = calculateMA(intraday, 5)
+    const volMA10 = calculateMA(intraday, 10)
     
     // 生成graphic配置
     const graphicElements = markLines.map((markLine, _index) => ({
@@ -394,7 +453,41 @@ export default function Market() {
     }));
     
     return {
-      tooltip: { trigger: 'axis' },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          const timeData = params[0]
+          const volData = params[1]
+          const volMA5Data = params[2]
+          const volMA10Data = params[3]
+          // 根据开盘价和当前价格计算涨跌幅
+          const openPrice = intraday.length > 0 ? intraday[0].open : 0
+          const currentPrice = timeData.value[1] // close价格
+          const change = currentPrice - openPrice
+          const changePercent = openPrice > 0 ? (change / openPrice) * 100 : 0
+          const color = change >= 0 ? '#ef232a' : '#14b143'
+          
+          return `
+            <div style="text-align: left;">
+              <div>${timeData.name}</div>
+              <div>开盘: ${formatPrice(timeData.value[0])}</div>
+              <div>收盘: ${formatPrice(timeData.value[1])}</div>
+              <div>最低: ${formatPrice(timeData.value[2])}</div>
+              <div>最高: ${formatPrice(timeData.value[3])}</div>
+              <div style="color: ${color};">
+                涨跌额: ${formatPrice(change)} (${changePercent.toFixed(2)}%)
+              </div>
+              <div>成交量: ${volData.value}</div>
+              <div>5日量均: ${volMA5Data.value}</div>
+              <div>10日量均: ${volMA10Data.value}</div>
+            </div>
+          `
+        }
+      },
+      legend: {
+        data: ['K线', '成交量', '5日量均', '10日量均'],
+        top: 10
+      },
       graphic: graphicElements,
       xAxis: [
         {
@@ -449,14 +542,53 @@ export default function Market() {
       ],
       grid:[{ left:40, right:20, height: '55%' }, { left:40, right:20, top: '65%', height: '20%' }],
       series: [
-        { type:'line', name:'Price', data: closePrices, showSymbol:false, smooth:true },
-        { type:'bar', name:'Volume', xAxisIndex:1, yAxisIndex:1, data: volumeData }
+        { 
+          type:'candlestick', 
+          name:'K线', 
+          data: candlestickData,
+          itemStyle: {
+            color: '#ef232a',
+            color0: '#14b143',
+            borderColor: '#ef232a',
+            borderColor0: '#14b143'
+          }
+        },
+        { 
+          type:'bar', 
+          name:'成交量', 
+          xAxisIndex:1, 
+          yAxisIndex:1, 
+          data: volumeData,
+          itemStyle: {
+            color: '#14b143'
+          } 
+        },
+        { 
+          type:'line', 
+          name:'5日量均', 
+          xAxisIndex:1, 
+          yAxisIndex:1, 
+          data: volMA5, 
+          smooth: true, 
+          lineStyle: { color: '#ff9900', width: 1.5 },
+          showSymbol: false
+        },
+        { 
+          type:'line', 
+          name:'10日量均', 
+          xAxisIndex:1, 
+          yAxisIndex:1, 
+          data: volMA10, 
+          smooth: true, 
+          lineStyle: { color: '#0099ff', width: 1.5 },
+          showSymbol: false
+        }
       ],
       // 开启ECharts性能优化
       animation: false,
       animationThreshold: 2000
     }
-  }, [intraday, markLines, intradayPriceRange, formatPrice])
+  }, [intraday, markLines, intradayPriceRange, formatPrice, calculateMA])
 
   return (
     <Card title="Market 行情">
@@ -477,19 +609,19 @@ export default function Market() {
         </Form.Item>
       </Form>
 
-      <div style={{ marginTop: 16 }}>
+      <div style={{ marginTop: 0, padding: 0 }}>
         <Tabs 
           activeKey={activeTab}
           onChange={handleTabChange}
           items={[
             { key:'daily', label:'日线图', children: (
-              <Spin spinning={isDailyLoading} tip="加载中..." style={{minHeight: 500}}>
-                <ReactECharts option={candleOption} style={{height: 500}}/>
+              <Spin spinning={isDailyLoading} tip="加载中..." style={{minHeight: 550}}>
+                <ReactECharts option={candleOption} style={{height: 550}}/>
               </Spin>
             ) },
             { key:'rt', label:'分时图', children: (
-              <Spin spinning={isIntradayLoading} tip="加载中..." style={{minHeight: 500}}>
-                <ReactECharts option={lineOption} style={{height: 500}}/>
+              <Spin spinning={isIntradayLoading} tip="加载中..." style={{minHeight: 550}}>
+                <ReactECharts option={lineOption} style={{height: 550}}/>
               </Spin>
             ) }
           ]} 

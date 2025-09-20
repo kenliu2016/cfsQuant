@@ -1,48 +1,51 @@
+"""Strategy: strategy_template
+    模板策略：所有新策略都可以基于这个文件修改。
+    策略参数：用于策略中控制逻辑运行,命名，取值，数量完全由用户自定义。
+    引擎参数：用于调整策略的运行环境,不参与策略逻辑运算，用户只能微调取值范围。
 """
-Demo strategy: SMA crossover with fractional position sizing, max_position cap, and slippage.
 
-- Returns 'position' as fraction between 0 and 1 representing target percent of portfolio invested.
-- DEFAULT_PARAMS:
-    short, long: windows
-    fee_rate: per-trade proportional cost
-    initial_capital: starting cash
-    max_position: maximum fraction of capital invested (0-1)
-    slippage: price slippage applied at fills (fraction, e.g. 0.001 = 0.1%)
-"""
 import pandas as pd
 import numpy as np
 
+# 策略参数（只包含逻辑相关）
 DEFAULT_PARAMS = {
-    "short": 5,
-    "long": 20,
-    "fee_rate": 0.0005,
-    "initial_capital": 100000.0,
-    "max_position": 1.0,
-    "slippage": 0.0
+    "initial_capital": 1000000.0, # (引擎参数)初始资金
+    "min_trade_amount": 100.0,    # (引擎参数)最小成交金额（货币单位）
+    "min_trade_qty": 0.001,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
+    "cooldown_bars": 2,           # (引擎参数)冷却周期（单位bar）
+    "lot_size": 0.00001,          # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
+    "min_position_change": 0.02,  # (引擎参数)低于仓位变动门槛不出发交易（1%）
+    "lookback": 20,               # (策略参数)回溯窗口
+    "threshold": 0.01,            # (策略参数)触发阈值
+    "trend_filter": False,        # (策略参数)是否启用趋势过滤
 }
 
 def run(df: pd.DataFrame, params: dict):
+    """
+    策略核心逻辑
+    输入: 
+        df - DataFrame，至少包含 [datetime, open, high, low, close, volume]
+        params - dict，策略参数
+    输出:
+        DataFrame，至少包含 [datetime, close, position]
+    """
+    # 合并默认参数和外部参数
     p = DEFAULT_PARAMS.copy()
     p.update(params or {})
-    short = int(p.get("short",5))
-    long = int(p.get("long",20))
-    max_pos = float(p.get("max_position",1.0))
-    slippage = float(p.get("slippage",0.0))
 
+    # 拷贝并排序
     data = df.copy().sort_values("datetime").reset_index(drop=True)
-    close = data["close"]
 
-    data["ma_s"] = close.rolling(short, min_periods=1).mean()
-    data["ma_l"] = close.rolling(long, min_periods=1).mean()
+    # === 示例逻辑：基于均线的简单仓位策略 ===
+    data["ma"] = data["close"].rolling(p["lookback"], min_periods=1).mean()
 
-    # raw signal 0/1
-    data["signal"] = (data["ma_s"] > data["ma_l"]).astype(int)
+    # 仓位规则：收盘价 > 均线则满仓，反之空仓
+    data["position"] = np.where(data["close"] > data["ma"], 1.0, 0.0)
 
-    # convert to target position fraction (allow fractional allocations)
-    # when signal==1 -> target = max_pos, else 0
-    data["position"] = data["signal"] * max_pos
+    # 趋势过滤（可选逻辑）
+    if p["trend_filter"]:
+        data["trend_dir"] = np.where(data["close"] > data["ma"], 1, -1)
+        data["position"] = np.where(data["trend_dir"] < 0, 0.0, data["position"])
 
-    # shift to simulate execution next bar
-    data["position"] = data["position"].shift(1).fillna(0.0).astype(float)
-
-    return data
+    # 返回必须字段
+    return data[["datetime", "close", "position"]]

@@ -9,7 +9,8 @@ async def create_tuning(payload: dict = Body(...)):
     start = payload.get("start")
     end = payload.get("end")
     params = payload.get("params", {})
-    task_id = start_tuning_async(strategy, code, start, end, params)
+    interval = payload.get("interval", "1m")
+    task_id = start_tuning_async(strategy, code, start, end, params, interval)
     return {"task_id": task_id}
 
 @router.get("/{task_id}")
