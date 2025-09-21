@@ -11,12 +11,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market", tags=["market"])
 
 # 定义通用的数据处理函数
-def process_market_data(df):
+def process_market_data(df, context=""):
     """
     统一处理市场数据的DataFrame，确保datetime和价格字段被正确格式化
+    
+    Args:
+        df: 要处理的DataFrame
+        context: 可选的上下文信息，用于更详细的日志记录
     """
     if df is None or df.empty:
-        logger.warning("收到空的DataFrame进行处理")
+        if context:
+            logger.warning(f"收到空的DataFrame进行处理 - 上下文: {context}")
+        else:
+            logger.warning("收到空的DataFrame进行处理")
         return df
     
     # 创建df的副本以避免修改原始数据
@@ -242,7 +249,8 @@ def candles(code: str = Query(...), start: str = Query(None), end: str = Query(N
             total_count = len(df) if df is not None else 0
         
         # 处理数据
-        processed_df = process_market_data(df)
+        context = f"candles - code={code}, interval={interval}"
+        processed_df = process_market_data(df, context)
         
         # 计算has_more时处理page和page_size为None的情况
         has_more = False
@@ -266,7 +274,8 @@ def candles(code: str = Query(...), start: str = Query(None), end: str = Query(N
     else:
         # 处理非元组返回值（单df）
         df = result
-        processed_df = process_market_data(df)
+        context = f"candles - code={code}, interval={interval}"
+        processed_df = process_market_data(df, context)
         
         response = {
             "rows": processed_df.to_dict(orient="records"),
@@ -322,7 +331,8 @@ def daily(code: str = Query(...), start: str = Query(None), end: str = Query(Non
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
         df, total_count = result
-        processed_df = process_market_data(df)
+        context = f"daily - code={code}, interval={interval}"
+        processed_df = process_market_data(df, context)
         
         response = {
             "rows": processed_df.to_dict(orient="records"),
@@ -337,7 +347,8 @@ def daily(code: str = Query(...), start: str = Query(None), end: str = Query(Non
     else:
         # 处理非分页数据
         df = result
-        processed_df = process_market_data(df)
+        context = f"daily - code={code}, interval={interval}"
+        processed_df = process_market_data(df, context)
         
         response = {"rows": processed_df.to_dict(orient="records")}
         logger.info(f"返回非分页daily响应: rows={len(response['rows'])}")
@@ -363,7 +374,8 @@ def intraday(code: str = Query(...), start: str = Query(...), end: str = Query(.
     # 处理分页数据
     if isinstance(result, tuple) and len(result) == 2:
         df, total_count = result
-        processed_df = process_market_data(df)
+        context = f"intraday - code={code}"
+        processed_df = process_market_data(df, context)
         
         response = {
             "rows": processed_df.to_dict(orient="records"),
@@ -378,7 +390,8 @@ def intraday(code: str = Query(...), start: str = Query(...), end: str = Query(.
     else:
         # 处理非分页数据
         df = result
-        processed_df = process_market_data(df)
+        context = f"intraday - code={code}"
+        processed_df = process_market_data(df, context)
         
         response = {"rows": processed_df.to_dict(orient="records")}
         logger.info(f"返回非分页intraday响应: rows={len(response['rows'])}")
@@ -402,7 +415,8 @@ def batch_candles(codes: str = Query(..., description="股票代码列表，用�
     df = get_batch_candles(code_list, interval, limit, timestamp)
     
     # 处理结果
-    processed_df = process_market_data(df)
+    context = f"batch-candles - codes={codes}, interval={interval}"
+    processed_df = process_market_data(df, context)
     
     # 将结果转换为字典，键为股票代码，值为数据列表（当有多个bar时）
     result_dict = {}

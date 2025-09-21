@@ -22,7 +22,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('export_ddl.log', 'w', 'utf-8')
+        logging.FileHandler('../logs/export_ddl.log', 'w', 'utf-8')
     ]
 )
 logger = logging.getLogger(__name__)

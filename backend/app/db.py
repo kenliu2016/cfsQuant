@@ -46,6 +46,28 @@ def load_db_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     环境变量覆盖：PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
     """
     path = config_path or DEFAULT_CONFIG_PATH
+    
+    # 确保配置文件路径是绝对路径
+    if not os.path.isabs(path):
+        # 获取项目根目录
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        # 如果路径以'config/'开头，需要先添加'backend/'前缀
+        if path.startswith('config/'):
+            path = os.path.join('backend', path)
+            
+        # 构建相对于项目根目录的绝对路径
+        path = os.path.join(project_root, path)
+    
+    # 如果路径不存在，尝试使用backend/config/db_config.yaml作为备选路径
+    if not os.path.exists(path):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        alternative_path = os.path.join(project_root, 'backend', 'config', 'db_config.yaml')
+        if os.path.exists(alternative_path):
+            path = alternative_path
+        else:
+            raise FileNotFoundError(f"找不到数据库配置文件: {path} 或 {alternative_path}")
+    
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
