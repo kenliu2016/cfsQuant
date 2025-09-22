@@ -5,6 +5,8 @@ Run backend: cd backend; pip install -r requirements.txt; uvicorn app.main:app -
 Run frontend: cd frontend; npm install; npm run dev
 Database: backend/config/db_config.yaml contains default Postgres settings.
 
+在后台启动Redis
+redis-server --daemonize yes 
 
 
 启动后端：

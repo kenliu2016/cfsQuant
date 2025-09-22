@@ -1,534 +1,1049 @@
+"""
+解耦后的回测引擎 - 统一负责交易执行逻辑
+职责：
+1. 接收策略的目标仓位信号
+2. 决定是否执行交易（资金检查、冷却期、风控等）
+3. 处理所有交易逻辑（滑点、手续费等）
+4. 统一的回测框架，支持所有策略
+"""
+
 import uuid
 import pandas as pd
 import numpy as np
 import json
 from datetime import datetime
-from ..db import fetch_df, to_sql, get_engine
-import importlib.util
+from typing import Dict, Any, List, Optional, Tuple, Protocol
+from dataclasses import dataclass, field
 from pathlib import Path
 import logging
-import os
-from types import ModuleType
-import uuid
-
-STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
-DEFAULT_BACKTEST_PARAMS = {
-    "initial_capital": 1000000.0, # (引擎参数)初始资金
-    "fee_rate": 0.001,           # (引擎参数)手续费率（每笔交易的固定成本）
-    "slippage": 0.0002,           # (引擎参数)滑点（交易价格的偏移量，模拟真实交易环境）
-    "min_trade_amount": 5000.0,   # (引擎参数)最小成交金额（货币单位）
-    "min_trade_qty": 0.01,       # (引擎参数)最小成交数量（标的单位，0 表示不启用）
-    "min_position_change": 0.05,  # 【已优化】仓位变动门槛从20%降低到2%，更合理
-    "lot_size": 0.0001,           # (引擎参数)最小交易数量（如100股，或最小下单单位；0 表示不启用）
-    "cooldown_bars": 240,         # (引擎参数)冷却周期（单位bar）
-    "stop_loss_pct": 0.25,        # (引擎参数)跌破下限百分比止损
-    "take_profit_pct": 0.15,      # (引擎参数)超过收益百分比止盈
-    "logging_enabled": True,      # (通用参数)日志总开关
-}
-
-# --- 日志记录器配置 ---
+import importlib.util
+from ..db import fetch_df, to_sql, get_engine
 from ..common import setup_logger_with_file_handler
 
-# 配置日志记录器
-backtest_logger = setup_logger_with_file_handler(
+# 配置回测服务日志记录器
+backtest_service_logger = setup_logger_with_file_handler(
     logger_name="backtest_service",
-    log_filename="backtest_trades_debug.log",
+    log_filename="backtest_service.log",
     log_level=logging.INFO,
-    mode='w'  # 使用'w'模式在每次回测时覆盖日志
+    mode='w'
 )
 
-# 全局日志开关状态
-global_logging_enabled = True
+# 常量定义
+STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
 
-# --- 日志记录器配置结束 ---
+# 默认回测参数
+DEFAULT_BACKTEST_PARAMS = {
+    "initial_capital": 1000000.0,    # 初始资金
+    "fee_rate": 0.001,               # 手续费率
+    "slippage": 0.0002,              # 滑点
+    "min_trade_amount": 5000.0,      # 最小交易金额
+    "min_trade_qty": 0.01,           # 最小交易数量
+    "min_position_change": 0.05,     # 最小仓位变动阈值
+    "lot_size": 0.0001,              # 最小交易单位
+    "cooldown_bars": 0,              # 交易冷却期（K线数）
+    "stop_loss_pct": 0.25,           # 止损百分比
+    "take_profit_pct": 0.15,         # 止盈百分比
+    "max_position": 1.0,             # 最大仓位比例
+    "logging_enabled": True,         # 日志开关
+}
 
+@dataclass
+class StrategySignal:
+    """策略信号数据类"""
+    datetime: datetime
+    target_position: float           # 目标仓位 (0-1)
+    signal_type: str = "normal"      # 信号类型
 
-def log_trade_debug(action, price, qty, fee, slippage, position_cost, trade_type, pnl=None, datetime=None):
-    """
-    打印每笔交易的详细信息到日志文件
-    """
-    if not global_logging_enabled:
-        return
+@dataclass
+class TradeRecord:
+    """交易记录数据类"""
+    run_id: str
+    datetime: datetime
+    code: str
+    side: str
+    trade_type: str
+    price: float
+    qty: float
+    amount: float
+    fee: float
+    avg_price: float
+    nav: float
+    drawdown: float
+    current_qty: float
+    current_avg_price: float
+    realized_pnl: Optional[float]
+    close_price: float
+    current_cash: float
+
+@dataclass
+class BacktestResult:
+    """回测结果数据类"""
+    run_id: str
+    code: str
+    start: str
+    end: str
+    strategy: str
+    params: Dict[str, Any]
+    nav: pd.Series
+    metrics: Dict[str, float]
+    signals: List[StrategySignal]
+    grid_levels: List[Dict[str, Any]] = field(default_factory=list)  # 网格级别数据
+    grid_parameters: Dict[str, Any] = field(default_factory=dict)  # 网格参数数据
+
+class StrategyInterface(Protocol):
+    """策略接口协议"""
+    
+    def run(self, df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        策略运行接口
         
-    def safe_format(value, format_str):
-        if value is None or pd.isna(value) or np.isnan(value):
+        Args:
+            df: OHLC数据
+            params: 策略参数
+            
+        Returns:
+            {
+                'signals': List[StrategySignal],  # 必须：目标仓位信号列表
+                'auxiliary_data': Dict,           # 可选：辅助数据（网格级别、指标等）
+                'alerts': List[str],              # 可选：警告信息
+                'strategy_metrics': Dict          # 可选：策略自身的指标
+            }
+        """
+        ...
+
+class BacktestLogger:
+    """回测日志管理器"""
+    
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self.logger = setup_logger_with_file_handler(
+            logger_name="backtest_engine",
+            log_filename="backtest_engine_debug.log",
+            log_level=logging.INFO,
+            mode='w'
+        )
+    
+    def _safe_format(self, value: Any, format_str: str) -> str:
+        """安全格式化数值"""
+        if value is None or pd.isna(value) or (isinstance(value, float) and np.isnan(value)):
             return 'N/A'
         try:
             return format_str.format(value)
         except (ValueError, TypeError):
             return str(value)
     
-    backtest_logger.debug(
-        f"DATETIME={datetime if datetime is not None else 'N/A'}, "
-        f"ACTION={action}, TRADE_TYPE={trade_type}, PRICE={safe_format(price, '{:.2f}')}, QTY={safe_format(qty, '{}')}, "
-        f"FEE={safe_format(fee, '{:.2f}')}, SLIPPAGE={safe_format(slippage, '{:.6f}')}, "
-        f"POSITION_COST={safe_format(position_cost, '{:.2f}')}, "
-        f"PNL={safe_format(pnl, '{:.2f}') if pnl is not None else 'N/A'}"
-    )
-
-def log_info(message):
-    """
-    带开关的info日志记录
-    """
-    if global_logging_enabled:
-        backtest_logger.info(message)
-
-def log_debug(message):
-    """
-    带开关的debug日志记录
-    """
-    if global_logging_enabled:
-        backtest_logger.debug(message)
-
-def log_error(message):
-    """
-    带开关的error日志记录
-    """
-    if global_logging_enabled:
-        backtest_logger.error(message)
-
-def _load_strategy_module(strategy_name: str):
-    path = STRATEGY_DIR / f"{strategy_name}.py"
-    if not path.exists():
-        raise FileNotFoundError(f"Strategy file not found: {path}")
-    spec = importlib.util.spec_from_file_location(f"strategies.{strategy_name}", str(path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-def run_backtest(df: pd.DataFrame, params: dict, strategy_name: str):
-    """Pluggable strategy backtest with fractional position sizing, slippage and fees."""
-
-    backtest_id = str(uuid.uuid4())
-    if df.empty:
-        return {"run_id": backtest_id, "nav": []}
-
-    # 加载策略模块
-    mod = _load_strategy_module(strategy_name)
-
-    # 合并参数
-    default_params = getattr(mod, "DEFAULT_PARAMS", {})
-    merged_params = {**DEFAULT_BACKTEST_PARAMS, **default_params, **(params or {})}
-
-    # 根据参数设置全局日志开关状态
-    global global_logging_enabled
-    global_logging_enabled = bool(merged_params.get("logging_enabled", True))
-    
-    # 获取标的代码
-    code = merged_params.get("code", "")
-    start = merged_params.get("start", "")
-    end = merged_params.get("end", "")
-    interval = merged_params.get("interval", "1m")
-    
-    # 即使日志关闭，也要记录日志开关状态，以便调试
-    if global_logging_enabled:
-        log_info(f"回测参数已合并 - 策略: {strategy_name}, 标的: {code}")
-        log_info(f"合并后的完整参数: {json.dumps(merged_params, ensure_ascii=False)}")
-
-    fee_rate = float(merged_params.get("fee_rate", 0.0005))
-    base_slippage = float(merged_params.get("slippage", 0.0002))
-    min_trade_amount = float(merged_params.get("min_trade_amount", 5000.0))
-    min_trade_qty = float(merged_params.get("min_trade_qty", 0.0))
-    min_position_change = float(merged_params.get("min_position_change", 0.02))
-    lot_size = float(merged_params.get("lot_size", 0.0))
-    cooldown_bars = int(merged_params.get("cooldown_bars", 0))
-    initial_capital = float(merged_params.get("initial_capital", 100000.0))
-    stop_loss_pct = float(merged_params.get("stop_loss_pct", 0.15))
-    take_profit_pct = float(merged_params.get("take_profit_pct", 0.25))
-
-        # 在调用策略前，捕获原始时间戳（更稳健）
-    if "datetime" in df.columns:
-        original_datetime = pd.to_datetime(df["datetime"]).copy()
-    else:
-        # 如果没有 datetime 列，尝试用 index
-        original_datetime = pd.to_datetime(df.index).copy()
-    # 调用策略
-    result = mod.run(df.copy(), merged_params)
-    
-    # 检查结果类型，如果是DataFrame，则兼容旧版本策略
-    if isinstance(result, pd.DataFrame):
-        df = result
-        grid_levels = []  # 旧版本策略没有网格级别数据
-    else:
-        # 新版本策略返回字典，包含dataframe和其他信息
-        df = result.get('data', pd.DataFrame())
-        grid_levels = result.get('grid_levels', [])
-    
-    # 确保最终 df 有 datetime 列
-    if 'datetime' not in df.columns:
-        df['datetime'] = original_datetime.values if len(original_datetime) == len(df) else original_datetime
-    df['datetime'] = pd.to_datetime(df['datetime'])
-
-
-    data = df.reset_index()
-    cash = initial_capital
-    current_pos_qty = 0.0
-    avg_price = 0.0
-    nav_list, trades, positions, equity_curve = [], [], [], []
-    signals = []
-    last_trade_bar = -9999
-    last_pos_qty = None
-
-    for i, row in data.iterrows():
-        dt = row["datetime"]
-        price = float(row["close"])
-        nav_val = cash + current_pos_qty * price if not pd.isna(price) else cash
-
-        # 【已优化】统一交易逻辑，引擎风控(SL/TP)优先于策略信号
-        strategy_target_frac = float(row["position"])
-        final_target_frac = strategy_target_frac
-        trade_type = "normal"
-        is_risk_trade = False
-
-        if current_pos_qty > 0 and avg_price > 0 and not pd.isna(price):
-            profit_pct = (price - avg_price) / avg_price
+    def log_trade(self, trade: TradeRecord):
+        """记录交易详细信息"""
+        if not self.enabled:
+            return
             
-            if profit_pct >= take_profit_pct:
-                current_value = current_pos_qty * price
-                current_frac = current_value / nav_val if nav_val > 0 else 0
-                final_target_frac = current_frac * 0.5 
-                trade_type = "take_profit"
-                is_risk_trade = True
-                log_info(f"[{dt}] 触发止盈: 当前价={price:.2f}, 均价={avg_price:.2f}, 涨幅={profit_pct:.2%}")
+        self.logger.debug(
+            f"TRADE: {trade.datetime} | {trade.side.upper()} | "
+            f"Price: {self._safe_format(trade.price, '{:.4f}')} | "
+            f"Qty: {self._safe_format(trade.qty, '{:.4f}')} | "
+            f"Amount: {self._safe_format(trade.amount, '{:.2f}')} | "
+            f"Fee: {self._safe_format(trade.fee, '{:.2f}')} | "
+            f"Type: {trade.trade_type} | "
+            f"NAV: {self._safe_format(trade.nav, '{:.2f}')}"
+        )
+    
+    def log_signal(self, signal: StrategySignal):
+        """记录策略信号"""
+        if not self.enabled:
+            return
             
-            elif profit_pct <= -stop_loss_pct:
-                final_target_frac = 0.0
-                trade_type = "stop_loss"
-                is_risk_trade = True
-                log_info(f"[{dt}] 触发止损: 当前价={price:.2f}, 均价={avg_price:.2f}, 跌幅={profit_pct:.2%}")
+        self.logger.debug(
+            f"SIGNAL: {signal.datetime} | "
+            f"Target: {self._safe_format(signal.target_position, '{:.4f}')} | "
+            f"Type: {signal.signal_type}"
+        )
+    
+    def info(self, message: str):
+        if self.enabled:
+            self.logger.info(message)
+    
+    def error(self, message: str):
+        if self.enabled:
+            self.logger.error(message)
 
-        target_value = nav_val * final_target_frac
-        target_qty = target_value / price if not (pd.isna(price) or price <= 0) else 0.0
-        delta_qty = target_qty - current_pos_qty
+class PositionManager:
+    """仓位管理器 - 只负责执行交易，不决策"""
+    
+    def __init__(self, initial_cash: float):
+        self.cash = initial_cash
+        self.initial_capital = initial_cash
+        self.current_qty = 0.0
+        self.avg_price = 0.0
+        self.total_trades = 0
+        
+    def get_nav(self, current_price: float) -> float:
+        """计算当前净值"""
+        if pd.isna(current_price) or current_price <= 0:
+            return self.cash
+        return self.cash + self.current_qty * current_price
+    
+    def get_current_position_ratio(self, current_price: float) -> float:
+        """获取当前仓位比例"""
+        nav = self.get_nav(current_price)
+        if nav <= 0:
+            return 0.0
+        return (self.current_qty * current_price) / nav
+    
+    def can_afford_trade(self, delta_qty: float, price: float, fee_rate: float) -> bool:
+        """检查是否有足够资金执行交易"""
+        if delta_qty <= 0:  # 卖出或不交易
+            return abs(delta_qty) <= self.current_qty + 1e-9
+        
+        # 买入检查
+        required_cash = delta_qty * price * (1 + fee_rate)
+        return self.cash >= required_cash
+    
+    def execute_trade(self, delta_qty: float, price: float, fee_rate: float) -> Tuple[float, Optional[float]]:
+        """
+        执行交易，返回实际交易费用和已实现盈亏
+        
+        Args:
+            delta_qty: 交易数量（正数买入，负数卖出）
+            price: 交易价格
+            fee_rate: 手续费率
+            
+        Returns:
+            (actual_fee, realized_pnl)
+        """
+        if abs(delta_qty) < 1e-9:
+            return 0.0, None
+        
+        amount = abs(delta_qty * price)
+        fee = amount * fee_rate
+        realized_pnl = None
+        pre_trade_avg_price = self.avg_price
+        
+        if delta_qty > 0:  # 买入
+            # 更新平均成本
+            total_cost = self.avg_price * self.current_qty + price * delta_qty
+            self.current_qty += delta_qty
+            self.avg_price = total_cost / self.current_qty if self.current_qty > 0 else 0.0
+            self.cash -= (amount + fee)
+        else:  # 卖出
+            # 计算已实现盈亏
+            realized_pnl = (price - pre_trade_avg_price) * abs(delta_qty) - fee
+            self.current_qty += delta_qty  # delta_qty是负数
+            self.cash += (amount - fee)
+            
+            # 如果完全平仓，重置平均价格
+            if self.current_qty < 1e-9:
+                self.current_qty = 0.0
+                self.avg_price = 0.0
+        
+        self.total_trades += 1
+        return fee, realized_pnl
 
-        if not is_risk_trade:
-            if (i - last_trade_bar) <= cooldown_bars:
-                delta_qty = 0.0
-            else:
-                prev_frac = (current_pos_qty * price) / nav_val if nav_val > 0 else 0.0
-                if abs(final_target_frac - prev_frac) < min_position_change:
-                    delta_qty = 0.0
+class RiskManager:
+    """风险管理器 - 决定是否触发风控"""
+    
+    def __init__(self, stop_loss_pct: float, take_profit_pct: float, max_position: float):
+        self.stop_loss_pct = stop_loss_pct
+        self.take_profit_pct = take_profit_pct
+        self.max_position = max_position
+    
+    def check_risk_override(self, current_qty: float, avg_price: float, 
+                          current_price: float, target_position: float) -> Tuple[bool, str, float]:
+        """
+        检查是否需要风控覆盖策略信号
         
-        # 防御性编程：检查high和low字段是否存在且不为NaN
-        if "high" in row and "low" in row and not (pd.isna(row["high"]) or pd.isna(row["low"])):
-            tr = max(row["high"] - row["low"], 
-                    abs(row["high"] - data.iloc[i-1]["close"]) if i > 0 and "close" in data.iloc[i-1] else 0, 
-                    abs(row["low"] - data.iloc[i-1]["close"]) if i > 0 and "close" in data.iloc[i-1] else 0)
-        else:
-            tr = 0.0  # 如果字段不存在或值为NaN，使用默认值0
-        volatility_factor = tr / price if not (pd.isna(price) or price <= 0) else 0.0
-        dynamic_slippage = base_slippage * (1 + volatility_factor * 2.0)
+        Returns:
+            (is_override, override_reason, new_target_position)
+        """
+        if current_qty <= 0 or avg_price <= 0 or pd.isna(current_price):
+            return False, "normal", target_position
         
-        if lot_size > 0 and not pd.isna(delta_qty):
-            delta_qty = np.floor(abs(delta_qty) / lot_size) * lot_size * np.sign(delta_qty)
-        if min_trade_qty > 0 and abs(delta_qty) < min_trade_qty:
+        profit_pct = (current_price - avg_price) / avg_price
+        
+        # 止盈检查
+        if profit_pct >= self.take_profit_pct:
+            return True, "take_profit", target_position * 0.5  # 减半仓位
+        
+        # 止损检查
+        if profit_pct <= -self.stop_loss_pct:
+            return True, "stop_loss", 0.0  # 完全平仓
+        
+        # 最大仓位检查
+        if target_position > self.max_position:
+            return True, "max_position_limit", self.max_position
+        
+        return False, "normal", target_position
+
+class TradingDecisionEngine:
+    """交易决策引擎 - 决定是否执行交易"""
+    
+    def __init__(self, params: Dict[str, Any]):
+        self.min_trade_amount = float(params.get("min_trade_amount", 5000.0))
+        self.min_trade_qty = float(params.get("min_trade_qty", 0.01))
+        self.min_position_change = float(params.get("min_position_change", 0.02))
+        self.lot_size = float(params.get("lot_size", 0.0))
+        self.cooldown_bars = int(params.get("cooldown_bars", 0))
+        self.last_trade_bar = -9999
+    
+    def should_trade(self, signal: StrategySignal, current_position: float, 
+                    current_price: float, nav: float, bar_index: int) -> Tuple[bool, str]:
+        """
+        决定是否应该执行交易
+        
+        Returns:
+            (should_trade, reason)
+        """
+        target_position = signal.target_position
+        position_change = abs(target_position - current_position)
+        
+        # 检查仓位变动是否足够大
+        if position_change < self.min_position_change:
+            return False, "position_change_too_small"
+        
+        # 检查冷却期
+        if (bar_index - self.last_trade_bar) <= self.cooldown_bars:
+            return False, "cooldown_period"
+        
+        # 计算交易金额
+        target_value = nav * target_position
+        current_value = nav * current_position
+        trade_amount = abs(target_value - current_value)
+        
+        # 检查最小交易金额
+        if trade_amount < self.min_trade_amount:
+            return False, "trade_amount_too_small"
+        
+        return True, "approved"
+    
+    def calculate_trade_quantity(self, target_position: float, current_qty: float, 
+                               current_price: float, nav: float) -> float:
+        """计算实际交易数量"""
+        target_value = nav * target_position
+        target_qty = target_value / current_price if current_price > 0 else 0.0
+        delta_qty = target_qty - current_qty
+        
+        # 应用lot_size约束
+        if self.lot_size > 0 and not pd.isna(delta_qty):
+            delta_qty = np.floor(abs(delta_qty) / self.lot_size) * self.lot_size * np.sign(delta_qty)
+        
+        # 应用最小交易数量约束
+        if self.min_trade_qty > 0 and abs(delta_qty) < self.min_trade_qty:
             delta_qty = 0.0
         
-        if abs(delta_qty) > 1e-9:
-            if pd.isna(price): continue
-            
-            exec_price = price * (1 + dynamic_slippage) if delta_qty > 0 else price * (1 - dynamic_slippage)
-            if pd.isna(exec_price) or exec_price <= 0: continue
-            
-            if delta_qty > 0:
-                max_possible_qty = cash / (exec_price * (1 + fee_rate))
-                delta_qty = min(delta_qty, max_possible_qty)
-            else:
-                delta_qty = -min(abs(delta_qty), current_pos_qty)
-
-            if abs(delta_qty) < 1e-9: continue
-            
-            amount = exec_price * delta_qty
-            fee_amt = abs(amount) * fee_rate
-
-            if abs(amount) < min_trade_amount and not is_risk_trade:
-                continue
-
-            realized_pnl = None
-            side = "buy" if delta_qty > 0 else "sell"
-
-            # 保存交易前的平均价格
-            pre_trade_avg_price = avg_price
-            
-            if side == "buy":
-                total_cost = avg_price * current_pos_qty + exec_price * delta_qty
-                current_pos_qty += delta_qty
-                avg_price = total_cost / current_pos_qty if current_pos_qty > 0 else 0.0
-                cash -= (abs(amount) + fee_amt)
-            else:
-                realized_pnl = (exec_price - pre_trade_avg_price) * abs(delta_qty) - fee_amt
-                realized_pnl = (exec_price - pre_trade_avg_price) * abs(delta_qty) - fee_amt
-                current_pos_qty += delta_qty
-                cash += (abs(amount) - fee_amt)
-                if current_pos_qty < 1e-9:
-                    current_pos_qty = 0.0
-                    avg_price = 0.0
-                # 对于部分减仓，平均价格保持不变（成本不变）
-                # 但为了明确区分交易前和交易后的平均价格，我们创建一个临时变量
-                post_trade_avg_price = avg_price
-
-            nav_val = cash + current_pos_qty * price
-            
-            # 计算当前的回撤值
-            # 从trades列表中获取历史最大nav值来计算peak
-            peak = nav_val
-            if trades:
-                # 获取所有历史nav值并找到最大值
-                historical_navs = [t["nav"] for t in trades]
-                peak = max(nav_val, max(historical_navs))
-            drawdown_val = nav_val / peak - 1 if peak > 0 else 0
-            
-            trades.append({
-                "run_id": backtest_id, "datetime": dt, "code": code, "side": side,
-                "trade_type": trade_type, "price": float(exec_price), "qty": float(delta_qty),
-                "amount": float(amount), "fee": float(fee_amt), "avg_price": float(pre_trade_avg_price),
-                "nav": float(nav_val), "drawdown": float(drawdown_val),
-                "current_qty": float(current_pos_qty), "current_avg_price": float(post_trade_avg_price if side == "sell" else avg_price),
-                "realized_pnl": float(realized_pnl) if pd.notna(realized_pnl) else None,
-                "close_price": float(price) if not pd.isna(price) else None,
-                "current_cash": float(cash)
-            })
-
-            log_trade_debug(action=side.upper(), trade_type=trade_type, price=exec_price, qty=delta_qty,
-                            fee=fee_amt, slippage=dynamic_slippage, position_cost=avg_price,
-                            pnl=realized_pnl, datetime=dt)
-            last_trade_bar = i
-            
-
-            # 确保datetime字段是字符串类型
-            dt_str = dt
-            if hasattr(dt, 'strftime'):
-                dt_str = dt.strftime('%Y-%m-%d %H:%M:%S')
-            elif not isinstance(dt, str):
-                dt_str = str(dt)
-
-            # 添加交易信号到signals列表
-            signals.append({
-                "datetime": dt_str,
-                "side": side,
-                "price": float(exec_price),
-                "qty": float(abs(delta_qty))
-            })
-
-        # 不再单独维护equity_curve和positions列表，相关数据已整合到trades表中
-        # 仅维护nav_list用于计算最终指标
-        pass
-
-        nav_list.append(nav_val)
-
-    # 明确指定index的数据类型，避免pandas自动推断触发警告
-    nav_series = pd.Series(nav_list, index=pd.Index(data["datetime"], dtype='datetime64[ns]'))
-    engine = get_engine()
+        return delta_qty
     
-    try:
-        if nav_list:
-            final_capital = nav_list[-1]
-            # 初始化指标变量
-            final_return = None
-            max_drawdown = None
-            sharpe = None
-            win_rate = None
-            trade_count = None
-            total_fee = None
-            total_profit = None
-            
-            if len(nav_list) > 1:
-                # 计算收益率
-                final_return = nav_list[-1] / initial_capital - 1
-                # 计算最大回撤
-                if trades:
-                    # 从trades列表中获取所有drawdown值并找到最小值
-                    drawdowns = [t["drawdown"] for t in trades]
-                    max_drawdown = min(drawdowns) if drawdowns else None
-                else:
-                    max_drawdown = None
-                # 计算夏普率
-                nav_series_pct_change = pd.Series(nav_list).pct_change().dropna()
-                if not nav_series_pct_change.empty and nav_series_pct_change.std() > 0:
-                    sharpe = np.sqrt(252) * nav_series_pct_change.mean() / nav_series_pct_change.std()
+    def update_last_trade_bar(self, bar_index: int):
+        """更新最后交易时间"""
+        self.last_trade_bar = bar_index
 
-                # 计算交易相关指标
-                if trades:
-                    trade_count = len(trades)
-                    # 计算总手续费
-                    total_fee = sum(t["fee"] for t in trades if "fee" in t and t["fee"] is not None)
-                    # 计算总收益
-                    total_profit = sum(t["realized_pnl"] for t in trades if "realized_pnl" in t and t["realized_pnl"] is not None)
-                    # 计算胜率
-                    winning_trades = [t for t in trades if "realized_pnl" in t and t["realized_pnl"] is not None and t["realized_pnl"] > 0]
-                    win_rate = len(winning_trades) / trade_count if trade_count > 0 else 0
-            
-            # 创建runs表数据，包含直接添加的指标
-            run_data = pd.DataFrame([{
-                'run_id': backtest_id,
-                'strategy': strategy_name,
-                'code': code,
-                'start_time': start,
-                'end_time': end,
-                'interval': interval,
-                'initial_capital': initial_capital,
-                'final_capital': final_capital,
-                'final_return': final_return,
-                'max_drawdown': max_drawdown,
-                'sharpe': sharpe,
-                'win_rate': win_rate,
-                'trade_count': trade_count,
-                'total_fee': total_fee,
-                'total_profit': total_profit,
-                'paras': json.dumps(merged_params)
-            }])
-            
-            # 先写入runs表，确保run_id存在，避免外键约束错误
-            log_info(f"准备写入runs表: {backtest_id}")
-            run_data.to_sql("runs", con=engine, if_exists="append", index=False)
-            log_info(f"成功写入runs表: {backtest_id}")
+class SlippageCalculator:
+    """滑点计算器"""
+    
+    @staticmethod
+    def calculate_dynamic_slippage(row: pd.Series, prev_row: Optional[pd.Series], 
+                                 base_slippage: float) -> float:
+        """计算动态滑点"""
+        if "high" not in row or "low" not in row or pd.isna(row["high"]) or pd.isna(row["low"]):
+            return base_slippage
+        
+        # 计算真实波动率
+        high_low = row["high"] - row["low"]
+        if prev_row is not None and "close" in prev_row:
+            high_close = abs(row["high"] - prev_row["close"])
+            low_close = abs(row["low"] - prev_row["close"])
+            true_range = max(high_low, high_close, low_close)
+        else:
+            true_range = high_low
+        
+        # 波动率因子
+        price = row["close"]
+        volatility_factor = true_range / price if price > 0 else 0.0
+        
+        return base_slippage * (1 + volatility_factor * 2.0)
 
+class StrategyLoader:
+    """策略加载器"""
+    
+    @staticmethod
+    def load_strategy(strategy_name: str):
+        """动态加载策略模块"""
+        path = STRATEGY_DIR / f"{strategy_name}.py"
+        if not path.exists():
+            raise FileNotFoundError(f"策略文件不存在: {path}")
+        
+        spec = importlib.util.spec_from_file_location(f"strategies.{strategy_name}", str(path))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"无法加载策略模块: {strategy_name}")
+        
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+class MetricsCalculator:
+    """指标计算器"""
+    
+    @staticmethod
+    def calculate_performance_metrics(nav_list: List[float], initial_capital: float, 
+                                    trades: List[TradeRecord]) -> Dict[str, float]:
+        """计算性能指标"""
+        if not nav_list or len(nav_list) < 2:
+            return {}
+        
+        metrics = {}
+        
+        # 基础收益指标
+        final_capital = nav_list[-1]
+        metrics['final_capital'] = final_capital
+        metrics['final_return'] = final_capital / initial_capital - 1
+        
+        # 计算最大回撤
+        nav_series = pd.Series(nav_list)
+        rolling_max = nav_series.expanding().max()
+        drawdown = (nav_series - rolling_max) / rolling_max
+        metrics['max_drawdown'] = drawdown.min()
+        
+        # 夏普率
+        returns = nav_series.pct_change().dropna()
+        if len(returns) > 1 and returns.std() > 0:
+            metrics['sharpe'] = np.sqrt(252) * returns.mean() / returns.std()
+        
+        # 交易相关指标
         if trades:
-            # 更新trades DataFrame结构，添加新的整合字段
-            trades_df = pd.DataFrame(
-                trades,
-                columns=[
-                    "run_id", "datetime", "code", "side", "trade_type", "price", "qty", "amount",
-                    "fee", "avg_price", "nav", "drawdown", "current_qty", "current_avg_price", "realized_pnl", "close_price", "current_cash",
-                ]
+            metrics['trade_count'] = len(trades)
+            metrics['total_fee'] = sum(t.fee for t in trades)
+            
+            realized_pnls = [t.realized_pnl for t in trades if t.realized_pnl is not None]
+            if realized_pnls:
+                metrics['total_profit'] = sum(realized_pnls)
+                winning_trades = [pnl for pnl in realized_pnls if pnl > 0]
+                metrics['win_rate'] = len(winning_trades) / len(realized_pnls)
+                
+                if len(winning_trades) > 0 and len(realized_pnls) > len(winning_trades):
+                    avg_win = np.mean(winning_trades)
+                    losing_trades = [pnl for pnl in realized_pnls if pnl <= 0]
+                    avg_loss = abs(np.mean(losing_trades)) if losing_trades else 0
+                    metrics['profit_factor'] = avg_win / avg_loss if avg_loss > 0 else float('inf')
+        
+        return metrics
+
+class DatabaseManager:
+    """数据库管理器"""
+    
+    def __init__(self, logger: BacktestLogger):
+        self.logger = logger
+        self.engine = get_engine()
+    
+    def save_backtest_results(self, result: BacktestResult, trades: List[TradeRecord], 
+                            nav_list: List[float], metrics: Dict[str, float]):
+        """保存回测结果到数据库"""
+        try:
+            backtest_service_logger.info(f"开始保存回测结果到数据库: 回测ID={result.run_id}")
+            self._save_run_record(result, metrics)
+            if trades:
+                self._save_trades(trades)
+                backtest_service_logger.info(f"回测ID={result.run_id}: 保存了 {len(trades)} 条交易记录")
+            if nav_list:
+                self._save_equity_curve(result.run_id, result.code, nav_list, result.nav.index)
+                backtest_service_logger.info(f"回测ID={result.run_id}: 保存了净值曲线数据")
+            if result.grid_levels:
+                self._save_grid_levels(result.run_id, result.grid_levels)
+                backtest_service_logger.info(f"回测ID={result.run_id}: 保存了网格级别数据")
+            backtest_service_logger.info(f"回测ID={result.run_id}: 数据库保存完成")
+        except Exception as e:
+            backtest_service_logger.error(f"回测ID={result.run_id}: 数据库保存失败: {str(e)}")
+            raise
+    
+    def _save_run_record(self, result: BacktestResult, metrics: Dict[str, float]):
+        """保存运行记录"""
+        run_data = pd.DataFrame([{
+            'run_id': result.run_id,
+            'strategy': result.strategy,
+            'code': result.code,
+            'start_time': result.start,
+            'end_time': result.end,
+            'interval': result.params.get('interval', '1m'),
+            'initial_capital': result.params.get('initial_capital', 100000),
+            'final_capital': metrics.get('final_capital'),
+            'final_return': metrics.get('final_return'),
+            'max_drawdown': metrics.get('max_drawdown'),
+            'sharpe': metrics.get('sharpe'),
+            'win_rate': metrics.get('win_rate'),
+            'trade_count': metrics.get('trade_count'),
+            'total_fee': metrics.get('total_fee'),
+            'total_profit': metrics.get('total_profit'),
+            'paras': json.dumps(result.params)
+        }])
+        
+        run_data.to_sql("runs", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入runs表: {result.run_id}")
+    
+    def _save_trades(self, trades: List[TradeRecord]):
+        """保存交易记录"""
+        trades_data = [{
+            "run_id": trade.run_id,
+            "datetime": trade.datetime,
+            "code": trade.code,
+            "side": trade.side,
+            "trade_type": trade.trade_type,
+            "price": trade.price,
+            "qty": trade.qty,
+            "amount": trade.amount,
+            "fee": trade.fee,
+            "avg_price": trade.avg_price,
+            "nav": trade.nav,
+            "drawdown": trade.drawdown,
+            "current_qty": trade.current_qty,
+            "current_avg_price": trade.current_avg_price,
+            "realized_pnl": trade.realized_pnl,
+            "close_price": trade.close_price,
+            "current_cash": trade.current_cash,
+        } for trade in trades]
+        
+        trades_df = pd.DataFrame(trades_data)
+        trades_df.to_sql("trades", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入trades表: {len(trades_df)} 条记录")
+    
+    def _save_equity_curve(self, run_id: str, code: str, nav_list: List[float], 
+                          datetime_index: pd.Index):
+        """保存净值曲线"""
+        equity_df = pd.DataFrame({
+            "run_id": run_id,
+            "datetime": pd.to_datetime(datetime_index),
+            "nav": nav_list,
+            "drawdown": pd.Series(nav_list).expanding().max().subtract(pd.Series(nav_list)).div(
+                pd.Series(nav_list).expanding().max()).fillna(0)
+        })
+        equity_df.to_sql("equity_curve", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入equity_curve: {len(equity_df)} 条记录")
+    
+    def _save_grid_levels(self, run_id: str, grid_levels: List[Dict[str, Any]]):
+        """保存网格级别数据"""
+        try:
+            # 首先检查grid_levels是否为列表类型
+            if not isinstance(grid_levels, list):
+                self.logger.warning(f"grid_levels不是列表类型: {type(grid_levels).__name__}")
+                return
+            
+            # 如果列表为空，直接返回
+            if not grid_levels:
+                return
+            
+            # 处理网格级别数据
+            grid_data = []
+            for idx, level in enumerate(grid_levels):
+                try:
+                    # 检查元素是否为字典且包含price字段
+                    if isinstance(level, dict) and 'price' in level:
+                        # 确保price是数字类型
+                        price = level['price']
+                        if isinstance(price, (int, float)):
+                            grid_data.append({
+                                "run_id": run_id,
+                                "level": idx,
+                                "name": str(level.get('name', '')) if 'name' in level else '',
+                                "price": price
+                            })
+                        else:
+                            # 尝试转换为数字
+                            try:
+                                grid_data.append({
+                                    "run_id": run_id,
+                                    "level": idx,
+                                    "name": str(level.get('name', '')) if 'name' in level else '',
+                                    "price": float(price)
+                                })
+                            except (ValueError, TypeError):
+                                self.logger.warning(f"网格级别价格不是有效数字: {price}")
+                except Exception as e:
+                    # 记录单个级别处理失败的错误，但继续处理其他级别
+                    self.logger.warning(f"处理网格级别 {idx} 失败: {str(e)}")
+                    continue
+            
+            # 如果有有效数据，保存到数据库
+            if grid_data:
+                try:
+                    grid_df = pd.DataFrame(grid_data)
+                    grid_df.to_sql("grid_levels", con=self.engine, if_exists="append", index=False)
+                    self.logger.info(f"成功写入grid_levels: {len(grid_df)} 条记录")
+                except Exception as e:
+                    self.logger.error(f"写入grid_levels表失败: {str(e)}")
+                    # 这里不抛出异常，避免影响整体回测结果的保存
+        except Exception as e:
+            # 捕获所有其他异常，确保不会中断回测流程
+            self.logger.error(f"保存网格级别数据时发生错误: {str(e)}")
+            # 这里不抛出异常，避免影响整体回测结果的保存
+
+class BacktestEngine:
+    """解耦后的回测引擎 - 统一的交易执行框架"""
+    
+    def __init__(self):
+        self.logger = None
+        self.position_manager = None
+        self.risk_manager = None
+        self.decision_engine = None
+        self.db_manager = None
+        
+    def run_backtest(self, df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
+        """运行回测的主入口"""
+        backtest_id = str(uuid.uuid4())
+        backtest_service_logger.info(f"开始回测: ID={backtest_id}, 策略={strategy_name}, 参数={params}")
+        
+        if df.empty:
+            backtest_service_logger.warning(f"回测ID={backtest_id}: 输入数据为空，无法执行回测")
+            return {"run_id": backtest_id, "nav": [], "signals": [], "metrics": {}}
+        
+        # 合并参数
+        merged_params = {**DEFAULT_BACKTEST_PARAMS, **(params or {})}
+        
+        # 初始化组件
+        self._initialize_components(merged_params)
+        backtest_service_logger.info(f"回测ID={backtest_id}: 组件初始化完成")
+        
+        # 运行策略获取信号
+        strategy_result = self._run_strategy(df, merged_params, strategy_name)
+        backtest_service_logger.info(f"回测ID={backtest_id}: 策略运行完成，生成 {len(strategy_result.get('signals', []))} 个信号")
+        
+        # 执行回测
+        backtest_result = self._execute_backtest(
+            df, strategy_result, merged_params, strategy_name, backtest_id
+        )
+        
+        metrics = backtest_result.get('metrics', {})
+        backtest_service_logger.info(
+            f"回测ID={backtest_id}: 回测完成 | 最终收益={metrics.get('final_return', 0):.2%} | "
+            f"最大回撤={metrics.get('max_drawdown', 0):.2%} | 交易次数={metrics.get('trade_count', 0)}"
+        )
+        
+        return backtest_result
+    
+    def _initialize_components(self, params: Dict[str, Any]):
+        """初始化回测组件"""
+        self.logger = BacktestLogger(params.get("logging_enabled", True))
+        
+        initial_capital = float(params.get("initial_capital", 100000.0))
+        self.position_manager = PositionManager(initial_capital)
+        
+        self.risk_manager = RiskManager(
+            float(params.get("stop_loss_pct", 0.15)),
+            float(params.get("take_profit_pct", 0.25)),
+            float(params.get("max_position", 1.0))
+        )
+        
+        self.decision_engine = TradingDecisionEngine(params)
+        self.db_manager = DatabaseManager(self.logger)
+    
+    def _run_strategy(self, df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
+        """运行策略获取信号"""
+        # 加载策略
+        mod = StrategyLoader.load_strategy(strategy_name)
+        
+        # 合并策略默认参数
+        strategy_default_params = getattr(mod, "DEFAULT_PARAMS", {})
+        strategy_params = {**strategy_default_params, **params}
+        
+        self.logger.info(f"加载策略: {strategy_name}, 标的: {params.get('code', '')}")
+        backtest_service_logger.info(f"策略参数: {strategy_params}")
+        # 运行策略
+        try:
+            result = mod.run(df.copy(), strategy_params)
+            return result
+        except Exception as e:
+            self.logger.error(f"策略运行失败: {str(e)}")
+            raise
+    
+    def _execute_backtest(self, df: pd.DataFrame, strategy_result: Dict[str, Any], 
+                         params: Dict[str, Any], strategy_name: str, backtest_id: str) -> Dict[str, Any]:
+        """执行回测主逻辑"""
+        # 提取策略结果
+        signals = strategy_result.get('signals', [])
+        alerts = strategy_result.get('alerts', [])
+        
+        # 直接获取网格相关数据，提供默认值确保即使没有返回也不会出错
+        grid_levels = strategy_result.get('grid_levels', [])
+        grid_parameters = strategy_result.get('grid_parameters', {})
+        
+        # 确保grid_levels是前端可直接使用的字典列表
+        # 增加健壮性检查：只有当grid_levels不为空且是列表类型时才进行处理
+        if grid_levels and isinstance(grid_levels, list):
+            # 检查第一个元素是否为对象类型（而非字典）
+            if grid_levels and not isinstance(grid_levels[0], dict):
+                try:
+                    # 尝试转换GridLevel对象列表为纯字典列表
+                    converted_levels = []
+                    for level in grid_levels:
+                        if hasattr(level, 'name') and hasattr(level, 'price'):
+                            converted_levels.append({
+                                'name': getattr(level, 'name', ''),
+                                'price': getattr(level, 'price', 0),
+                                'type': getattr(level, 'level_type', 'grid') if hasattr(level, 'level_type') else 'grid'
+                            })
+                    grid_levels = converted_levels
+                except Exception as e:
+                    # 如果转换失败，记录错误并使用空列表
+                    self.logger.warning(f"转换grid_levels失败: {str(e)}")
+                    grid_levels = []
+        
+# 直接使用grid_levels和grid_parameters，不再创建auxiliary_data
+        
+        backtest_service_logger.info(f"回测ID={backtest_id}: 开始执行回测，数据点数量={len(df)}, 信号数量={len(signals)}")
+        
+        # 参数
+        fee_rate = float(params.get("fee_rate", 0.001))
+        base_slippage = float(params.get("slippage", 0.0002))
+        code = params.get("code", "")
+        
+        # 回测数据
+        data = df.reset_index(drop=True)
+        trades = []
+        nav_list = []
+        executed_signals = []
+        
+        # 将信号转换为字典便于查找
+        signals_dict = {}
+        for signal in signals:
+            # 处理信号的datetime，确保能够匹配
+            if isinstance(signal, dict):
+                signal_dt = pd.to_datetime(signal['datetime'])
+                signals_dict[signal_dt] = StrategySignal(
+                    datetime=signal_dt,
+                    target_position=signal['target_position'],
+                    signal_type=signal.get('signal_type', 'normal'),
+
+                )
+            else:
+                signals_dict[signal.datetime] = signal
+        
+        # 主循环
+        prev_row = None
+        for i, row in data.iterrows():
+            dt = pd.to_datetime(row["datetime"])
+            price = float(row["close"])
+            nav = self.position_manager.get_nav(price)
+            nav_list.append(nav)
+            
+            # 获取当前信号
+            current_signal = signals_dict.get(dt)
+            if current_signal is None:
+                prev_row = row
+                continue
+            
+            self.logger.log_signal(current_signal)
+            
+            # 风控检查
+            current_position = self.position_manager.get_current_position_ratio(price)
+            
+            is_override, override_reason, final_target_position = self.risk_manager.check_risk_override(
+                self.position_manager.current_qty, self.position_manager.avg_price, 
+                price, current_signal.target_position
             )
             
-            log_info(f"准备写入trades表: {backtest_id}, 交易数量: {len(trades_df)}")
-            trades_df.to_sql("trades", con=engine, if_exists="append", index=False)
-            log_info(f"成功写入trades表: {backtest_id}")
-    except Exception as e:
-        log_error(f"数据库写入失败: {str(e)}")
-        # 打印详细的错误信息，包括堆栈跟踪
-        import traceback
-        log_error(f"错误堆栈: {traceback.format_exc()}")
-        
-    # 不再写入单独的positions和equity_curve表
-    # 所有相关数据已整合到trades表中
-
-    # === 【已优化】修正盈亏归因分析 ===
-    metrics = []
-    if len(nav_list) > 1:
-        # 年度收益率仍然写入metrics表
-        final_return = nav_list[-1] / initial_capital - 1
-        days = (data["datetime"].iloc[-1] - data["datetime"].iloc[0]).days
-        if days > 0:
-            ann_return = (1 + final_return) ** (365.0 / days) - 1
-            metrics.append({"run_id": backtest_id, "metric_name": "annual_return", "metric_value": ann_return})
-        # 注意：final_return, max_drawdown, sharpe已直接写入runs表，不再写入metrics表
-    if trades:
-        trades_df_final = pd.DataFrame(trades)
-        closed_trades_df = trades_df_final[trades_df_final['side'] == 'sell'].copy()
-        
-        if not closed_trades_df.empty:
-            # `realized_pnl` 在记录时已包含手续费，无需重复计算
-            trade_attribution = closed_trades_df.groupby('trade_type').agg(
-                total_pnl=('realized_pnl', 'sum'),
-                total_trades=('realized_pnl', 'count'),
-                winning_trades=('realized_pnl', lambda pnl: (pnl > 0).sum())
-            ).reset_index()
-
-            if not trade_attribution.empty:
-                trade_attribution['win_rate'] = (trade_attribution['winning_trades'] / trade_attribution['total_trades']).fillna(0)
-                trade_attribution['avg_pnl'] = (trade_attribution['total_pnl'] / trade_attribution['total_trades']).fillna(0)
+            if is_override:
+                self.logger.info(f"风控覆盖: {override_reason}, 目标仓位: {current_signal.target_position:.4f} -> {final_target_position:.4f}")
+                # 创建新的信号对象
+                final_signal = StrategySignal(
+                    datetime=current_signal.datetime,
+                    target_position=final_target_position,
+                    signal_type=override_reason
+                )
+            else:
+                final_signal = current_signal
             
-                #盈亏归因分析结果
-                attribution_metrics = []
-                for _, row in trade_attribution.iterrows():
-                    ttype = row['trade_type']
-                    attribution_metrics.extend([
-                        {"run_id": backtest_id, "metric_name": f"attribution_{ttype}_total_pnl", "metric_value": row['total_pnl']},
-                        {"run_id": backtest_id, "metric_name": f"attribution_{ttype}_total_trades", "metric_value": row['total_trades']},
-                        {"run_id": backtest_id, "metric_name": f"attribution_{ttype}_win_rate", "metric_value": row['win_rate']},
-                        {"run_id": backtest_id, "metric_name": f"attribution_{ttype}_avg_pnl", "metric_value": row['avg_pnl']}
-                    ])     
-                metrics.extend(attribution_metrics)
+            # 交易决策
+            should_trade, trade_reason = self.decision_engine.should_trade(
+                final_signal, current_position, price, nav, i
+            )
+            
+            if not should_trade:
+                self.logger.info(f"跳过交易: {trade_reason}")
+                backtest_service_logger.info(
+                    f"回测ID={backtest_id}: 跳过交易 | 时间={dt} | 目标仓位={final_signal.target_position:.4f} | 原因={trade_reason}"
+                )
+                prev_row = row
+                continue
+            
+            # 计算交易数量
+            delta_qty = self.decision_engine.calculate_trade_quantity(
+                final_signal.target_position, self.position_manager.current_qty, price, nav
+            )
+            
+            if abs(delta_qty) < 1e-9:
+                backtest_service_logger.info(
+                    f"回测ID={backtest_id}: 跳过交易 | 时间={dt} | 目标仓位={final_signal.target_position:.4f} | 原因=交易量太小"
+                )
+                prev_row = row
+                continue
+            
+            # 计算滑点
+            slippage = SlippageCalculator.calculate_dynamic_slippage(row, prev_row, base_slippage)
+            
+            # 执行价格
+            exec_price = price * (1 + slippage) if delta_qty > 0 else price * (1 - slippage)
+            
+            # 资金检查
+            if not self.position_manager.can_afford_trade(delta_qty, exec_price, fee_rate):
+                # 如果资金不足，尝试最大可能的交易量
+                if delta_qty > 0:  # 买入时调整到最大可买数量
+                    max_qty = self.position_manager.cash / (exec_price * (1 + fee_rate))
+                    delta_qty = min(delta_qty, max_qty)
+                    if delta_qty < 1e-9:
+                        self.logger.info("资金不足，跳过交易")
+                        backtest_service_logger.info(
+                            f"回测ID={backtest_id}: 跳过交易 | 时间={dt} | 目标仓位={final_signal.target_position:.4f} | 原因=资金不足"
+                        )
+                        prev_row = row
+                        continue
 
-    try:
-        if metrics:
-            metrics_df = pd.DataFrame(metrics)
-            log_info(f"准备写入metrics表: {backtest_id}, 指标数量: {len(metrics_df)}")
-            metrics_df.to_sql("metrics", con=engine, if_exists="append", index=False)
-            log_info(f"成功写入metrics表: {backtest_id}")
-    except Exception as e:
-        log_error(f"metrics表写入失败: {str(e)}")
-        # 打印详细的错误信息，包括堆栈跟踪
-        import traceback
-        log_error(f"错误堆栈: {traceback.format_exc()}")
-    
-    # 写入 equity_curve 表（放在 run_backtest 的数据库写入 try 块内，确保 engine 已创建）
-    try:
-        if nav_list:
-            equity_df = pd.DataFrame({
-                "run_id": backtest_id,
-                "datetime": pd.to_datetime(data["datetime"]),
-                "nav": nav_list,
-                # drawdown 已在 trades 中按 trade 记录，可用 trades 中的最大drawdown或重新计算
-                "drawdown": pd.Series(nav_list).cummax().subtract(pd.Series(nav_list)).div(pd.Series(nav_list).cummax()).fillna(0)
-            })
-            equity_df.to_sql("equity_curve", con=engine, if_exists="append", index=False)
-            log_info(f"成功写入 equity_curve: {len(equity_df)} 条")
-    except Exception as e:
-        log_error(f"写入 equity_curve 失败: {e}")
-
-    # 如果是网格增强策略，保存网格参数和级别
-    if grid_levels:
-        try:
-            # 检查grid_levels中的元素类型，确保是字典格式
-            if grid_levels and isinstance(grid_levels[0], dict):
-                # 提取字典中的price值和name值
-                grid_data = []
-                for idx, level in enumerate(grid_levels):
-                    # 确保level包含必要的字段
-                    if 'price' in level:
-                        grid_data.append({
-                            "run_id": backtest_id,
-                            "level": idx,
-                            "name": level.get('name', ''),
-                            "price": level['price']
-                        })
-                
-                if grid_data:
-                    grid_df = pd.DataFrame(grid_data)
-                    # 使用正确的表名和列名
-                    grid_df.to_sql("grid_levels", con=engine, if_exists="append", index=False)
-                    log_info(f"成功写入grid_levels: {len(grid_df)} 条")
-        except Exception as e:
-            log_error(f"写入grid_levels失败: {e}")
-            # 打印详细的错误信息，包括堆栈跟踪
-            import traceback
-            log_error(f"错误堆栈: {traceback.format_exc()}")
-
-    return {
-        "run_id": backtest_id, "code": code, "start": start, "end": end,
-        "strategy": strategy_name, "params": merged_params, "nav": nav_series,
-        "metrics": pd.DataFrame(metrics).set_index('metric_name')['metric_value'].to_dict() if metrics else {},
-        "signals": signals,
-        "grid_levels": grid_levels  # 返回网格级别数据
-    }
-
-def get_backtest_result(backtest_id: str):
-    from ..db import fetch_df
-    df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=backtest_id)
-    df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
-    
-    # 获取网格级别数据（如果存在）
-    try:
-        # 查询所有列，确保获取完整的数据结构
-        df_g = fetch_df("SELECT level, name, price FROM grid_levels WHERE run_id=:rid ORDER BY level", rid=backtest_id)
-        if not df_g.empty:
-            # 构建前端期望的字典格式
-            grid_levels = []
-            for _, row in df_g.iterrows():
-                grid_level = {'price': row['price']}
-                # 如果有name列，也添加进去
-                if 'name' in row and pd.notna(row['name']):
-                    grid_level['name'] = row['name']
-                grid_levels.append(grid_level)
-        else:
-            grid_levels = []
-    except Exception as e:
-        # 如果表不存在或查询失败，返回空列表
-        grid_levels = []
-        log_error(f"获取grid_levels失败: {e}")
+            # 执行交易
+            fee, realized_pnl = self.position_manager.execute_trade(delta_qty, exec_price, fee_rate)
+            
+            # 更新决策引擎状态
+            self.decision_engine.update_last_trade_bar(i)
+            
+            # 计算回撤
+            peak = max(nav_list)
+            drawdown = nav / peak - 1 if peak > 0 else 0
+            
+            # 创建交易记录
+            trade = TradeRecord(
+                run_id=backtest_id,
+                datetime=dt,
+                code=code,
+                side="buy" if delta_qty > 0 else "sell",
+                trade_type=final_signal.signal_type,
+                price=exec_price,
+                qty=delta_qty,
+                amount=abs(delta_qty * exec_price),
+                fee=fee,
+                avg_price=self.position_manager.avg_price,
+                nav=self.position_manager.get_nav(price),
+                drawdown=drawdown,
+                current_qty=self.position_manager.current_qty,
+                current_avg_price=self.position_manager.avg_price,
+                realized_pnl=realized_pnl,
+                close_price=price,
+                current_cash=self.position_manager.cash
+            )
+            
+            trades.append(trade)
+            executed_signals.append(final_signal)
+            self.logger.log_trade(trade)
+            backtest_service_logger.info(
+                f"回测ID={backtest_id}: 执行交易 | 时间={trade.datetime} | {trade.side} | "
+                f"价格={trade.price:.4f} | 数量={trade.qty:.4f} | 金额={trade.amount:.2f}")
+            
+            prev_row = row
         
-    return {'metrics': df_m.to_dict(orient='records'), 'equity': df_e.to_dict(orient='records'), 'grid_levels': grid_levels}
+        # 计算指标
+        backtest_service_logger.debug(f"开始计算回测指标: 交易数量={len(trades)}, 净值数据点数量={len(nav_list)}")
+        metrics = MetricsCalculator.calculate_performance_metrics(
+            nav_list, params.get("initial_capital", 100000), trades
+        )
+        
+        # 构建结果
+        nav_series = pd.Series(nav_list, index=pd.Index(data["datetime"], dtype='datetime64[ns]'))
+        
+        # 创建BacktestResult对象
+        result = BacktestResult(
+            run_id=backtest_id,
+            code=code,
+            start=params.get("start", ""),
+            end=params.get("end", ""),
+            strategy=strategy_name,
+            params=params,
+            nav=nav_series,
+            metrics=metrics,
+            signals=executed_signals,
+            grid_levels=grid_levels,
+            grid_parameters=grid_parameters
+        )
+        
+        backtest_service_logger.info(f"回测ID={backtest_id}: 信号处理完成，生成 {len(trades)} 条交易记录")
+        # 保存到数据库
+        self.db_manager.save_backtest_results(result, trades, nav_list, metrics)
+        
+        # 转换signals为Dashboard需要的格式：datetime(string)、side('buy'|'sell')、price(number)和qty(number)
+        formatted_signals = []
+        for i, signal in enumerate(executed_signals):
+            # 尝试查找与信号关联的交易
+            corresponding_trade = None
+            if i < len(trades):
+                corresponding_trade = trades[i]
+                
+            # 构建符合Dashboard要求的信号结构
+            signal_dict = {
+                'datetime': signal.datetime.isoformat(),  # 转换为字符串格式
+                'side': 'buy' if corresponding_trade and corresponding_trade.side == 'buy' else 'sell',
+                'price': float(corresponding_trade.price) if corresponding_trade else 0.0,
+                'qty': float(abs(corresponding_trade.qty)) if corresponding_trade else 0.0  # 使用绝对值确保qty为正数
+            }
+            formatted_signals.append(signal_dict)
+
+        # 直接返回结果
+        return {
+            "run_id": backtest_id,
+            "code": code,
+            "start": result.start,
+            "end": result.end,
+            "strategy": strategy_name,
+            "params": params,
+            "nav": nav_series,
+            "metrics": metrics,
+            "signals": formatted_signals,  # 使用格式化后的signals
+            "grid_levels": grid_levels,
+            "grid_parameters": grid_parameters,
+            "alerts": alerts
+        }
+
+# 主要对外接口
+def run_backtest(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
+    """运行回测的主入口函数"""
+    engine = BacktestEngine()
+    return engine.run_backtest(df, params, strategy_name)
+
+def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
+    """获取回测结果"""
+    try:
+        df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=backtest_id)
+        df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+        
+        # 直接获取网格级别数据
+        grid_levels = []
+        try:
+            df_g = fetch_df("SELECT level, name, price FROM grid_levels WHERE run_id=:rid ORDER BY level", rid=backtest_id)
+            if not df_g.empty:
+                for _, row in df_g.iterrows():
+                    grid_level = {'price': row['price']}
+                    if 'name' in row and pd.notna(row['name']):
+                        grid_level['name'] = row['name']
+                    grid_levels.append(grid_level)
+        except Exception:
+            pass
+        
+        # 获取signals数据
+        signals = []
+        try:
+            # 尝试从trades表获取交易数据作为信号数据
+            df_t = fetch_df("SELECT datetime, side, price, qty FROM trades WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+            if not df_t.empty:
+                for _, row in df_t.iterrows():
+                    signals.append({
+                        'datetime': str(row['datetime']),  # 转换为字符串格式
+                        'side': row['side'],
+                        'price': float(row['price']),
+                        'qty': float(abs(row['qty']))  # 使用绝对值确保qty为正数
+                    })
+        except Exception as e:
+            print(f"获取signals数据失败: {e}")
+        
+        # 构建返回结果 - 直接返回所有数据
+        return {
+            'metrics': df_m.to_dict(orient='records'),
+            'equity': df_e.to_dict(orient='records'),
+            'grid_levels': grid_levels,
+            'signals': signals  # 添加signals数据
+        }
+    except Exception as e:
+        print(f"获取回测结果失败: {e}")
+        # 错误情况下也直接返回所有字段的空列表/默认值
+        return {'metrics': [], 'equity': [], 'grid_levels': [], 'signals': []}
+        
+
+# 策略独立运行接口（用于信号可视化）
+def run_strategy_only(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
+    """
+    仅运行策略生成信号，不执行回测
+    用于策略开发和信号可视化
+    """
+    mod = StrategyLoader.load_strategy(strategy_name)
+    strategy_default_params = getattr(mod, "DEFAULT_PARAMS", {})
+    strategy_params = {**strategy_default_params, **params}
+    
+    # 调用策略的run方法
+    result = mod.run(df.copy(), strategy_params)
+    
+    # 确保grid_levels是前端可直接使用的字典列表
+    # 增加健壮性检查：处理各种可能的情况
+    if 'grid_levels' in result:
+        grid_levels = result['grid_levels']
+        
+        # 检查grid_levels是否为列表
+        if isinstance(grid_levels, list):
+            # 只有当列表不为空且第一个元素不是字典时才需要转换
+            if grid_levels and not isinstance(grid_levels[0], dict):
+                try:
+                    # 尝试转换GridLevel对象列表为纯字典列表
+                    converted_levels = []
+                    for level in grid_levels:
+                        if hasattr(level, 'name') and hasattr(level, 'price'):
+                            converted_levels.append({
+                                'name': getattr(level, 'name', ''),
+                                'price': getattr(level, 'price', 0),
+                                'type': getattr(level, 'level_type', 'grid') if hasattr(level, 'level_type') else 'grid'
+                            })
+                    result['grid_levels'] = converted_levels
+                except Exception as e:
+                    # 如果转换失败，记录警告并使用空列表
+                    backtest_service_logger.warning(f"转换grid_levels失败: {str(e)}")
+                    result['grid_levels'] = []
+        else:
+            # 如果不是列表，记录警告并使用空列表
+            backtest_service_logger.warning(f"grid_levels不是列表类型: {type(grid_levels).__name__}")
+            result['grid_levels'] = []
+    else:
+        # 如果不存在grid_levels键，添加空列表以保持一致性
+        result['grid_levels'] = []
+        
+    # 确保grid_parameters也存在，提供默认空字典
+    if 'grid_parameters' not in result:
+        result['grid_parameters'] = {}
+    
+    # 转换signals为Dashboard需要的格式：datetime(string)、side('buy'|'sell')、price(number)和qty(number)
+    if 'signals' in result:
+        signals = result['signals']
+        formatted_signals = []
+        
+        # 确保signals是列表类型
+        if isinstance(signals, list):
+            for signal in signals:
+                # 尝试从信号对象或字典中获取所需字段
+                if isinstance(signal, dict):
+                    # 从字典类型的信号中提取数据
+                    datetime_str = signal.get('datetime', '')
+                    if isinstance(datetime_str, (pd.Timestamp, datetime)):
+                        datetime_str = datetime_str.isoformat()
+                    elif not isinstance(datetime_str, str):
+                        datetime_str = str(datetime_str)
+                        
+                    # 确定side（买入或卖出）
+                    target_position = signal.get('target_position', 0)
+                    current_position = signal.get('current_position', 0) if 'current_position' in signal else 0
+                    side = 'buy' if target_position > current_position else 'sell'
+                    
+                    # 获取价格和数量
+                    price = float(signal.get('price', 0.0))
+                    qty = float(abs(signal.get('qty', 0.0))) if 'qty' in signal else 0.0
+                else:
+                    # 从对象类型的信号中提取数据
+                    datetime_obj = getattr(signal, 'datetime', None)
+                    datetime_str = datetime_obj.isoformat() if datetime_obj else ''
+                    
+                    # 确定side（买入或卖出）
+                    target_position = getattr(signal, 'target_position', 0)
+                    current_position = getattr(signal, 'current_position', 0) if hasattr(signal, 'current_position') else 0
+                    side = 'buy' if target_position > current_position else 'sell'
+                    
+                    # 获取价格和数量（对于策略生成的信号，可能没有实际的价格和数量，这里使用默认值）
+                    price = float(getattr(signal, 'price', 0.0))
+                    qty = float(abs(getattr(signal, 'qty', 0.0))) if hasattr(signal, 'qty') else 0.0
+                    
+                # 构建符合Dashboard要求的信号结构
+                formatted_signals.append({
+                    'datetime': datetime_str,
+                    'side': side,
+                    'price': price,
+                    'qty': qty
+                })
+        
+        # 更新result中的signals为格式化后的版本
+        result['signals'] = formatted_signals
+    
+    return result

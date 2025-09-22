@@ -7,22 +7,48 @@ import hashlib
 import time
 import logging
 import os
+import yaml
 import concurrent.futures
 
 # 配置日志
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Redis配置
-REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
-REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
-REDIS_DB = int(os.environ.get('REDIS_DB', 0))
+# 加载数据库配置
+def load_db_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    加载数据库配置，包括Redis配置
+    优先级：参数 > 环境变量 DB_CONFIG > 默认路径
+    """
+    path = config_path or os.environ.get("DB_CONFIG", "config/db_config.yaml")
+    
+    # 确保配置文件路径是绝对路径
+    if not os.path.isabs(path):
+        # 获取项目根目录
+        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        # 构建相对于项目根目录的绝对路径
+        path = os.path.join(current_dir, "backend", path)
+    
+    with open(path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    
+    return raw
+
+# 加载配置
+_config = load_db_config()
+
+# Redis配置 - 从配置文件获取，环境变量覆盖
+REDIS_HOST = os.environ.get('REDIS_HOST', _config.get('redis', {}).get('host', 'localhost'))
+REDIS_PORT = int(os.environ.get('REDIS_PORT', _config.get('redis', {}).get('port', 6379)))
+REDIS_DB = int(os.environ.get('REDIS_DB', _config.get('redis', {}).get('db', 0)))
 
 # Redis连接管理类
 class RedisManager:
     def __init__(self):
         self.client = None
         self.is_redis_available = False
+        self.last_connection_attempt = 0
+        self.retry_interval = 30  # 连接重试间隔，单位：秒
         self.connect()
     
     def connect(self):
@@ -47,12 +73,16 @@ class RedisManager:
         except Exception as e:
             self.client = {}
             self.is_redis_available = False
-            logger.error(f"Redis连接失败，将使用内存缓存: {e}")
+            # 记录连接失败，但使用WARNING级别而不是ERROR级别，减少日志噪音
+            logger.warning(f"Redis连接失败，将使用内存缓存: {e}")
     
     def get_client(self):
-        # 如果Redis之前连接失败，尝试重新连接
+        # 如果Redis之前连接失败，在指定间隔后尝试重新连接
         if not self.is_redis_available and isinstance(self.client, dict):
-            self.connect()
+            current_time = time.time()
+            if current_time - self.last_connection_attempt >= self.retry_interval:
+                self.last_connection_attempt = current_time
+                self.connect()
         return self.client
 
 # 使用单例模式

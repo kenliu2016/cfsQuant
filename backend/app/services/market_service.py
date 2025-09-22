@@ -2,6 +2,7 @@ from ..db import fetch_df
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -50,39 +51,16 @@ def aggregate_kline_data(df, interval):
             # 设置datetime为索引
             group = group.set_index('datetime')
             
-            # 创建前端传入interval到聚合函数所需interval的映射表
-            interval_mapping = {
-                "1m": "1T",  # 1分钟
-                "5m": "5T",  # 5分钟
-                "15m": "15T",  # 15分钟
-                "30m": "30T",  # 30分钟
-                "60m": "H",  # 60分钟
-                "1h": "H",   # 1小时
-                "4h": "4H",  # 4小时
-                "1D": "D",   # 1天
-                "1W": "W",   # 1周
-                "1M": "ME",   # 1月
-                # 可以根据需要添加更多映射
-            }
+            # 使用规则替换interval中的m为min，M为ME
+            freq = interval
             
-            # 检查传入的interval是否在映射表中
-            if interval in interval_mapping:
-                # 使用映射后的interval
-                processed_interval = interval_mapping[interval]
-            else:
-                # 对于不在映射表中的interval，直接使用
-                processed_interval = interval
-            
-            # 转换弃用的时间频率格式
-            if 'T' in processed_interval:
-                # 处理分钟频率，如5T -> 5min
-                freq = processed_interval.replace('T', 'min')
-            elif 'H' in processed_interval:
-                # 处理小时频率，如H -> h, 4H -> 4h
-                freq = processed_interval.lower()
-            else:
-                # 其他频率保持不变 (D, W, M) - 'M'在pandas中表示月份
-                freq = processed_interval
+            # 将m替换为min
+            if 'm' in freq:
+                # 确保是小写的m（分钟）而不是其他情况
+                freq = freq.lower().replace('m', 'min')
+            # 将M替换为ME
+            if 'M' in freq:
+                freq = freq.replace('M', 'ME')
             
             # 重新采样并聚合
             resampled = group.resample(freq).agg(agg_dict).dropna()

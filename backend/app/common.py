@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 from pathlib import Path
 
 
@@ -25,9 +25,8 @@ def setup_logger_with_file_handler(
     返回:
         配置好的日志记录器实例
     """
-    # 获取项目根目录（假设此文件位于 backend/app/common.py）
-    current_file = Path(__file__).resolve()
-    project_root = current_file.parents[2]  # 上两级目录，到达项目根目录
+    # 直接使用绝对路径设置项目根目录，确保日志文件位置正确
+    project_root = '/Users/aaronkliu/Documents/project/cfsQuant'
     
     # 创建日志目录（如果不存在）
     logs_directory = os.path.join(project_root, log_dir)

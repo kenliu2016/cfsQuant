@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+import pandas as pd
 from ..services.backtest_service import run_backtest, get_backtest_result
 from ..services.market_service import get_candles
 from ..schemas import BacktestRequest, BacktestResp
@@ -31,11 +32,19 @@ async def backtest(req: BacktestRequest):
     
     # 从结果中提取run_id作为backtest_id
     backtest_id = backtest_result["run_id"] if isinstance(backtest_result, dict) and "run_id" in backtest_result else str(backtest_result)
+    
+    # 直接从backtest_result获取已经格式化好的signals - 不再进行额外转换
+    # 在backtest_service.py中已经确保signals符合Dashboard所需的格式
+    signals = backtest_result.get("signals", [])
+    
+    # 获取网格级别数据 - 直接从结果中获取，不再通过auxiliary_data中间层
+    grid_levels = backtest_result.get("grid_levels", [])
+    
     return {
         "backtest_id": backtest_id,
         "status": "finished",
-        "signals": backtest_result.get("signals", []),  # 添加这一行
-        "grid_levels": backtest_result.get("grid_levels", [])  # 添加这一行
+        "signals": signals,  # 直接透传格式化后的signals
+        "grid_levels": grid_levels
     }
 
 @router.get("/backtest/{backtest_id}/results")
