@@ -8,6 +8,8 @@ Database: backend/config/db_config.yaml contains default Postgres settings.
 在后台启动Redis
 redis-server --daemonize yes 
 
+brew services restart postgresql
+
 
 启动后端：
 cd backend
@@ -21,10 +23,10 @@ npm run dev
 
 
 # 每分钟抓分钟线
-* * * * * /usr/bin/python3 /path/to/fetch_klines.py --interval 1m >> /var/log/fetch_klines.log 2>&1
+* * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1m >> /var/log/fetch_klines.log 2>&1
 
 # 每小时抓小时线
-5 * * * * /usr/bin/python3 /path/to/fetch_klines.py --interval 1h >> /var/log/fetch_klines.log 2>&1
+5 * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1h >> /var/log/fetch_klines.log 2>&1
 
 # 每天抓日线
-5 0 * * * /usr/bin/python3 /path/to/fetch_klines.py --interval 1d >> /var/log/fetch_klines.log 2>&1
+5 0 * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1d >> /var/log/fetch_klines.log 2>&1
