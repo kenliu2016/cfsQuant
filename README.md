@@ -18,3 +18,13 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
+
+
+# 每分钟抓分钟线
+* * * * * /usr/bin/python3 /path/to/fetch_klines.py --interval 1m >> /var/log/fetch_klines.log 2>&1
+
+# 每小时抓小时线
+5 * * * * /usr/bin/python3 /path/to/fetch_klines.py --interval 1h >> /var/log/fetch_klines.log 2>&1
+
+# 每天抓日线
+5 0 * * * /usr/bin/python3 /path/to/fetch_klines.py --interval 1d >> /var/log/fetch_klines.log 2>&1
