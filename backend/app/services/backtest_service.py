@@ -40,7 +40,7 @@ DEFAULT_BACKTEST_PARAMS = {
     "min_trade_qty": 0.01,           # 最小交易数量
     "min_position_change": 0.05,     # 最小仓位变动阈值
     "lot_size": 0.0001,              # 最小交易单位
-    "cooldown_bars": 1,              # 交易冷却期（K线数）
+    "cooldown_bars": 0,              # 交易冷却期（K线数）
     "stop_loss_pct": 0.25,           # 止损百分比
     "take_profit_pct": 0.15,         # 止盈百分比
     "max_position": 1.0,             # 最大仓位比例
@@ -641,7 +641,7 @@ class BacktestEngine:
         strategy_params = {**strategy_default_params, **params}
         
         self.logger.info(f"加载策略: {strategy_name}, 标的: {params.get('code', '')}")
-        
+        backtest_service_logger.info(f"策略参数: {strategy_params}")
         # 运行策略
         try:
             result = mod.run(df.copy(), strategy_params)
@@ -754,6 +754,9 @@ class BacktestEngine:
             
             if not should_trade:
                 self.logger.info(f"跳过交易: {trade_reason}")
+                backtest_service_logger.info(
+                    f"回测ID={backtest_id}: 跳过交易 | 时间={dt} | 目标仓位={final_signal.target_position:.4f} | 原因={trade_reason}"
+                )
                 prev_row = row
                 continue
             
@@ -763,6 +766,9 @@ class BacktestEngine:
             )
             
             if abs(delta_qty) < 1e-9:
+                backtest_service_logger.info(
+                    f"回测ID={backtest_id}: 跳过交易 | 时间={dt} | 目标仓位={final_signal.target_position:.4f} | 原因=交易量太小"
+                )
                 prev_row = row
                 continue
             
@@ -780,6 +786,9 @@ class BacktestEngine:
                     delta_qty = min(delta_qty, max_qty)
                     if delta_qty < 1e-9:
                         self.logger.info("资金不足，跳过交易")
+                        backtest_service_logger.info(
+                            f"回测ID={backtest_id}: 跳过交易 | 时间={dt} | 目标仓位={final_signal.target_position:.4f} | 原因=资金不足"
+                        )
                         prev_row = row
                         continue
 

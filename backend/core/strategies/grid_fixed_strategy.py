@@ -36,11 +36,12 @@ grid_strategy_logger = setup_logger_with_file_handler(
 DEFAULT_PARAMS = {
     "H_price": None,        # 网格最高价
     "L_price": None,        # 网格最低价
-    "N": 10,               # 网格数量
+    "N": 6,               # 网格数量
     "R": 0.5,              # 最大回撤
+    "F": 1000000,          # 总资金
     "atr_window": 14,      # ATR计算窗口
-    "per_grid_amount": None,   # 每格固定金额
-    "stop_loss_price": None,   # 止损价格
+    "per_grid_amount": 100000,   # 每格固定金额
+    "stop_loss_price": None,     # 止损价格
 }
 
 @dataclass
