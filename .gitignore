@@ -36,7 +36,8 @@ pids
 *.pid.lock
 
 # Database files
-*.db
+*.rdb
+dump.rdb
 
 # Coverage directory used by tools like istanbul
 coverage/
