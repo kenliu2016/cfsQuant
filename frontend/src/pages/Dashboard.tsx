@@ -128,7 +128,7 @@ const Dashboard: React.FC = () => {
   const fetchStrategiesFromAPI = async () => {
 
     try {
-      const response = await client.get('/strategies');
+      const response = await client.get('/api/strategies');
       // 假设后端返回的数据结构是 { rows: [{ id: string, name: string }] }
       const strategies = response.data.rows || response.data || [];
       setStrategiesData(strategies);

@@ -42,7 +42,7 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
       }
       
       // 2. 缓存过期或不存在时，从API获取数据
-      const res = await client.get('/strategies')
+      const res = await client.get('/api/strategies')
       const rows = res.data.rows || []
       setStrategies(rows)
       setTree(rows.map((r: {name: string, description?: string})=>({
@@ -239,7 +239,7 @@ export default function StrategyPage(){
     setCurrent(strategy)
     setCodeLoading(true)
     try {
-      const codeRes = await client.get(`/strategies/${strategy.name}/code`)
+      const codeRes = await client.get(`/api/strategies/${strategy.name}/code`)
       setCode(codeRes.data.code || '')
     } catch (error) {
       console.error('加载策略代码失败:', error)
@@ -252,7 +252,7 @@ export default function StrategyPage(){
 
   const onSaveCode = async () => {
     if (!current) return
-    await client.post(`/strategies/${current.name}/code`, { code })
+    await client.post(`/api/strategies/${current.name}/code`, { code })
     message.success('已保存')
     // 触发策略树刷新
     refreshStrategyTree()

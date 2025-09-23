@@ -10,8 +10,8 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-# 配置日志 - 只显示WARNING及以上级别的信息，减少调试输出
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# 配置日志 - 显示DEBUG及以上级别的信息，便于调试
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # 创建应用生命周期管理器
@@ -100,6 +100,7 @@ app.include_router(runs.router)
 app.include_router(export.router)
 
 app.include_router(tuning.router)
+app.include_router(tuning.available_router)
 app.include_router(trades.router)
 
 def prewarm_market_cache():

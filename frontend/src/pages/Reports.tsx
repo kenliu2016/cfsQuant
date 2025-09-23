@@ -7,6 +7,11 @@ import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
 import { ReloadOutlined, DownloadOutlined } from '@ant-design/icons'
 
+// 定义网格线数据类型
+interface GridLevel {
+  price: number;
+  name: string;
+}
 
 // 格式化日期时间函数
 const formatDateTime = (dateString: string) => {
@@ -14,10 +19,8 @@ const formatDateTime = (dateString: string) => {
   return dayjs(dateString).format('YYYY-MM-DD HH:mm:ss')
 }
 
-
-
 // 创建K线图配置的辅助函数
-const createKlineChartConfig = (klineData: any[], tradesData: any[]) => {
+const createKlineChartConfig = (klineData: any[], tradesData: any[], gridLevels: GridLevel[]) => {
   // 判断数据周期类型（分钟级、日线、周线、月线）
   const determineTimePeriod = () => {
     if (klineData.length < 2) return 'day'; // 默认日线
@@ -94,107 +97,107 @@ const createKlineChartConfig = (klineData: any[], tradesData: any[]) => {
   const defaultZoom = getDefaultZoomRange();
   
   // 定义信号类型为元组
-    type SignalData = [string, number, number, string]; // [时间, 价格, 数量, 方向]
-    
-    // 处理交易数据，提取买卖信号
-    const buySignals: SignalData[] = [];
-    const sellSignals: SignalData[] = [];
-    
-    // 确保tradesData是数组
-    if (Array.isArray(tradesData)) {
-      tradesData.forEach(trade => {
-        if (!trade || typeof trade !== 'object') return;
-        
-        // 提取必要的字段
-        const { side, datetime, price, qty } = trade;
-        if (!side || !datetime || typeof price !== 'number' || typeof qty !== 'number') {
-          return;
-        }
-        
-        // 找到对应的K线数据点的索引
-        const klineIndex = klineData.findIndex(item => {
-          // 比较日期时间，由于可能存在精度问题，使用字符串比较或时间戳比较
-          const klineTime = new Date(item.datetime).getTime();
-          const tradeTime = new Date(datetime).getTime();
-          // 认为交易发生在K线对应的时间段内
-          return Math.abs(tradeTime - klineTime) < 3600000; // 误差在1小时内
-        });
-        
-        if (klineIndex >= 0) {
-          // 构建信号数据点并指定类型
-          const signalData: SignalData = [dates[klineIndex].full, price, qty, side];
-          
-          if (side.toLowerCase() === 'buy') {
-            buySignals.push(signalData);
-          } else if (side.toLowerCase() === 'sell') {
-            sellSignals.push(signalData);
-          }
-        }
+  type SignalData = [string, number, number, string]; // [时间, 价格, 数量, 方向]
+  
+  // 处理交易数据，提取买卖信号
+  const buySignals: SignalData[] = [];
+  const sellSignals: SignalData[] = [];
+  
+  // 确保tradesData是数组
+  if (Array.isArray(tradesData)) {
+    tradesData.forEach(trade => {
+      if (!trade || typeof trade !== 'object') return;
+      
+      // 提取必要的字段
+      const { side, datetime, price, qty } = trade;
+      if (!side || !datetime || typeof price !== 'number' || typeof qty !== 'number') {
+        return;
+      }
+      
+      // 找到对应的K线数据点的索引
+      const klineIndex = klineData.findIndex(item => {
+        // 比较日期时间，由于可能存在精度问题，使用字符串比较或时间戳比较
+        const klineTime = new Date(item.datetime).getTime();
+        const tradeTime = new Date(datetime).getTime();
+        // 认为交易发生在K线对应的时间段内
+        return Math.abs(tradeTime - klineTime) < 3600000; // 误差在1小时内
       });
-    }
-    
-    // 合并所有买卖信号并按时间排序
-    // 确保严格按照时间先后顺序排列，这对于正确连接信号点至关重要
-    const allSignals = [...buySignals, ...sellSignals].sort((a, b) => {
-      const timeA = new Date(a[0]).getTime();
-      const timeB = new Date(b[0]).getTime();
-      // 严格按时间戳排序，确保连接顺序正确
-      return timeA - timeB;
+      
+      if (klineIndex >= 0) {
+        // 构建信号数据点并指定类型
+        const signalData: SignalData = [dates[klineIndex].full, price, qty, side];
+        
+        if (side.toLowerCase() === 'buy') {
+          buySignals.push(signalData);
+        } else if (side.toLowerCase() === 'sell') {
+          sellSignals.push(signalData);
+        }
+      }
     });
+  }
+  
+  // 合并所有买卖信号并按时间排序
+  // 确保严格按照时间先后顺序排列，这对于正确连接信号点至关重要
+  const allSignals = [...buySignals, ...sellSignals].sort((a, b) => {
+    const timeA = new Date(a[0]).getTime();
+    const timeB = new Date(b[0]).getTime();
+    // 严格按时间戳排序，确保连接顺序正确
+    return timeA - timeB;
+  });
 
-    // 构建ECharts配置
-    const option = {
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: {
-          type: 'cross',
-          lineStyle: {
-            color: '#999'
-          },
-          label: {
-            backgroundColor: '#6a7985'
-          }
+  // 构建ECharts配置
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'cross',
+        lineStyle: {
+          color: '#999'
         },
-        formatter: function(params: any[]) {
-          if (!params || params.length === 0) return '';
-          
-          // 查找K线数据
-          let klineData = params.find(param => param.seriesName === 'K线');
-          
-          // 查找交易信号数据
-          const signalParams = params.filter(param => 
-            param.seriesName === '交易信号'
-          );
-          
-          // 如果没有K线数据但有信号数据，尝试根据信号的时间找到对应的K线数据
-          if (!klineData && signalParams.length > 0) {
-            const signalTime = signalParams[0].axisValue;
-            klineData = params.find(param => param.axisValue === signalTime && param.seriesName === 'K线');
-          }
-          
-          // 如果有交易信号数据但没有K线数据，直接显示交易信号信息
-          if (!klineData && signalParams.length > 0) {
-            let result = signalParams[0].axisValue + '<br/>';
-            signalParams.forEach(param => {
-              const signalIndex = param.dataIndex;
-              const signal = allSignals[signalIndex];
-              
-              if (signal) {
-                const side = signal[3];
-                const qty = signal[2];
-                const price = signal[1];
-                const signalType = side.toLowerCase() === 'buy' ? '买入' : '卖出';
-                const signalColor = side.toLowerCase() === 'buy' ? '#14b143' : '#ef232a';
-                result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + price + '</span><br/>';
-                result += '<span style="color: ' + signalColor + '">' + signalType + '数量: ' + qty + '</span><br/>';
-              }
-            });
-            return result;
-          }
-          
-          if (!klineData) return '';
-          
-          let result = klineData.axisValue + '<br/>';
+        label: {
+          backgroundColor: '#6a7985'
+        }
+      },
+      formatter: function(params: any[]) {
+        if (!params || params.length === 0) return '';
+        
+        // 查找K线数据
+        let klineData = params.find(param => param.seriesName === 'K线');
+        
+        // 查找交易信号数据
+        const signalParams = params.filter(param => 
+          param.seriesName === '交易信号'
+        );
+        
+        // 如果没有K线数据但有信号数据，尝试根据信号的时间找到对应的K线数据
+        if (!klineData && signalParams.length > 0) {
+          const signalTime = signalParams[0].axisValue;
+          klineData = params.find(param => param.axisValue === signalTime && param.seriesName === 'K线');
+        }
+        
+        // 如果有交易信号数据但没有K线数据，直接显示交易信号信息
+        if (!klineData && signalParams.length > 0) {
+          let result = signalParams[0].axisValue + '<br/>';
+          signalParams.forEach(param => {
+            const signalIndex = param.dataIndex;
+            const signal = allSignals[signalIndex];
+            
+            if (signal) {
+              const side = signal[3];
+              const qty = signal[2];
+              const price = signal[1];
+              const signalType = side.toLowerCase() === 'buy' ? '买入' : '卖出';
+              const signalColor = side.toLowerCase() === 'buy' ? '#14b143' : '#ef232a';
+              result += '<span style="color: ' + signalColor + '">' + signalType + '价格: ' + price + '</span><br/>';
+              result += '<span style="color: ' + signalColor + '">' + signalType + '数量: ' + qty + '</span><br/>';
+            }
+          });
+          return result;
+        }
+        
+        if (!klineData) return '';
+        
+        let result = klineData.axisValue + '<br/>';
         result += '<span style="color: #ef232a">开盘: ' + klineData.data[1] + '</span><br/>';
         const closeColor = klineData.data[2] >= klineData.data[1] ? '14b143' : 'ef232a';
         result += '<span style="color: #' + closeColor + '">收盘: ' + klineData.data[2] + '</span><br/>';
@@ -328,6 +331,52 @@ const createKlineChartConfig = (klineData: any[], tradesData: any[]) => {
         barMaxWidth: 50, // 最大宽度限制
         barMinWidth: 1 // 最小宽度限制
       },
+      // 网格线标记系列
+      {
+        name: '网格线',
+        type: 'line',
+        data: [], // 空数据，只显示markLine
+        showSymbol: false,
+        lineStyle: {
+          color: 'transparent' // 隐藏主线条
+        },
+        markLine: {
+          silent: true,
+          symbol: ['none', 'none'], // 去掉箭头
+          lineStyle: {
+            color: '#6C6C8A',
+            type: 'dashed',
+            width: 1
+          },
+          data: gridLevels.map(level => {
+            // 根据网格线名称确定颜色
+            let lineColor = '#1890ff'; // 默认蓝色（价格中枢）
+            if (level.name.includes('卖出')) {
+              lineColor = '#ef232a'; // 红色（卖出线）
+            } else if (level.name.includes('买入') || level.name.includes('止损')) {
+              lineColor = '#14b143'; // 绿色（买入线）
+            }
+            
+            // 添加水平线配置
+            return {
+              yAxis: level.price,
+              lineStyle: {
+                color: lineColor,
+                type: 'dashed',
+                width: 1
+              },
+              label: {
+                formatter: `${level.name}: ${level.price.toFixed(2)}`,
+                position: 'insideStartTop',
+                distance: 5,
+                color: lineColor,
+                fontSize: 10
+              }
+            };
+          })
+        }
+      },
+      
       // 合并的交易信号系列
       {
         name: '交易信号',
@@ -415,8 +464,7 @@ const createKlineChartConfig = (klineData: any[], tradesData: any[]) => {
             return option.tooltip.formatter([params]);
           }
         }
-      },
-
+      }
     ],
     animation: true,
     animationDuration: 1000,
@@ -459,7 +507,9 @@ const Reports = () => {
   const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [currentRunKlineData, setCurrentRunKlineData] = useState<any[]>([])
-  // 保存当前查看的回测ID
+  // 网格线数据
+  const [currentRunGridLevels, setCurrentRunGridLevels] = useState<GridLevel[]>([])
+
   const [currentRunId, setCurrentRunId] = useState<string>('')
   // 分页状态
   const [currentPage, setCurrentPage] = useState<number>(1)
@@ -494,7 +544,7 @@ const Reports = () => {
       }
       
 
-      const res = await client.get('/runs', {
+      const res = await client.get('/api/runs', {
         params: params
       })
       
@@ -505,7 +555,7 @@ const Reports = () => {
       // 仅在初始加载或请求刷新时提取唯一的标的和策略
       if (refreshFilter || runs.length === 0) {
         // 获取所有的回测数据来提取唯一的标的和策略
-        const allRunsRes = await client.get('/runs', { params: { pageSize: 1000 } })
+        const allRunsRes = await client.get('/api/runs', { params: { pageSize: 1000 } })
         const symbols: string[] = Array.from(new Set(allRunsRes.data.rows.map((run: any) => run.code)))
         const strategies: string[] = Array.from(new Set(allRunsRes.data.rows.map((run: any) => run.strategy)))
         
@@ -524,12 +574,13 @@ const Reports = () => {
   // 加载回测详情
   const loadRunDetail = async (runId: string) => {
     try {
-      const res = await client.get('/runs/' + runId)
+      const res = await client.get('/api/runs/' + runId)
       setCurrentRunDetail(res.data.info || {})
-      setCurrentRunEquity(res.data.equity || [])
       setCurrentRunTrades(res.data.trades || [])
-      setCurrentRunId(runId) // 保存当前查看的回测ID
       setDetailModalVisible(true)
+      
+      // 加载网格线数据
+      await loadGridLevels(runId)
       
       // 同时加载K线数据
       if (res.data.info && res.data.info.code) {
@@ -540,7 +591,6 @@ const Reports = () => {
         // 如果interval不存在或不在有效列表中，使用默认值1D
         if (!interval || !validIntervals.includes(interval)) {
           interval = '1m';
-
         }
         
         await loadKlineData(res.data.info.code, res.data.info.start_time, res.data.info.end_time, interval)
@@ -551,11 +601,30 @@ const Reports = () => {
     }
   }
 
+  // 加载网格线数据
+  const loadGridLevels = async (runId: string) => {
+    try {
+      const gridRes = await client.get(`/api/runs/grid_levels?run_id=${runId}`)
+      console.log('Grid levels data:', gridRes.data); // 保留调试日志
+      // 只有当API返回有效数据且数组不为空时才设置网格线
+      if (gridRes.data && Array.isArray(gridRes.data) && gridRes.data.length > 0) {
+        setCurrentRunGridLevels(gridRes.data)
+      } else {
+        // 无数据时设置为空数组，不显示网格线
+        setCurrentRunGridLevels([])
+      }
+    } catch (error) {
+      console.error('加载网格线数据失败:', error)
+      // 错误时也设置为空数组，不显示网格线
+      setCurrentRunGridLevels([])
+    }
+  }
+
   // 加载K线数据
   const loadKlineData = async (code: string, start: string, end: string, interval: string) => {
     try {
       // 使用客户端发送请求
-      const res = await client.get('/market/candles', {
+      const klineRes = await client.get('/market/candles', {
         params: {
           code,
           start,
@@ -565,11 +634,11 @@ const Reports = () => {
       })
       
       // 验证数据结构
-      if (res.data && Array.isArray(res.data.rows)) {
-        if (res.data.rows.length > 0) {
+      if (klineRes.data && Array.isArray(klineRes.data.rows)) {
+        if (klineRes.data.rows.length > 0) {
           // 检查第一条数据的字段结构
         }
-        setCurrentRunKlineData(res.data.rows)
+        setCurrentRunKlineData(klineRes.data.rows)
       } else {
         // 生成模拟数据以便图表能够渲染
         const mockData = generateMockKlineData(code, start, end, interval)
@@ -648,7 +717,6 @@ const Reports = () => {
   }
 
 
-
   // 准备带有买卖点的K线图数据
   const prepareKlineWithTradesData = useMemo(() => {   
     // 如果没有数据，返回null让组件显示加载状态或提示信息
@@ -657,7 +725,7 @@ const Reports = () => {
     }
 
     // 验证数据格式
-    const validRows = currentRunKlineData.filter((item, _index) => {
+    const validRows = currentRunKlineData.filter((item: any, _index: number) => {
       if (!item || typeof item !== 'object') {
         return false;
       }
@@ -706,13 +774,13 @@ const Reports = () => {
           code: 'BTCUSDT'
         });
       }
-      // 创建并返回K线图配置，传递空的交易数据
-    return createKlineChartConfig(simpleMockData, []);
+      // 创建并返回K线图配置，传递交易数据和网格线数据
+    return createKlineChartConfig(simpleMockData, currentRunTrades, currentRunGridLevels);
     }
     
-    // 创建并返回K线图配置，同时传递交易数据
-    return createKlineChartConfig(validRows, currentRunTrades);
-  }, [currentRunKlineData, currentRunTrades]);
+    // 创建并返回K线图配置，同时传递交易数据和网格线数据
+    return createKlineChartConfig(validRows, currentRunTrades, currentRunGridLevels);
+  }, [currentRunKlineData, currentRunTrades, currentRunGridLevels]);
 
   // 标的搜索处理
   const handleSymbolSearch = async (value: string) => {
@@ -1123,8 +1191,7 @@ const Reports = () => {
                       />
                     </Card>
                   </Space>
-                  
-                  {/* 第二行：最终资金、总收益、交易次数、最大回撤 */}
+                   {/* 第二行：最终资金、总收益、交易次数、最大回撤 */}
                   <Space style={{width: '100%', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16}}>
                     <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
                       <Statistic title="最终资金" value={currentRunDetail.final_capital} precision={2} />
@@ -1161,23 +1228,8 @@ const Reports = () => {
                 </Space>
               </div>
             </Tabs.TabPane>
-
-
-
-            {/* 交易图表 */}
-            <Tabs.TabPane tab="K线交易图" key="4">
-              <div style={{padding: 24, height: 600}}>
-                {prepareKlineWithTradesData ? (
-                  <ReactECharts option={prepareKlineWithTradesData} style={{height: '100%'}} />
-                ) : (
-                  <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}>
-                    正在加载K线数据...
-                  </div>
-                )}
-              </div>
-            </Tabs.TabPane>
-
-            {/* 交易记录 */}
+            
+             {/* 交易记录 */}
             <Tabs.TabPane tab="交易记录" key="5">
                 <Card style={{borderRadius: '8px', border: '1px solid #f0f0f0', boxShadow: 'none', overflow: 'auto'}}>
                   <Table 
@@ -1264,8 +1316,26 @@ const Reports = () => {
                   .ant-table-pagination { margin-top: 8px; margin-bottom: 8px; }
                 `}</style>
             </Tabs.TabPane>
-          </Tabs>        )}
-      </Modal>    </div>
+            
+            {/* K线交易图 */}
+            <Tabs.TabPane tab="K线交易图" key="4">
+              <div style={{ height: '600px', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {prepareKlineWithTradesData ? (
+                  <ReactECharts 
+                    option={prepareKlineWithTradesData} 
+                    style={{ height: '100%', width: '100%' }} 
+                  />
+                ) : (
+                  <div style={{ textAlign: 'center', color: '#8c8c8c' }}>
+                    加载中...
+                  </div>
+                )}
+              </div>
+            </Tabs.TabPane>
+          </Tabs>
+        )}
+      </Modal>
+    </div>
   )
 }
 

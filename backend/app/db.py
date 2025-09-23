@@ -498,13 +498,21 @@ def _create_table_sql_from_df(df, table_name):
     return f"CREATE TABLE {table_name} ({', '.join(columns)})"
 
 
-def execute(query: str, config_path: Optional[str] = None):
+def execute(query: str, config_path: Optional[str] = None, **kwargs):
     """执行SQL语句（适合非查询语句，如INSERT、UPDATE、DELETE等）"""
+    try:
+        from sqlalchemy import text
+    except ImportError:
+        raise ImportError("未安装必要的包，请先执行: pip install sqlalchemy")
+        
     engine = get_engine(config_path)
     with engine.connect() as conn:
         with conn.begin() as transaction:
             try:
-                conn.execute(query)
+                if kwargs:
+                    conn.execute(text(query), kwargs)
+                else:
+                    conn.execute(query)
                 transaction.commit()
             except Exception as e:
                 transaction.rollback()

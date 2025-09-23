@@ -3,6 +3,7 @@ import dayjs from 'dayjs'
 import { useState, useEffect, useCallback } from 'react'
 import { Form, Row, Col, Card, Button, Select, InputNumber, List, Progress, message, Tooltip, Input, DatePicker } from 'antd'
 import { InfoCircleOutlined, SettingOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 
 // 定义参数配置类型
 interface ParamConfig {
@@ -26,13 +27,14 @@ interface RangeConfig {
 export default function Tuning(){
   const [form] = Form.useForm()
   const [task, setTask] = useState<string | null>(null)
-  const [status, setStatus] = useState<{status?: string, total?: number, finished?: number, runs?: any[]} | null>(null)
+  const [status] = useState<{status?: string, total?: number, finished?: number, runs?: any[]} | null>(null)
   const [timer, setTimer] = useState<any>(null)
   const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([])
   const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([])
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [strategyParams, setStrategyParams] = useState<{[key: string]: ParamConfig}>({})
+  const navigate = useNavigate()
 
   // 解析CSV文件加载标的数据
   const loadSymbols = async () => {
@@ -69,7 +71,7 @@ export default function Tuning(){
   // 加载策略列表
   const loadStrategies = async () => {
     try {
-      const response = await client.get('/strategies');
+      const response = await client.get('/api/strategies');
       const strategyList = response.data.rows || [];
       
       const strategyData = strategyList.map((strategy: any) => ({
@@ -87,7 +89,7 @@ export default function Tuning(){
   // 获取策略参数
   const loadStrategyParams = async (strategyName: string) => {
     try {
-      const response = await client.get('/strategies');
+      const response = await client.get('/api/strategies');
       const strategyList = response.data.rows || [];
       const strategy = strategyList.find((s: any) => s.name === strategyName);
       
@@ -221,47 +223,19 @@ export default function Tuning(){
     };
     
     try {
-      const r = await client.post('/tuning', payload)
-      const task_id = r.data.task_id
-      setTask(task_id)
-      message.success('任务已提交: ' + task_id)
-      
-      // 清除之前可能存在的定时器
-      if (timer) {
-        clearInterval(timer);
-        setTimer(null);
-      }
-      
-      // start polling
-      const t = setInterval(async ()=>{
-        try {
-          const s = await client.get('/tuning/' + task_id)
-          
-          // 检查是否有错误状态
-          if (s.data && s.data.error) {
-            message.error(`任务查询失败: ${s.data.error}`);
-            clearInterval(t);
-            setTimer(null);
-            setStatus(null);
-            return;
-          }
-          
-          setStatus(s.data)
-          
-          // 当任务状态不是pending或者任务已完成时停止轮询
-          if (s.data && (s.data.status === 'finished' || s.data.status === 'error')) {
-            clearInterval(t); 
-            setTimer(null)
-          }
-        } catch (error) {
-          console.error('查询任务状态失败:', error);
-          message.error('查询任务状态失败，请刷新页面重试');
-          clearInterval(t);
+        const r = await client.post('/tuning', payload)
+        const task_id = r.data.task_id
+        setTask(task_id)
+        message.success('任务已提交: ' + task_id)
+        
+        // 清除之前可能存在的定时器
+        if (timer) {
+          clearInterval(timer);
           setTimer(null);
-          setStatus(null);
         }
-      }, 2000)
-      setTimer(t)
+        
+        // 跳转到Progress页面并传递task_id参数
+        navigate(`/progress?task_id=${task_id}`)
     } catch (error) {
       console.error('提交寻优任务失败:', error);
       message.error('提交任务失败，请重试');
