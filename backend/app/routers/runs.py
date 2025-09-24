@@ -1,9 +1,15 @@
 from fastapi import APIRouter, HTTPException
 import numpy as np
 import logging
-from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run
+from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs
+from fastapi import HTTPException
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["runs"])
+
+# 定义批量删除请求模型
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -73,3 +79,26 @@ async def delete_run_endpoint(run_id: str):
     except Exception as e:
         logger.error(f"删除回测记录时发生错误: {str(e)}")
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
+
+@router.post("/runs/batch_delete")
+async def batch_delete_runs_endpoint(request: BatchDeleteRequest):
+    """
+    批量删除多个回测记录及其关联数据
+    
+    Args:
+        request: 包含要删除的回测ID列表的请求对象
+        
+    Returns:
+        包含删除结果的字典，记录成功和失败的数量
+    """
+    try:
+        logger.info(f"接收到批量删除回测请求，ids: {request.ids}")
+        result = batch_delete_runs(request.ids)
+        return {
+            "status": "success",
+            "message": f"批量删除完成，成功: {result['success']} 条，失败: {result['failed']} 条",
+            "result": result
+        }
+    except Exception as e:
+        logger.error(f"批量删除回测记录时发生错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量删除失败: {str(e)}")

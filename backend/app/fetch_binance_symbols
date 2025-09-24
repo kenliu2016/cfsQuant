@@ -1,0 +1,58 @@
+import psycopg2
+import requests
+import time
+
+# 配置 PostgreSQL 连接信息
+DB_CONFIG = {
+    "host": "3.236.227.36",   # 改成你的数据库地址
+    "port": 5432,          # 默认端口
+    "dbname": "quant",   # 改成你的数据库名
+    "user": "your_cfs",   # 改成你的用户名
+    "password": "Cc563479,."  # 改成你的密码
+}
+
+def get_top_symbols(limit=50):
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+    max_retries = 3
+    retry_delay = 2  # 秒
+    
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            sorted_data = sorted(data, key=lambda x: float(x["quoteVolume"]), reverse=True)
+            return [item["symbol"] for item in sorted_data[:limit]]
+        except requests.exceptions.ConnectionError as e:
+            print(f"连接错误: {e}. 正在尝试重试 ({attempt + 1}/{max_retries})...")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                print("达到最大重试次数，请求失败。")
+                raise
+        except Exception as e:
+            print(f"获取数据时出错: {e}")
+            raise
+
+def insert_symbols(symbols):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+
+    sql = """
+    INSERT INTO public.market_codes (exchange, code, active)
+    VALUES (%s, %s, %s)
+    ON CONFLICT (exchange, code) DO NOTHING;
+    """
+
+    values = [("binance", symbol, True) for symbol in symbols]
+
+    cur.executemany(sql, values)
+    conn.commit()
+
+    cur.close()
+    conn.close()
+    print(f"成功插入 {len(values)} 条记录（已存在的会跳过）。")
+
+if __name__ == "__main__":
+    symbols = get_top_symbols(50)
+    insert_symbols(symbols)

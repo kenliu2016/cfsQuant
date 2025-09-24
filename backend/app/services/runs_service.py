@@ -211,38 +211,66 @@ def run_detail(run_id: str):
         # 检查并添加sharpe指标
         if 'sharpe' in run_data and pd.notna(run_data['sharpe']) and not any(df_m['metric_name'] == 'sharpe'):
             sharpe_row = pd.DataFrame([{'metric_name': 'sharpe', 'metric_value': float(run_data['sharpe'])}])
-            df_m = pd.concat([df_m, sharpe_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = sharpe_row
+            else:
+                df_m = pd.concat([df_m, sharpe_row], ignore_index=True)
             
         # 检查并添加max_drawdown指标
         if 'max_drawdown' in run_data and pd.notna(run_data['max_drawdown']) and not any(df_m['metric_name'] == 'max_drawdown'):
             max_drawdown_row = pd.DataFrame([{'metric_name': 'max_drawdown', 'metric_value': float(run_data['max_drawdown'])}])
-            df_m = pd.concat([df_m, max_drawdown_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = max_drawdown_row
+            else:
+                df_m = pd.concat([df_m, max_drawdown_row], ignore_index=True)
             
         # 检查并添加final_return指标
         if 'final_capital' in run_data and 'initial_capital' in run_data and pd.notna(run_data['final_capital']) and pd.notna(run_data['initial_capital']) and run_data['initial_capital'] > 0 and not any(df_m['metric_name'] == 'final_return'):
             final_return = float(run_data['final_capital']) / float(run_data['initial_capital']) - 1
             final_return_row = pd.DataFrame([{'metric_name': 'final_return', 'metric_value': final_return}])
-            df_m = pd.concat([df_m, final_return_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = final_return_row
+            else:
+                df_m = pd.concat([df_m, final_return_row], ignore_index=True)
             
         # 检查并添加win_rate指标
         if 'win_rate' in run_data and pd.notna(run_data['win_rate']) and not any(df_m['metric_name'] == 'win_rate'):
             win_rate_row = pd.DataFrame([{'metric_name': 'win_rate', 'metric_value': float(run_data['win_rate'])}])
-            df_m = pd.concat([df_m, win_rate_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = win_rate_row
+            else:
+                df_m = pd.concat([df_m, win_rate_row], ignore_index=True)
             
         # 检查并添加trade_count指标
         if 'trade_count' in run_data and pd.notna(run_data['trade_count']) and not any(df_m['metric_name'] == 'trade_count'):
             trade_count_row = pd.DataFrame([{'metric_name': 'trade_count', 'metric_value': float(run_data['trade_count'])}])
-            df_m = pd.concat([df_m, trade_count_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = trade_count_row
+            else:
+                df_m = pd.concat([df_m, trade_count_row], ignore_index=True)
             
         # 检查并添加total_fee指标
         if 'total_fee' in run_data and pd.notna(run_data['total_fee']) and not any(df_m['metric_name'] == 'total_fee'):
             total_fee_row = pd.DataFrame([{'metric_name': 'total_fee', 'metric_value': float(run_data['total_fee'])}])
-            df_m = pd.concat([df_m, total_fee_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = total_fee_row
+            else:
+                df_m = pd.concat([df_m, total_fee_row], ignore_index=True)
             
         # 检查并添加total_profit指标
         if 'total_profit' in run_data and pd.notna(run_data['total_profit']) and not any(df_m['metric_name'] == 'total_profit'):
             total_profit_row = pd.DataFrame([{'metric_name': 'total_profit', 'metric_value': float(run_data['total_profit'])}])
-            df_m = pd.concat([df_m, total_profit_row], ignore_index=True)
+            # 避免FutureWarning：在concat前检查df_m是否为空
+            if df_m.empty:
+                df_m = total_profit_row
+            else:
+                df_m = pd.concat([df_m, total_profit_row], ignore_index=True)
     # 从整合后的trades表中读取equity相关数据
     # 注意：我们现在从trades表中获取nav和drawdown数据，而不是从equity_curve表
     df_e = fetch_df("""
@@ -400,3 +428,36 @@ def delete_run(run_id: str) -> bool:
     except Exception as e:
         logger.error(f"删除回测记录失败，run_id: {run_id}, 错误: {str(e)}")
         raise
+
+def batch_delete_runs(run_ids: list) -> dict:
+    """
+    批量删除多个回测记录及其关联数据
+    
+    Args:
+        run_ids: 要删除的回测ID列表
+        
+    Returns:
+        dict: 包含删除结果的字典，记录成功和失败的数量
+    """
+    success_count = 0
+    failed_count = 0
+    failed_ids = []
+    
+    logger.info(f"开始批量删除回测记录，共 {len(run_ids)} 条")
+    
+    for run_id in run_ids:
+        try:
+            delete_run(run_id)
+            success_count += 1
+        except Exception as e:
+            logger.error(f"批量删除回测记录失败，run_id: {run_id}, 错误: {str(e)}")
+            failed_count += 1
+            failed_ids.append(run_id)
+    
+    logger.info(f"批量删除回测记录完成，成功: {success_count} 条，失败: {failed_count} 条")
+    
+    return {
+        "success": success_count,
+        "failed": failed_count,
+        "failed_ids": failed_ids
+    }
