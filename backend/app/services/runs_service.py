@@ -198,7 +198,9 @@ def run_detail(run_id: str):
             "info": default_run_info,
             "metrics": [],
             "equity": [],
-            "trades": []
+            "trades": [],
+            "grid_levels": [],
+            "klines": []
         }
     
     # 获取指标数据
@@ -373,14 +375,54 @@ def run_detail(run_id: str):
             # 确保所有值都是可JSON序列化的float类型
             df_t[col] = df_t[col].astype(float)
     
+    # 获取网格级别数据
+    grid_levels = get_grid_levels(run_id)
+    
+    # 获取K线数据
+    klines = []
+    try:
+        from .market_service import MarketDataService
+        market_service = MarketDataService()
+        
+        # 从run_info中获取所需参数
+        code = run_info.get('code', '')
+        interval = run_info.get('interval', '1m')
+        start_time = run_info.get('start_time', '')
+        end_time = run_info.get('end_time', '')
+        
+        if code and start_time and end_time:
+            # 调用市场服务获取K线数据
+            df_candles, _ = market_service.get_candles(code, start_time, end_time, interval)
+            
+            # 确保返回的数据是可JSON序列化的
+            if not df_candles.empty:
+                # 处理datetime类型
+                if 'datetime' in df_candles.columns:
+                    df_candles['datetime'] = df_candles['datetime'].astype(str)
+                
+                # 处理数值列中的特殊值
+                numeric_columns = df_candles.select_dtypes(include=['float64', 'int64']).columns
+                for col in numeric_columns:
+                    df_candles[col] = df_candles[col].fillna(0)
+                    df_candles[col] = df_candles[col].replace([float('inf'), float('-inf')], 0)
+                    df_candles[col] = df_candles[col].astype(float)
+                
+                klines = df_candles.to_dict(orient="records")
+        logger.debug(f"成功获取K线数据，run_id: {run_id}, 数据点数量: {len(klines)}")
+    except Exception as e:
+        logger.error(f"获取K线数据失败: {str(e)}")
+        klines = []
+    
     logger.debug(f"成功获取回测详情，run_id: {run_id}, 策略: {run_info.get('strategy', '未知')}")
     
-    # 统一返回四部分数据：基本信息、指标数据、equity数据和交易数据
+    # 统一返回数据：基本信息、指标数据、equity数据、交易数据、网格级别数据和K线数据
     return {
         "info": run_info,
         "metrics": df_m.to_dict(orient="records"),
         "equity": df_e.to_dict(orient="records"),
-        "trades": df_t.to_dict(orient="records")
+        "trades": df_t.to_dict(orient="records"),
+        "grid_levels": grid_levels,
+        "klines": klines
     }
 
 def delete_run(run_id: str) -> bool:
