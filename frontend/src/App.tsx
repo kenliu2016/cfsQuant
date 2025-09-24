@@ -32,20 +32,15 @@ const App: React.FC = () => {
       label: 'Strategy',
       onClick: () => navigate('/strategy'),
     },
+        {
+      key: 'reports',
+      label: 'Reports',
+      onClick: () => navigate('/reports'),
+    },
     {
       key: 'tuning',
       label: 'Tuning',
       onClick: () => navigate('/tuning'),
-    },
-    {
-      key: 'monitor',
-      label: 'Monitor',
-      onClick: () => navigate('/monitor'),
-    },
-    {
-      key: 'reports',
-      label: 'Reports',
-      onClick: () => navigate('/reports'),
     },
     {
       key: 'progress',

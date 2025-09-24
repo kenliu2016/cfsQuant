@@ -1,229 +1,196 @@
+from ..common import LoggerFactory
 from ..db import fetch_df
 from datetime import datetime, timedelta
 import pandas as pd
-import logging
-import re
+import numpy as np
+from typing import Optional, Union, Dict, List, Tuple
+from functools import lru_cache
+from .cache_service import (
+    cache_dataframe_result, 
+    DEFAULT_EXPIRE_TIME, 
+    LONG_EXPIRE_TIME, 
+    clear_market_data_cache
+)
 
-logger = logging.getLogger(__name__)
+# 使用LoggerFactory替换原有logger
+logger = LoggerFactory.get_logger('market_service')
 
-def aggregate_kline_data(df, interval):
-    """
-    对K线数据按不同周期聚合
+class DateTimeParser:
+    """日期时间解析工具类"""
     
-    Args:
-        df: K线数据DataFrame，必须包含datetime, code, open, high, low, close, volume列
-        interval: 前端传入的原始时间间隔参数，如1m,5m,15m,30m,1h,4h,1D等
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def parse_datetime(dt_str: Union[str, datetime, int]) -> datetime:
+        """解析各种格式的日期时间字符串"""
+        if isinstance(dt_str, datetime):
+            return dt_str
+        
+        if isinstance(dt_str, (int, float)):
+            try:
+                return datetime.fromtimestamp(int(dt_str))
+            except (ValueError, TypeError):
+                return datetime.now()
+        
+        if not isinstance(dt_str, str):
+            return datetime.now()
+            
+        formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d"
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(dt_str, fmt)
+            except ValueError:
+                continue
+        
+        return datetime.now()
+
+class KlineAggregator:
+    """K线数据聚合优化器"""
     
-    Returns:
-        聚合后的K线数据DataFrame
-    """
-    # 处理空DataFrame情况
-    if df.empty:
-        return df
-    
-    # 验证输入DataFrame是否包含必要的列
-    required_columns = ['datetime', 'code', 'open', 'high', 'low', 'close', 'volume']
-    if not all(col in df.columns for col in required_columns):
-        raise ValueError(f"DataFrame必须包含以下列: {required_columns}")
-    
-    # 确保datetime列是datetime类型
-    if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
+    @staticmethod
+    def aggregate_kline_data(df: pd.DataFrame, interval: str) -> pd.DataFrame:
+        """优化的K线数据聚合"""
+        if df.empty:
+            return df
+            
+        required_columns = ['datetime', 'code', 'open', 'high', 'low', 'close', 'volume']
+        if not all(col in df.columns for col in required_columns):
+            raise ValueError(f"DataFrame必须包含以下列: {required_columns}")
+        
+        # 确保datetime列是datetime类型
         df['datetime'] = pd.to_datetime(df['datetime'])
+        
+        # 优化：使用numpy进行聚合计算
+        def aggregate_group(group):
+            # 添加空组检查，防止KeyError和IndexError
+            if group.empty:
+                return pd.Series({
+                    'open': None,
+                    'high': None,
+                    'low': None,
+                    'close': None,
+                    'volume': 0
+                })
+            return pd.Series({
+                'open': group['open'].iloc[0],
+                'high': group['high'].max(),
+                'low': group['low'].min(),
+                'close': group['close'].iloc[-1],
+                'volume': group['volume'].sum()
+            })
+        
+        # 设置resample规则
+        freq = interval.lower().replace('m', 'min').replace('M', 'ME')
+        
+        # 使用groupby和transform进行向量化操作
+        result_dfs = []
+        for code, group in df.groupby('code'):
+            # 确保group不为空再进行操作
+            if not group.empty:
+                group = group.set_index('datetime')
+                resampled = group.resample(freq).apply(aggregate_group).dropna()
+                if not resampled.empty:
+                    resampled['code'] = code
+                    result_dfs.append(resampled.reset_index())
+            
+        return pd.concat(result_dfs, ignore_index=True) if result_dfs else pd.DataFrame(columns=required_columns)
+
+# 替换原有的aggregate_kline_data函数
+aggregate_kline_data = KlineAggregator.aggregate_kline_data
+
+class MarketDataService:
+    """市场数据服务类"""
     
-    # 设置聚合规则
-    agg_dict = {
-        'open': 'first',  # 开盘价取第一个
-        'high': 'max',    # 最高价取最大值
-        'low': 'min',     # 最低价取最小值
-        'close': 'last',  # 收盘价取最后一个
-        'volume': 'sum'   # 成交量求和
-    }
+    def __init__(self):
+        self.datetime_parser = DateTimeParser()
+        self.logger = logger
+        
+    def _prepare_query_params(self, start: Union[str, datetime], 
+                            end: Union[str, datetime]) -> Tuple[datetime, datetime]:
+        """准备查询参数"""
+        start_dt = self.datetime_parser.parse_datetime(start)
+        end_dt = self.datetime_parser.parse_datetime(end)
+        return start_dt, end_dt
     
-    # 按code分组
-    grouped = df.groupby('code')
-    # 创建结果DataFrame
-    aggregated_dfs = []
-    
-    # 对每个code进行聚合
-    for code, group in grouped:
-        # 按interval重新采样
+    def get_candles(self, code: str, start: str, end: str, 
+                    interval: str = "1m", page: Optional[int] = None, 
+                    page_size: Optional[int] = None) -> Union[Tuple[pd.DataFrame, Dict], 
+                                                            Tuple[pd.DataFrame, int, Dict]]:
+        """优化的K线数据获取方法"""
         try:
-            # 设置datetime为索引
-            group = group.set_index('datetime')
+            # 参数验证和准备
+            if not code or not start or not end:
+                query_params = {"code": code, "start": start, "end": end, "interval": interval}
+                return (pd.DataFrame(), query_params) if page is None else (pd.DataFrame(), 0, query_params)
             
-            # 使用规则替换interval中的m为min，M为ME
-            freq = interval
+            start_dt, end_dt = self._prepare_query_params(start, end)
+            table_name = "day_realtime" if interval in ["1D", "1W", "1M"] else "minute_realtime"
             
-            # 将m替换为min
-            if 'm' in freq:
-                # 确保是小写的m（分钟）而不是其他情况
-                freq = freq.lower().replace('m', 'min')
-            # 将M替换为ME
-            if 'M' in freq:
-                freq = freq.replace('M', 'ME')
+            # 构建SQL查询
+            sql = """
+            SELECT datetime, code, open, high, low, close, volume
+            FROM """ + table_name + """
+            WHERE code = :code AND datetime BETWEEN :start AND :end
+            ORDER BY datetime
+            """
             
-            # 重新采样并聚合
-            resampled = group.resample(freq).agg(agg_dict).dropna()
+            # 不使用分页时
+            if page is None or page_size is None:
+                try:
+                    df = fetch_df(sql, code=code, start=start_dt, end=end_dt)
+                    
+                    # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
+                    df = aggregate_kline_data(df, interval)
+                    
+                    # 创建查询参数dict
+                    query_params = {"code": code, "start": start, "end": end, "interval": interval}
+                    return df, query_params
+                except Exception as e:
+                    # 其他异常处理
+                    self.logger.error(f"获取K线数据失败: {str(e)}", exc_info=True)
+                    # 创建查询参数dict
+                    query_params = {"code": code, "start": start, "end": end, "interval": interval}
+                    return (pd.DataFrame(), query_params) if page is None else (pd.DataFrame(), 0, query_params)
             
-            # 保留code列
-            resampled['code'] = code
+            # 使用分页时
+            offset = (page - 1) * page_size
             
-            # 重置索引，保留datetime列
-            resampled = resampled.reset_index()
+            # 优化：限制最大页面大小，防止单次返回过多数据
+            if page_size > 1000:
+                page_size = 1000
             
-            # 添加到结果列表中
-            aggregated_dfs.append(resampled)
-        except Exception as e:
-            # 处理聚合过程中的错误
-            raise ValueError(f"聚合代码{code}时出错: {str(e)}")
-    
-    # 合并所有结果
-    if aggregated_dfs:
-        aggregated_df = pd.concat(aggregated_dfs)
-        # 按datetime排序
-        aggregated_df = aggregated_df.sort_values(['code', 'datetime'])
-        # 重置索引
-        aggregated_df = aggregated_df.reset_index(drop=True)
-    else:
-        # 如果没有数据，返回空的DataFrame但保持正确的列结构
-        aggregated_df = pd.DataFrame(columns=['datetime', 'code', 'open', 'high', 'low', 'close', 'volume'])
-    
-    return aggregated_df
-
-
-from .cache_service import (cache_dataframe_result,DEFAULT_EXPIRE_TIME,LONG_EXPIRE_TIME,clear_market_data_cache)
-
-@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_candles(code: str, start: str, end: str, interval: str = "1m", page: int = None, page_size: int = None):
-    """
-    获取K线数据，使用缓存装饰器优化性能
-    缓存过期时间：5分钟
-    
-    Args:
-        code: 股票代码
-        start: 开始时间
-        end: 结束时间
-        interval: 时间间隔，默认1分钟
-        page: 页码，从1开始，不提供则返回全部数据
-        page_size: 每页数据量，不提供则返回全部数据
-    
-    Returns:
-        不使用分页时返回元组 (数据, 查询参数dict)，使用分页时返回元组 (数据, 总条数, 查询参数dict)
-    """
-
-    # 优化：预先验证参数，避免不必要的缓存查找和数据库查询
-    if not code or not start or not end:
-        # 创建查询参数dict
-        query_params = {"code": code, "start": start, "end": end, "interval": interval}
-        return pd.DataFrame(), query_params if page is None else (pd.DataFrame(), 0, query_params)
-    
-    # 转换日期时间参数
-    try:
-        if isinstance(start, str):
-            if ' ' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-            else:
-                start_dt = datetime.strptime(start, "%Y-%m-%d")
-        elif isinstance(start, datetime):
-            start_dt = start
-        else:
-            # 如果start不是字符串也不是datetime类型，尝试转换
-            try:
-                start_dt = datetime.fromtimestamp(int(start))
-            except (ValueError, TypeError):
-                start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    except ValueError:
-        start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    
-    try:
-        if isinstance(end, str):
-            if ' ' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
-            else:
-                end_dt = datetime.strptime(end, "%Y-%m-%d")
-        elif isinstance(end, datetime):
-            end_dt = end
-        else:
-            # 如果end不是字符串也不是datetime类型，尝试转换
-            try:
-                end_dt = datetime.fromtimestamp(int(end))
-            except (ValueError, TypeError):
-                end_dt = datetime.now()
-    except ValueError:
-        end_dt = datetime.now()
-    
-    # 根据interval选择表名
-    if interval == "1D" or interval == "1W" or interval == "1M":
-        table_name = "day_realtime"
-    else:
-        table_name = "minute_realtime"
-    
-    # 构建SQL查询
-    sql = """
-    SELECT datetime, code, open, high, low, close, volume
-    FROM """ + table_name + """
-    WHERE code = :code AND datetime BETWEEN :start AND :end
-    ORDER BY datetime
-    """
-    
-    # 不使用分页时
-    if page is None or page_size is None:
-        try:
-            df = fetch_df(sql, code=code, start=start_dt, end=end_dt)
+            # 获取总条数的SQL
+            count_sql = """
+            SELECT COUNT(*) as count
+            FROM """ + table_name + """
+            WHERE code = :code AND datetime BETWEEN :start AND :end
+            """
+            
+            # 获取分页数据的SQL
+            paginated_sql = sql + " LIMIT :limit OFFSET :offset"
+            
+            # 执行查询
+            df = fetch_df(paginated_sql, code=code, start=start_dt, end=end_dt, limit=page_size, offset=offset)
+            count_df = fetch_df(count_sql, code=code, start=start_dt, end=end_dt)
+            total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
             
             # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
             df = aggregate_kline_data(df, interval)
             
             # 创建查询参数dict
             query_params = {"code": code, "start": start, "end": end, "interval": interval}
-            return df, query_params
+            print("使用分页查询参数:", query_params)
+
+            return df, total_count, query_params
         except Exception as e:
-            # 其他异常处理
-            logger.error(f"获取K线数据失败: {e}")
+            self.logger.error(f"获取分页K线数据失败: {str(e)}", exc_info=True)
             # 创建查询参数dict
             query_params = {"code": code, "start": start, "end": end, "interval": interval}
-            return pd.DataFrame(), query_params
-    
-    # 使用分页时
-    offset = (page - 1) * page_size
-    
-    # 优化：限制最大页面大小，防止单次返回过多数据
-    if page_size > 1000:
-        page_size = 1000
-    
-    # 获取总条数的SQL
-    count_sql = """
-    SELECT COUNT(*) as count
-    FROM """ + table_name + """
-    WHERE code = :code AND datetime BETWEEN :start AND :end
-    """
-    
-    # 获取分页数据的SQL
-    paginated_sql = sql + " LIMIT :limit OFFSET :offset"
-    
-    # 执行查询
-    try:
-        df = fetch_df(paginated_sql, code=code, start=start_dt, end=end_dt, limit=page_size, offset=offset)
-        count_df = fetch_df(count_sql, code=code, start=start_dt, end=end_dt)
-        total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
-        
-        # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
-        df = aggregate_kline_data(df, interval)
-        
-        # 创建查询参数dict
-        query_params = {"code": code, "start": start, "end": end, "interval": interval}
-        print("使用分页查询参数:", query_params)
-
-        return df, total_count, query_params
-    except Exception as e:
-        logger.error(f"获取分页K线数据失败: {e}")
-        # 创建查询参数dict
-        query_params = {"code": code, "start": start, "end": end, "interval": interval}
-        return pd.DataFrame(), 0, query_params
+            return pd.DataFrame(), 0, query_params
 
 @cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
 def get_predictions(code: str, start: str, end: str, interval: str = None, page: int = None, page_size: int = None):
@@ -442,22 +409,7 @@ def get_intraday(code: str, start: str, end: str, page: int = None, page_size: i
 
 @cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
 def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timestamp: str = None):
-    """
-    批量获取多个股票代码的最新K线数据，使用缓存装饰器优化性能
-    缓存过期时间：5分钟
-    
-    Args:
-        codes: 股票代码列表
-        interval: 时间间隔，默认1分钟
-        limit: 返回的记录数量，默认1条，设置为2可以获取最近两个bar的数据
-    
-    Returns:
-        包含多个股票代码最新数据的DataFrame
-    """
-    # 仅保留必要的错误日志记录
-    import logging
-    logger = logging.getLogger("market_service")
-    
+    """批量获取多个股票代码的最新K线数据"""
     # 验证参数
     if not codes or not isinstance(codes, list):
         return pd.DataFrame()
@@ -471,129 +423,119 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
     else:
         table_name = "minute_realtime"
     
-    # 构建SQL查询，使用IN子句查询多个代码的最新数据
-    # 对于每个代码，获取最新的指定数量的记录
     sql = """
     WITH ranked_data AS (
         SELECT 
-            datetime, 
-            code, 
-            open, 
-            high, 
-            low, 
-            close, 
-            volume,
+            datetime, code, open, high, low, close, volume,
             ROW_NUMBER() OVER (PARTITION BY code ORDER BY datetime DESC) AS rank
-        FROM 
-            """ + table_name + """
-        WHERE 
-            code IN :codes
+        FROM """ + table_name + """
+        WHERE code IN :codes
     )
-    SELECT 
-        datetime, 
-        code, 
-        open, 
-        high, 
-        low, 
-        close, 
-        volume
-    FROM 
-        ranked_data
-    WHERE 
-        rank <= :limit
-    ORDER BY 
-        code, datetime DESC
+    SELECT datetime, code, open, high, low, close, volume
+    FROM ranked_data
+    WHERE rank <= :limit
+    ORDER BY code, datetime DESC
     """
     
     try:
-        # 执行查询，传递limit参数
         df = fetch_df(sql, codes=tuple(codes), limit=limit)
         
-        # 对于1W和1M周期，需要特殊处理以获取正确的聚合数据
-        if interval == "1W" and not df.empty:
-            # 对于周线数据，需要重新查询并聚合最近一周的数据
-            all_weekly_data = []
-            for code in codes:
-                # 对于每个代码，查询最近的完整周数据
-                weekly_sql = """
-                SELECT 
-                    MIN(datetime) as datetime,
-                    code,
-                    MIN(open) FILTER (WHERE datetime = (SELECT MIN(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW'))) as open,
-                    MAX(high) as high,
-                    MIN(low) as low,
-                    MAX(close) FILTER (WHERE datetime = (SELECT MAX(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW'))) as close,
-                    SUM(volume) as volume
-                FROM 
-                    day_realtime dr
-                WHERE 
-                    code = :code
-                GROUP BY 
-                    code,
-                    TO_CHAR(datetime, 'IYYY-IW')
-                ORDER BY 
-                    datetime DESC
-                LIMIT 1
-                """
-                weekly_df = fetch_df(weekly_sql, code=code)
-                if not weekly_df.empty:
-                    all_weekly_data.append(weekly_df)
-            
-            if all_weekly_data:
-                df = pd.concat(all_weekly_data, ignore_index=True)
-        elif interval == "1M" and not df.empty:
-            # 对于月线数据，需要重新查询并聚合最近一月的数据
-            all_monthly_data = []
-            for code in codes:
-                # 对于每个代码，查询最近的完整月数据
-                monthly_sql = """
-                SELECT 
-                    MIN(datetime) as datetime,
-                    code,
-                    MIN(open) FILTER (WHERE datetime = (SELECT MIN(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM'))) as open,
-                    MAX(high) as high,
-                    MIN(low) as low,
-                    MAX(close) FILTER (WHERE datetime = (SELECT MAX(datetime) FROM day_realtime WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM'))) as close,
-                    SUM(volume) as volume
-                FROM 
-                    day_realtime dr
-                WHERE 
-                    code = :code
-                GROUP BY 
-                    code,
-                    TO_CHAR(datetime, 'YYYY-MM')
-                ORDER BY 
-                    datetime DESC
-                LIMIT 1
-                """
-                monthly_df = fetch_df(monthly_sql, code=code)
-                if not monthly_df.empty:
-                    all_monthly_data.append(monthly_df)
-            
-            if all_monthly_data:
-                df = pd.concat(all_monthly_data, ignore_index=True)
+        if interval in ["1W", "1M"] and not df.empty:
+            df = _handle_special_intervals(df, interval, codes)
         else:
-            # 对于其他周期，直接使用aggregate_kline_data函数进行聚合处理
-            # 注意：interval映射逻辑已移至aggregate_kline_data函数内部实现
             df = aggregate_kline_data(df, interval)
         
-        # 记录返回结果的基本信息
         if not df.empty:
-            # 按代码分组，记录每个代码的时间范围
-            code_time_ranges = []
-            for code, group in df.groupby('code'):
-                min_time = group['datetime'].min()
-                max_time = group['datetime'].max()
-                code_time_ranges.append(f"{code}: [{min_time}, {max_time}]")
-            
-            logger.info(f"批量查询结果: total_rows={len(df)}, total_columns={len(df.columns)}, code_time_ranges={', '.join(code_time_ranges)}")
-        else:
-            logger.info("批量查询结果: 空DataFrame")
+            _log_query_results(df)
         
         return df
     except Exception as e:
         logger.error(f"批量获取K线数据失败: {e}")
         return pd.DataFrame()
+
+def _handle_special_intervals(df: pd.DataFrame, interval: str, codes: list) -> pd.DataFrame:
+    """处理周线和月线的特殊聚合"""
+    if interval == "1W":
+        return _handle_weekly_data(codes)
+    elif interval == "1M":
+        return _handle_monthly_data(codes)
+    return df
+
+def _handle_weekly_data(codes: list) -> pd.DataFrame:
+    """处理周线数据"""
+    all_weekly_data = []
+    for code in codes:
+        weekly_sql = """
+        SELECT 
+            MIN(datetime) as datetime,
+            code,
+            MIN(open) FILTER (WHERE datetime = (
+                SELECT MIN(datetime) FROM day_realtime 
+                WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW')
+            )) as open,
+            MAX(high) as high,
+            MIN(low) as low,
+            MAX(close) FILTER (WHERE datetime = (
+                SELECT MAX(datetime) FROM day_realtime 
+                WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW')
+            )) as close,
+            SUM(volume) as volume
+        FROM day_realtime dr
+        WHERE code = :code
+        GROUP BY code, TO_CHAR(datetime, 'IYYY-IW')
+        ORDER BY datetime DESC
+        LIMIT 1
+        """
+        weekly_df = fetch_df(weekly_sql, code=code)
+        if not weekly_df.empty:
+            all_weekly_data.append(weekly_df)
+    
+    return pd.concat(all_weekly_data, ignore_index=True) if all_weekly_data else pd.DataFrame()
+
+def _handle_monthly_data(codes: list) -> pd.DataFrame:
+    """处理月线数据"""
+    all_monthly_data = []
+    for code in codes:
+        monthly_sql = """
+        SELECT 
+            MIN(datetime) as datetime,
+            code,
+            MIN(open) FILTER (WHERE datetime = (
+                SELECT MIN(datetime) FROM day_realtime 
+                WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM')
+            )) as open,
+            MAX(high) as high,
+            MIN(low) as low,
+            MAX(close) FILTER (WHERE datetime = (
+                SELECT MAX(datetime) FROM day_realtime 
+                WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM')
+            )) as close,
+            SUM(volume) as volume
+        FROM day_realtime dr
+        WHERE code = :code
+        GROUP BY code, TO_CHAR(datetime, 'YYYY-MM')
+        ORDER BY datetime DESC
+        LIMIT 1
+        """
+        monthly_df = fetch_df(monthly_sql, code=code)
+        if not monthly_df.empty:
+            all_monthly_data.append(monthly_df)
+    
+    return pd.concat(all_monthly_data, ignore_index=True) if all_monthly_data else pd.DataFrame()
+
+def _log_query_results(df: pd.DataFrame):
+    """记录查询结果"""
+    code_time_ranges = []
+    for code, group in df.groupby('code'):
+        min_time = group['datetime'].min()
+        max_time = group['datetime'].max()
+        code_time_ranges.append(f"{code}: [{min_time}, {max_time}]")
+    
+    logger.info(
+        f"批量查询结果: total_rows={len(df)}, "
+        f"total_columns={len(df.columns)}, "
+        f"code_time_ranges={', '.join(code_time_ranges)}"
+    )
 
 # 提供清除特定代码缓存的函数，用于数据更新后刷新缓存
 def refresh_market_data_cache(code: str = None):
@@ -631,3 +573,17 @@ def update_market_data_and_refresh_cache(data, table_name, code=None):
     except Exception as e:
         logger.error(f"更新市场数据失败: {e}")
         return False
+
+# 创建MarketDataService实例
+market_data_service = MarketDataService()
+
+@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
+def get_candles(code: str, start: str, end: str, 
+                interval: str = "1m", page: Optional[int] = None, 
+                page_size: Optional[int] = None) -> Union[Tuple[pd.DataFrame, Dict], 
+                                                        Tuple[pd.DataFrame, int, Dict]]:
+    """
+    模块级别的K线数据获取函数
+    调用MarketDataService类的get_candles方法
+    """
+    return market_data_service.get_candles(code, start, end, interval, page, page_size)

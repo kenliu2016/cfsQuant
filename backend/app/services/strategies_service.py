@@ -4,10 +4,10 @@ from sqlalchemy import text
 import json
 import time
 from pathlib import Path
-import logging
+from ..common import LoggerFactory
 
-# 配置日志
-logger = logging.getLogger(__name__)
+# 使用LoggerFactory替换原有logger
+logger = LoggerFactory.get_logger('strategies_service')
 
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
 
@@ -21,7 +21,7 @@ async def alist_strategies():
     """异步获取策略列表，用于API调用"""
     # 使用单独的异步实现，避免阻塞
     import pandas as pd
-    from ..db import fetch_df_async
+    from ..db import fetch_df_async, fetch_df
     
     # 全局变量声明
     global _cached_strategies, _cached_timestamp
@@ -29,14 +29,31 @@ async def alist_strategies():
     # 先检查内存缓存
     current_time = time.time()
     if _cached_strategies is not None and current_time - _cached_timestamp < CACHE_EXPIRE_TIME:
-        logger.debug("使用内存缓存的策略列表")
+        logger.info("使用内存缓存的策略列表")
         return _cached_strategies.copy()  # 返回副本避免修改缓存数据
     
     try:
         # 缓存过期或不存在，从数据库查询
-        logger.debug("从数据库查询策略列表")
+        logger.info("从数据库查询策略列表")
         sql = """SELECT id, name, description, params::text AS params FROM strategies ORDER BY id"""
+        
+        # 清除缓存以确保获取最新数据
+        clear_strategies_cache()
+        
+        # 先尝试同步查询作为对比
+        logger.info("尝试同步查询获取数据...")
+        sync_df = fetch_df(sql)
+        logger.info(f"同步查询结果: {len(sync_df)} 行数据")
+        
+        # 然后尝试异步查询
+        logger.info("尝试异步查询获取数据...")
         df = await fetch_df_async(sql)
+        logger.info(f"异步查询结果: {len(df)} 行数据")
+        
+        # 如果异步查询返回空，使用同步查询结果
+        if len(df) == 0 and len(sync_df) > 0:
+            logger.warning("异步查询返回空结果，使用同步查询结果替代")
+            df = sync_df
         
         # 更新内存缓存
         _cached_strategies = df
@@ -44,12 +61,23 @@ async def alist_strategies():
         
         return df
     except Exception as e:
-        logger.error(f"获取策略列表失败: {e}")
-        # 出错时如果有缓存，返回缓存数据
-        if _cached_strategies is not None:
-            return _cached_strategies.copy()
-        # 否则返回空DataFrame
-        return pd.DataFrame(columns=['id', 'name', 'description', 'params'])
+        logger.error(f"获取策略列表失败: {e}", exc_info=True)
+        # 出错时尝试直接使用同步查询
+        try:
+            logger.info("出错时尝试同步查询获取数据...")
+            fallback_df = fetch_df(sql)
+            logger.info(f"错误后同步查询结果: {len(fallback_df)} 行数据")
+            # 更新缓存并返回
+            _cached_strategies = fallback_df
+            _cached_timestamp = current_time
+            return fallback_df
+        except Exception as fallback_e:
+            logger.error(f"同步查询也失败: {fallback_e}", exc_info=True)
+            # 如果同步查询也失败，且有缓存，返回缓存数据
+            if _cached_strategies is not None:
+                return _cached_strategies.copy()
+            # 否则返回空DataFrame
+            return pd.DataFrame(columns=['id', 'name', 'description', 'params'])
 
 def list_strategies():
     """同步获取策略列表，用于非异步环境"""

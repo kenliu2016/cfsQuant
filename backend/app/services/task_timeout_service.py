@@ -1,5 +1,5 @@
 import time
-import logging
+from ..common import LoggerFactory
 import threading
 import time
 from datetime import datetime, timedelta
@@ -8,8 +8,8 @@ from ..celery_config import celery_app
 from .tuning_service import run_parameter_tuning
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# 使用LoggerFactory替换原有logger
+logger = LoggerFactory.get_logger('task_timeout_service')
 
 # 默认超时配置（单位：小时）
 DEFAULT_TUNING_TASK_TIMEOUT = 24  # 调优任务默认24小时超时

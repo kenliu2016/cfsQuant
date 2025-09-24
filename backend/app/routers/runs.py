@@ -1,7 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 import numpy as np
 import logging
-from ..services.runs_service import recent_runs, run_detail, get_grid_levels
+from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -51,3 +51,25 @@ async def runs_detail(run_id: str):
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(detail_data)
     return processed_data
+
+@router.delete("/runs/{run_id}")
+async def delete_run_endpoint(run_id: str):
+    """
+    删除指定的回测记录及其关联数据
+    
+    Args:
+        run_id: 要删除的回测ID
+        
+    Returns:
+        包含删除结果的字典
+    """
+    try:
+        logger.info(f"接收到删除回测请求，run_id: {run_id}")
+        success = delete_run(run_id)
+        if success:
+            return {"status": "success", "message": f"回测记录 {run_id} 已成功删除"}
+        else:
+            raise HTTPException(status_code=500, detail=f"删除回测记录 {run_id} 失败")
+    except Exception as e:
+        logger.error(f"删除回测记录时发生错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")

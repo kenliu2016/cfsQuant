@@ -224,7 +224,7 @@ const Dashboard: React.FC = () => {
         end: new Date().toISOString()
       };
       
-      const response = await client.post('/backtest', {
+      const response = await client.post('/api/backtest', {
         params: backtestParams,
         strategy: strategyName
       });

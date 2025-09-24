@@ -1,25 +1,31 @@
-import threading, uuid, itertools, time, json
+import threading
 import uuid
 import itertools
 import time
 import json
 import logging
+from datetime import datetime
+
+# 创建logger实例
+logger = logging.getLogger('tuning_service')
+logger.setLevel(logging.INFO)
 import inspect
 from typing import Dict, Any, Optional, List
 import pandas as pd
-from ..services.backtest_service import run_backtest
+import sqlalchemy
+from .backtest_service import run_backtest
+from .market_service import MarketDataService
+from .runs_service import delete_run
 from ..db import fetch_df, to_sql, execute
-from sqlalchemy import text
 from ..celery_config import celery_app
 
-# 配置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# 使用Python内置logging模块
+logger.info('tuning_service logger initialized')
 
 # 日志配置已完成
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
-def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: str, end: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1):
+def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1):
     """
     运行参数调优任务
     
@@ -28,8 +34,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: st
         task_id: 任务ID
         strategy: 策略名称
         code: 交易对代码
-        start: 开始时间
-        end: 结束时间
+        start_time: 开始时间
+        end_time: 结束时间
         params_grid: 参数网格
         interval: K线周期
         total: 总任务数
@@ -68,20 +74,45 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: st
         from ..services.market_service import get_candles
         
         keys = list(params_grid.keys()) if params_grid else []
-        grids = [params_grid[k] for k in keys] if params_grid else []
+        # 确保每个参数值都是可迭代的列表
+        grids = []
+        if params_grid:
+            for k in keys:
+                value = params_grid[k]
+                # 如果不是列表，转换为单元素列表
+                if not isinstance(value, list):
+                    grids.append([value])
+                else:
+                    grids.append(value)
         
-        # 获取K线数据
-        candles_result = get_candles(code, start, end, interval)
-        # 根据返回值类型确定如何获取DataFrame
-        if isinstance(candles_result, tuple):
-            # 如果是元组，根据长度决定是两个值还是三个值的情况
-            if len(candles_result) == 3:
-                df, _, _ = candles_result
-            else:
-                df, _ = candles_result
-        else:
-            # 否则直接使用
-            df = candles_result
+        # 获取K线数据 - 注意get_candles是MarketDataService类的方法
+        # 我们需要先实例化服务类
+        from .market_service import MarketDataService
+        market_service = MarketDataService()
+        candles_result = market_service.get_candles(code, start_time, end_time, interval)
+        
+        # 检查candles_result是否为空或None
+        if candles_result is None:
+            raise ValueError("get_candles返回值为None")
+        
+        # 检查candles_result是否为元组
+        if not isinstance(candles_result, tuple):
+            raise ValueError(f"get_candles返回的不是有效的元组，而是: {type(candles_result)}")
+        
+        # 检查元组是否至少有一个元素
+        if len(candles_result) == 0:
+            raise ValueError("get_candles返回的元组为空")
+        
+        # 从元组中提取DataFrame（第一个元素）
+        df = candles_result[0]
+        
+        # 验证df是否为DataFrame
+        if not isinstance(df, pd.DataFrame):
+            raise ValueError(f"从get_candles返回值中提取的不是DataFrame，类型为: {type(df)}")
+        
+        # 检查DataFrame是否为空
+        if df.empty:
+            raise ValueError(f"获取的K线数据为空，交易对代码: {code}")
         
         finished = 0
         runs = []
@@ -92,8 +123,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: st
             # 构建完整的参数对象，包含interval
             full_params = {
                 'code': code,
-                'start': start,
-                'end': end,
+                'start': start_time,
+                'end': end_time,
                 'interval': interval,
                 **p
             }
@@ -101,8 +132,10 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: st
             # 调用run_backtest函数，传入正确的参数
             backtest_result = run_backtest(df, full_params, strategy)
             
+            # 安全获取run_id，确保即使backtest_result为None或不包含run_id键也能正常工作
+            run_id = backtest_result.get('run_id', 'unknown') if backtest_result else 'unknown'
             # 确保run_id是字符串类型
-            run_id = str(backtest_result.get('run_id'))
+            run_id = str(run_id)
             runs.append({'params': p, 'run_id': run_id})
             finished += 1
             
@@ -133,12 +166,22 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: st
                     
                     serializable_params = make_serializable(p)
                     
+                    # 将参数转换为JSON字符串后再存储到数据库
+                    params_json = json.dumps(serializable_params)
+                    
+                    # 验证JSON字符串的有效性
+                    try:
+                        parsed_json = json.loads(params_json)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON验证失败: {e}")
+                    
                     result_data = {
                         'task_id': task_id,
                         'run_id': run_id,
-                        'params': serializable_params,  # 存储可序列化的参数字典
+                        'params': params_json,  # 存储为JSON字符串
                         'created_at': completion_time
                     }
+                    
                     result_df = pd.DataFrame([result_data])
                     to_sql(result_df, 'tuning_results')
             except Exception as e:
@@ -179,41 +222,77 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start: st
         # 重新抛出异常，让Celery记录错误
         raise
 
-def start_tuning_async(strategy: str, code: str, start: str, end: str, params_grid: Dict[str, list], interval: str = '1m') -> str:
+def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], interval: str = '1m', 
+                      start: str = None, end: str = None, start_time: str = None, end_time: str = None,
+                      params_config: str = None) -> str:
     """
     异步启动参数调优任务
     
     Args:
         strategy: 策略名称
         code: 交易对代码
-        start: 开始时间
-        end: 结束时间
         params_grid: 参数网格
         interval: K线周期
+        start: 开始时间（旧参数名，向后兼容）
+        end: 结束时间（旧参数名，向后兼容）
+        start_time: 开始时间（新参数名）
+        end_time: 结束时间（新参数名）
+        params_config: 完整参数配置JSON字符串
         
     Returns:
         str: 任务ID
     """
     task_id = str(uuid.uuid4())
     
+    # 处理参数名兼容性，优先使用新参数名
+    if start_time is None and start is not None:
+        start_time = start
+    if end_time is None and end is not None:
+        end_time = end
+    
+    # 确保开始时间和结束时间不为None
+    if start_time is None or end_time is None:
+        raise ValueError("开始时间和结束时间不能为空")
+    
     # 计算总任务数
     total = 1
     if params_grid:
         keys = list(params_grid.keys())
-        grids = [params_grid[k] for k in keys]
+        # 确保每个参数值都是可迭代的列表
+        grids = []
+        for k in keys:
+            value = params_grid[k]
+            # 如果不是列表，转换为单元素列表
+            if not isinstance(value, list):
+                grids.append([value])
+            else:
+                grids.append(value)
         total = 0
         for _ in itertools.product(*grids):
             total += 1
     
     # 在tuning_tasks表中创建记录
     try:
+        # 构建params JSON字符串，包含所有定义了范围的参数
+        # 优先使用params_config，如果不存在则使用params_grid
+        if params_config:
+            params_json = params_config
+        else:
+            params_json = json.dumps(params_grid) if params_grid else '{}'
+        
         task_data = {
             'task_id': task_id,
             'strategy': strategy,
             'status': 'pending',
             'total': total,
             'finished': 0,
-            'created_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            # 新增字段
+            'code': code,
+            'interval': interval,
+            'start_time': start_time,  # 保存开始时间
+            'end_time': end_time,      # 保存结束时间
+            'params': params_json  # 保存参数网格的JSON字符串
         }
         task_df = pd.DataFrame([task_data])
         to_sql(task_df, 'tuning_tasks')
@@ -223,7 +302,7 @@ def start_tuning_async(strategy: str, code: str, start: str, end: str, params_gr
     # 使用Celery提交异步任务
     try:
         # 注意：这里传递total作为额外参数，以便在任务中访问
-        run_parameter_tuning.delay(task_id, strategy, code, start, end, params_grid, interval, total)
+        run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
     except Exception as e:
         # 如果提交失败，更新任务状态为错误
         try:
@@ -241,8 +320,8 @@ def get_all_tuning_tasks() -> List[Dict[str, Any]]:
         List[Dict]: 所有任务的状态信息列表
     """
     try:
-        # 从数据库获取所有任务状态
-        query = "SELECT task_id, strategy, status, total, finished, start_time, created_at, error FROM tuning_tasks ORDER BY created_at DESC"
+        # 从数据库获取所有任务状态，包括新添加的字段
+        query = "SELECT task_id, strategy, status, total, finished, start_time, created_at, error, code, params FROM tuning_tasks ORDER BY created_at DESC"
         result = fetch_df(query)
         
         if result.empty:
@@ -258,7 +337,10 @@ def get_all_tuning_tasks() -> List[Dict[str, Any]]:
                 'finished': int(row['finished']),
                 'start_time': str(row['start_time']) if pd.notna(row['start_time']) else None,
                 'created_at': str(row['created_at']),
-                'error': row['error'] if pd.notna(row['error']) else None
+                'error': row['error'] if pd.notna(row['error']) else None,
+                # 新增字段
+                'code': row['code'] if pd.notna(row['code']) else '',  # 标的代码
+                'params': row['params'] if pd.notna(row['params']) else '{}'  # 参数网格JSON字符串
             }
             tasks.append(task_info)
         
@@ -384,3 +466,47 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
     except Exception as e:
         logger.error(f"获取调优任务状态失败: {e}")
         return None
+
+def delete_tuning_task(task_id: str) -> bool:
+    """
+    删除指定的tuning_task记录及其关联数据
+    
+    Args:
+        task_id: 要删除的调优任务ID
+        
+    Returns:
+        bool: 是否删除成功
+    """
+    try:
+        logger.info(f"开始删除调优任务，task_id: {task_id}")
+        
+        # 首先获取所有关联的run_id
+        run_ids_query = "SELECT run_id FROM tuning_results WHERE task_id = :task_id"
+        run_ids_df = fetch_df(run_ids_query, task_id=task_id)
+        
+        # 逐个删除关联的run记录及其子数据
+        if not run_ids_df.empty:
+            for _, row in run_ids_df.iterrows():
+                run_id = row['run_id']
+                try:
+                    delete_run(run_id)
+                    logger.debug(f"已删除调优任务关联的回测记录，task_id: {task_id}, run_id: {run_id}")
+                except Exception as e:
+                    logger.error(f"删除关联回测记录失败，run_id: {run_id}, 错误: {str(e)}")
+                    # 继续删除其他记录，不中断整个过程
+                    continue
+        
+        # 删除tuning_results表中的关联数据
+        execute("DELETE FROM tuning_results WHERE task_id = :task_id", task_id=task_id)
+        logger.debug(f"已删除tuning_results表中关联数据，task_id: {task_id}")
+        
+        # 最后删除tuning_tasks表中的主记录
+        execute("DELETE FROM tuning_tasks WHERE task_id = :task_id", task_id=task_id)
+        logger.debug(f"已删除tuning_tasks表中主记录，task_id: {task_id}")
+        
+        logger.info(f"调优任务删除成功，task_id: {task_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"删除调优任务失败，task_id: {task_id}, 错误: {str(e)}")
+        raise

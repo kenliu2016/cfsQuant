@@ -213,12 +213,16 @@ export default function Tuning(){
       }
     });
     
+    // 构建完整的参数配置JSON字符串，包含参数值、最大值、最小值、步长等信息
+    const fullParamsConfigJSON = JSON.stringify(paramsConfig);
+    
     const payload = { 
       strategy: v.strategy, 
-      params: paramsGrid, 
+      params: paramsGrid,
+      params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
       code: v.code, 
-      start: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
-      end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+      start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
+      end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
       interval: v.interval
     };
     

@@ -271,7 +271,7 @@ export default function StrategyPage(){
       }
       // 最终payload只提交封装后的params和strategy
       const payload = { params, strategy: current!.name }
-      const r = await client.post('/backtest', payload)
+      const r = await client.post('/api/backtest', payload)
       if (r.data.backtest_id){
         message.success('回测完成')
       }

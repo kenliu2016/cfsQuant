@@ -58,3 +58,13 @@ def setup_logger_with_file_handler(
     logger.propagate = propagate
     
     return logger
+
+class LoggerFactory:
+    """日志工厂类"""
+    _loggers = {}
+    
+    @classmethod
+    def get_logger(cls, name: str, **kwargs):
+        if name not in cls._loggers:
+            cls._loggers[name] = setup_logger_with_file_handler(name, f"{name}.log", **kwargs)
+        return cls._loggers[name]

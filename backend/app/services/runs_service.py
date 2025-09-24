@@ -1,15 +1,16 @@
 
 import pandas as pd
 import numpy as np
-import logging
+from ..common import LoggerFactory
 import datetime
 import json
 
-logger = logging.getLogger(__name__)
+# 使用LoggerFactory替换原有logger
+logger = LoggerFactory.get_logger('runs_service')
 
 # 避免Pandas future downcasting警告
 pd.set_option('future.no_silent_downcasting', True)
-from ..db import fetch_df
+from ..db import fetch_df, execute
 
 def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None) -> dict:
     """
@@ -353,3 +354,49 @@ def run_detail(run_id: str):
         "equity": df_e.to_dict(orient="records"),
         "trades": df_t.to_dict(orient="records")
     }
+
+def delete_run(run_id: str) -> bool:
+    """
+    删除指定的run记录及其关联数据
+    
+    Args:
+        run_id: 要删除的回测ID
+        
+    Returns:
+        bool: 是否删除成功
+    """
+    try:
+        logger.info(f"开始删除回测记录，run_id: {run_id}")
+        
+        # 开启事务执行删除操作
+        # 首先删除关联的子表数据
+        # 删除trades表中的关联数据
+        execute("DELETE FROM trades WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除trades表中关联数据，run_id: {run_id}")
+        
+        # 删除metrics表中的关联数据
+        execute("DELETE FROM metrics WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除metrics表中关联数据，run_id: {run_id}")
+        
+        # 删除equity_curve表中的关联数据
+        execute("DELETE FROM equity_curve WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除equity_curve表中关联数据，run_id: {run_id}")
+        
+        # 删除grid_levels表中的关联数据
+        execute("DELETE FROM grid_levels WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除grid_levels表中关联数据，run_id: {run_id}")
+        
+        # 最后删除positions表中的关联数据
+        execute("DELETE FROM positions WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除positions表中关联数据，run_id: {run_id}")
+        
+        # 最后删除runs表中的主记录
+        result = execute("DELETE FROM runs WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除runs表中主记录，run_id: {run_id}")
+        
+        logger.info(f"回测记录删除成功，run_id: {run_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"删除回测记录失败，run_id: {run_id}, 错误: {str(e)}")
+        raise

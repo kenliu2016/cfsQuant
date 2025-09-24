@@ -77,7 +77,7 @@ def save_klines(table, rows):
 # 拉取 Binance.US 历史数据，修复数据处理逻辑
 def fetch_binance(symbol, interval, table):
     print(f"[Binance.US] {symbol} {interval}")
-    start = int(datetime(2017, 1, 1).timestamp() * 1000)
+    start = int(datetime(2022, 2, 1).timestamp() * 1000)
     
     # 处理不支持的interval
     valid_intervals = ["1m", "1h", "1d"]
@@ -144,7 +144,7 @@ def fetch_binance(symbol, interval, table):
                     print(f"无法获取下一次startTime，数据: {data[-1]}")
                     break
             
-            time.sleep(0.2)  # 防限速
+            time.sleep(0.5)  # 防限速
         except requests.RequestException as e:
             print(f"请求错误: {e}")
             time.sleep(2)  # 出错时等待更长时间
@@ -221,7 +221,7 @@ def fetch_okx(symbol, interval, table):
             if data and len(data) > 0:
                 before = data[-1][0]  # 翻页用 before
             
-            time.sleep(0.5)  # 防限速
+            time.sleep(0.8)  # 防限速
         except requests.RequestException as e:
             print(f"请求错误: {e}")
             time.sleep(2)  # 出错时等待更长时间
@@ -258,9 +258,9 @@ def main():
         
         # 根据interval参数选择对应的表
         interval_table_map = {
-            "1m": "minute_realtime_1",
-            "1h": "hour_realtime_1",
-            "1d": "day_realtime_1"
+            "1m": "minute_realtime",
+            "1h": "hour_realtime",
+            "1d": "day_realtime"
         }
         
         if interval_arg in interval_table_map:
@@ -268,7 +268,7 @@ def main():
             table = interval_table_map[interval_arg]
         else:
             interval = "1m"
-            table = "minute_realtime_1"
+            table = "minute_realtime"
         
         try:
             if exchange == "binance":
