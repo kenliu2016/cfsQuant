@@ -1,11 +1,15 @@
 
 import pandas as pd
 import numpy as np
+import logging
+import datetime
+import json
+
+logger = logging.getLogger(__name__)
 
 # 避免Pandas future downcasting警告
 pd.set_option('future.no_silent_downcasting', True)
 from ..db import fetch_df
-import datetime
 
 def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None) -> dict:
     """
@@ -128,11 +132,43 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         'total': total
     }
 
-import logging
-import datetime
-import json
-
-logger = logging.getLogger(__name__)
+def get_grid_levels(run_id: str) -> list:
+    """
+    获取特定回测ID的网格级别数据
+    
+    Args:
+        run_id: 回测ID
+        
+    Returns:
+        网格级别数据列表
+    """
+    # 查询grid_levels表获取指定run_id的网格级别数据
+    df_grid = fetch_df("""
+        SELECT run_id, level, price, name 
+        FROM grid_levels 
+        WHERE run_id = :rid
+        ORDER BY level
+    """, rid=run_id)
+    
+    # 处理查询结果
+    if df_grid.empty:
+        # 如果没有找到数据，返回空列表
+        logger.debug(f"未找到run_id为{run_id}的网格级别数据")
+        return []
+    
+    # 确保返回的数据是可JSON序列化的
+    grid_levels = df_grid.to_dict(orient="records")
+    
+    # 处理price字段，确保是float类型
+    for level in grid_levels:
+        if 'price' in level:
+            try:
+                level['price'] = float(level['price'])
+            except (ValueError, TypeError):
+                level['price'] = 0.0
+        
+    logger.debug(f"成功获取网格级别数据，run_id: {run_id}, 级别数量: {len(grid_levels)}")
+    return grid_levels
 
 def run_detail(run_id: str):
     
