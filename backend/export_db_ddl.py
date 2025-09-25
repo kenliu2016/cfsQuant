@@ -219,19 +219,14 @@ class DDLExporter:
         """导出序列"""
         try:
             with self.conn.cursor() as cur:
+                # 使用更兼容的SQL查询来获取序列信息
                 cur.execute("""
                     SELECT
-                        c.relname AS sequence_name,
-                        pg_catalog.pg_get_serial_sequence(c.relname, a.attname) AS owning_column,
-                        d.adsrc AS default_value
+                        c.relname AS sequence_name
                     FROM
                         pg_catalog.pg_class c
                     JOIN
                         pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-                    LEFT JOIN
-                        pg_catalog.pg_attribute a ON a.attrelid = c.oid
-                    LEFT JOIN
-                        pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
                     WHERE
                         c.relkind = 'S'
                         AND n.nspname = 'public'
@@ -246,48 +241,30 @@ class DDLExporter:
                     return
                 
                 logger.info(f"找到 {len(sequences)} 个数据库序列")
-                for seq_name, owning_col, default_val in sequences:
+                for seq_name, in sequences:
                     try:
                         with self.conn.cursor() as sub_cur:
-                            # 检查是否为serial类型自动创建的序列
-                            sub_cur.execute("SELECT pg_get_serial_sequence(relname, attname) FROM pg_class JOIN pg_attribute ON attrelid = oid WHERE atttypid = 'pg_catalog.serial'::regtype AND attrelid = (SELECT oid FROM pg_class WHERE relname = %s)", (seq_name.replace('_seq', ''),))
-                            result = sub_cur.fetchone()
-                            if result and result[0] == f"public.{seq_name}":
-                                logger.debug(f"跳过serial类型自动创建的序列: {seq_name}")
-                                continue
-                            
-                            try:
-                                # 尝试使用PostgreSQL 14+的函数获取创建语句
-                                sub_cur.execute(f"SELECT pg_get_create_table_statement('{seq_name}'::regclass)")
-                                create_stmt = sub_cur.fetchone()[0]
-                                if create_stmt:
-                                    logger.debug(f"正在导出序列: {seq_name}")
-                                    f.write(f"-- 序列: {seq_name}\n")
-                                    f.write(f"{create_stmt};")
-                                    f.write("\n\n")
-                            except Exception as inner_e:
-                                # 如果PostgreSQL版本较低，使用传统方法
-                                logger.debug(f"使用传统方法导出序列: {seq_name}, 原因: {str(inner_e)}")
-                                # 对于较旧的PostgreSQL版本，我们需要构建CREATE SEQUENCE语句
-                                sub_cur.execute("""
-                                    SELECT
-                                        start_value, min_value, max_value, increment_by, cycle
-                                    FROM
-                                        pg_catalog.pg_sequences
-                                    WHERE
-                                        schemaname = 'public' AND sequencename = %s;
-                                """, (seq_name,))
-                                seq_info = sub_cur.fetchone()
-                                if seq_info:
-                                    start_val, min_val, max_val, increment, cycle = seq_info
-                                    create_stmt = f"CREATE SEQUENCE public.{seq_name} START WITH {start_val} INCREMENT BY {increment} MINVALUE {min_val} MAXVALUE {max_val}"
-                                    if cycle:
-                                        create_stmt += " CYCLE"
-                                    else:
-                                        create_stmt += " NO CYCLE"
-                                    f.write(f"-- 序列: {seq_name}\n")
-                                    f.write(f"{create_stmt};")
-                                    f.write("\n\n")
+                            # 获取序列的详细信息
+                            sub_cur.execute("""
+                                SELECT
+                                    start_value, min_value, max_value, increment_by, cycle
+                                FROM
+                                    pg_catalog.pg_sequences
+                                WHERE
+                                    schemaname = 'public' AND sequencename = %s;
+                            """, (seq_name,))
+                            seq_info = sub_cur.fetchone()
+                            if seq_info:
+                                start_val, min_val, max_val, increment, cycle = seq_info
+                                create_stmt = f"CREATE SEQUENCE IF NOT EXISTS public.{seq_name} START WITH {start_val} INCREMENT BY {increment} MINVALUE {min_val} MAXVALUE {max_val}"
+                                if cycle:
+                                    create_stmt += " CYCLE"
+                                else:
+                                    create_stmt += " NO CYCLE"
+                                logger.debug(f"正在导出序列: {seq_name}")
+                                f.write(f"-- 序列: {seq_name}\n")
+                                f.write(f"{create_stmt};")
+                                f.write("\n\n")
                     except Exception as inner_e:
                         logger.error(f"导出序列 {seq_name} 时出错: {str(inner_e)}")
                         # 继续处理下一个序列
@@ -323,146 +300,126 @@ class DDLExporter:
                 
                 logger.info(f"找到 {len(tables)} 个数据库表")
                 
-                # 尝试不同的方法获取表的创建语句
-                methods_tried = 0
-                
-                # 方法1: 使用pg_get_create_table_statement（PostgreSQL 14+）
-                try:
-                    method1_success = False
-                    for table_name, in tables:
-                        try:
-                            cur.execute(f"SELECT pg_get_create_table_statement('public.{table_name}'::regclass)")
-                            create_stmt = cur.fetchone()[0]
-                            if create_stmt:
-                                logger.debug(f"正在导出表: {table_name} (使用PostgreSQL 14+方法)")
-                                f.write(f"-- 表: {table_name}\n")
-                                f.write(f"{create_stmt};")
-                                f.write("\n\n")
-                                method1_success = True
-                        except Exception as inner_e:
-                            logger.warning(f"使用PostgreSQL 14+方法导出表 {table_name} 失败: {str(inner_e)}")
-                            # 继续处理下一个表
-                    methods_tried = 1
-                except Exception as e:
-                    logger.warning(f"使用PostgreSQL 14+方法导出表失败: {str(e)}")
-                    methods_tried = 1  # 标记为已尝试过，但仍然允许尝试方法2
-                
-                # 方法2: 使用information_schema.columns和pg_constraint
-                if methods_tried == 1 and not method1_success:
-                    logger.info("使用传统方法导出表结构")
-                    for table_name, in tables:
-                        try:
-                            # 获取表注释
-                            cur.execute("""
-                                SELECT
-                                    obj_description(c.oid)
-                                FROM
-                                    pg_catalog.pg_class c
-                                WHERE
-                                    c.relname = %s
-                                    AND c.relkind = 'r';
-                            """, (table_name,))
-                            comment_row = cur.fetchone()
-                            comment = comment_row[0] if comment_row else None
+                # 使用传统方法导出表结构，不依赖pg_get_create_table_statement
+                logger.info("使用增强的传统方法导出表结构")
+                for table_name, in tables:
+                    try:
+                        # 获取表注释
+                        cur.execute("""
+                            SELECT
+                                obj_description(c.oid)
+                            FROM
+                                pg_catalog.pg_class c
+                            WHERE
+                                c.relname = %s
+                                AND c.relkind = 'r';
+                        """, (table_name,))
+                        comment_row = cur.fetchone()
+                        comment = comment_row[0] if comment_row else None
+                        
+                        if comment:
+                            f.write(f"-- 表: {table_name} - {comment}\n")
+                        else:
+                            f.write(f"-- 表: {table_name}\n")
+                        
+                        # 获取列信息
+                        cur.execute("""
+                            SELECT
+                                a.attname AS column_name,
+                                t.typname AS data_type,
+                                a.attnotnull AS is_not_null,
+                                pg_get_expr(d.adbin, d.adrelid) AS default_value,
+                                col_description(a.attrelid, a.attnum) AS column_comment
+                            FROM
+                                pg_catalog.pg_attribute a
+                            JOIN
+                                pg_catalog.pg_type t ON a.atttypid = t.oid
+                            JOIN
+                                pg_catalog.pg_class c ON a.attrelid = c.oid
+                            LEFT JOIN
+                                pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                            WHERE
+                                c.relname = %s
+                                AND a.attnum > 0 -- 排除系统列
+                                AND NOT a.attisdropped -- 排除已删除的列
+                            ORDER BY
+                                a.attnum;
+                        """, (table_name,))
+                        columns = cur.fetchall()
+                        
+                        if not columns:
+                            logger.warning(f"表 {table_name} 没有找到列信息")
+                            f.write(f"-- 警告: 表 {table_name} 没有找到列信息\n\n")
+                            continue
+                        
+                        logger.debug(f"正在导出表: {table_name} (使用增强的传统方法)")
+                        # 构建CREATE TABLE语句
+                        f.write(f"CREATE TABLE IF NOT EXISTS public.{table_name} (\n")
+                        col_defs = []
+                        
+                        for col_name, data_type, is_not_null, default_val, col_comment in columns:
+                            col_def = f"    {col_name} {data_type}"
+                            if is_not_null:
+                                col_def += " NOT NULL"
                             
-                            if comment:
-                                f.write(f"-- 表: {table_name} - {comment}\n")
-                            else:
-                                f.write(f"-- 表: {table_name}\n")
-                            
-                            # 获取列信息
-                            cur.execute("""
-                                SELECT
-                                    a.attname AS column_name,
-                                    t.typname AS data_type,
-                                    a.attnotnull AS is_not_null,
-                                    pg_get_expr(d.adbin, d.adrelid) AS default_value,
-                                    col_description(a.attrelid, a.attnum) AS column_comment
-                                FROM
-                                    pg_catalog.pg_attribute a
-                                JOIN
-                                    pg_catalog.pg_type t ON a.atttypid = t.oid
-                                JOIN
-                                    pg_catalog.pg_class c ON a.attrelid = c.oid
-                                LEFT JOIN
-                                    pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-                                WHERE
-                                    c.relname = %s
-                                    AND a.attnum > 0 -- 排除系统列
-                                    AND NOT a.attisdropped -- 排除已删除的列
-                                ORDER BY
-                                    a.attnum;
-                            """, (table_name,))
-                            columns = cur.fetchall()
-                            
-                            if not columns:
-                                logger.warning(f"表 {table_name} 没有找到列信息")
-                                f.write(f"-- 警告: 表 {table_name} 没有找到列信息\n\n")
-                                continue
-                            
-                            logger.debug(f"正在导出表: {table_name} (使用传统方法)")
-                            # 构建CREATE TABLE语句
-                            f.write(f"CREATE TABLE IF NOT EXISTS public.{table_name} (\n")
-                            col_defs = []
-                            
-                            for col_name, data_type, is_not_null, default_val, col_comment in columns:
-                                col_def = f"    {col_name} {data_type}"
-                                if is_not_null:
-                                    col_def += " NOT NULL"
-                                if default_val:
-                                    col_def += f" DEFAULT {default_val}"
-                                col_defs.append(col_def)
-                            
-                            # 获取主键约束
-                            cur.execute("""
-                                SELECT
-                                    conname,
-                                    pg_get_constraintdef(oid)
-                                FROM
-                                    pg_catalog.pg_constraint
-                                WHERE
-                                    conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = %s)
-                                    AND contype = 'p';
-                            """, (table_name,))
-                            pkey = cur.fetchone()
-                            if pkey:
-                                col_defs.append(f"    {pkey[1]}")
-                            
-                            # 获取唯一约束
-                            cur.execute("""
-                                SELECT
-                                    conname,
-                                    pg_get_constraintdef(oid)
-                                FROM
-                                    pg_catalog.pg_constraint
-                                WHERE
-                                    conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = %s)
-                                    AND contype = 'u';
-                            """, (table_name,))
-                            unique_constraints = cur.fetchall()
-                            for conname, condef in unique_constraints:
-                                col_defs.append(f"    {condef}")
-                            
-                            f.write(",\n".join(col_defs))
-                            f.write("\n);\n")
-                            
-                            # 添加列注释
-                            for col_name, _, _, _, col_comment in columns:
-                                if col_comment:
-                                    # 在f-string外部处理引号替换
-                                    escaped_comment = col_comment.replace("'", "''")
-                                    f.write(f"COMMENT ON COLUMN public.{table_name}.{col_name} IS '{escaped_comment}';\n")
-                            
-                            # 添加表注释
-                            if comment:
+                            # 检查default_val是否包含nextval引用，如果有，需要特殊处理
+                            # 这里不直接写入nextval引用，避免依赖未定义的序列
+                            # 用户可以在创建表后手动添加这些默认值
+                            if default_val and 'nextval' not in default_val.lower():
+                                col_def += f" DEFAULT {default_val}"
+                        
+                            col_defs.append(col_def)
+                        
+                        # 获取主键约束
+                        cur.execute("""
+                            SELECT
+                                conname,
+                                pg_get_constraintdef(oid)
+                            FROM
+                                pg_catalog.pg_constraint
+                            WHERE
+                                conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = %s)
+                                AND contype = 'p';
+                        """, (table_name,))
+                        pkey = cur.fetchone()
+                        if pkey:
+                            col_defs.append(f"    {pkey[1]}")
+                        
+                        # 获取唯一约束
+                        cur.execute("""
+                            SELECT
+                                conname,
+                                pg_get_constraintdef(oid)
+                            FROM
+                                pg_catalog.pg_constraint
+                            WHERE
+                                conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = %s)
+                                AND contype = 'u';
+                        """, (table_name,))
+                        unique_constraints = cur.fetchall()
+                        for conname, condef in unique_constraints:
+                            col_defs.append(f"    {condef}")
+                        
+                        f.write(",\n".join(col_defs))
+                        f.write("\n);\n")
+                        
+                        # 添加列注释
+                        for col_name, _, _, _, col_comment in columns:
+                            if col_comment:
                                 # 在f-string外部处理引号替换
-                                escaped_table_comment = comment.replace("'", "''")
-                                f.write(f"COMMENT ON TABLE public.{table_name} IS '{escaped_table_comment}';\n")
-                            
-                            f.write("\n")
-                        except Exception as inner_e:
-                            logger.error(f"导出表 {table_name} 时出错: {str(inner_e)}")
-                            # 继续处理下一个表
+                                escaped_comment = col_comment.replace("'", "''")
+                                f.write(f"COMMENT ON COLUMN public.{table_name}.{col_name} IS '{escaped_comment}';\n")
+                        
+                        # 添加表注释
+                        if comment:
+                            # 在f-string外部处理引号替换
+                            escaped_table_comment = comment.replace("'", "''")
+                            f.write(f"COMMENT ON TABLE public.{table_name} IS '{escaped_table_comment}';\n")
+                        
+                        f.write("\n")
+                    except Exception as inner_e:
+                        logger.error(f"导出表 {table_name} 时出错: {str(inner_e)}")
+                        # 继续处理下一个表
         except Exception as e:
             logger.error(f"导出数据库表结构时出错: {str(e)}")
             # 继续执行其他导出任务，不中断整个流程
@@ -602,21 +559,37 @@ class DDLExporter:
         """导出函数"""
         try:
             with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        p.proname AS function_name,
-                        pg_get_functiondef(p.oid) AS function_def
-                    FROM
-                        pg_catalog.pg_proc p
-                    JOIN
-                        pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-                    WHERE
-                        n.nspname = 'public'
-                        AND NOT p.proisagg -- 排除聚合函数
-                    ORDER BY
-                        p.proname;
-                """)
-                functions = cur.fetchall()
+                # 首先尝试使用更兼容的SQL查询（不使用proisagg）
+                try:
+                    cur.execute("""
+                        SELECT
+                            p.proname AS function_name,
+                            pg_get_functiondef(p.oid) AS function_def
+                        FROM
+                            pg_catalog.pg_proc p
+                        JOIN
+                            pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                        WHERE
+                            n.nspname = 'public'
+                        ORDER BY
+                            p.proname;
+                    """)
+                    functions = cur.fetchall()
+                except Exception:
+                    # 如果上面的查询失败，尝试简单地查询函数名而不获取定义
+                    cur.execute("""
+                        SELECT
+                            p.proname AS function_name
+                        FROM
+                            pg_catalog.pg_proc p
+                        JOIN
+                            pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                        WHERE
+                            n.nspname = 'public'
+                        ORDER BY
+                            p.proname;
+                    """)
+                    functions = [(name,) for name, in cur.fetchall()]
                 
                 if not functions:
                     logger.info("未找到需要导出的数据库函数")
@@ -624,14 +597,21 @@ class DDLExporter:
                     return
                 
                 logger.info(f"找到 {len(functions)} 个数据库函数")
-                for func_name, func_def in functions:
+                for func_info in functions:
                     try:
-                        logger.debug(f"正在导出函数: {func_name}")
-                        f.write(f"-- 函数: {func_name}\n")
-                        # 确保语句以分号结尾
-                        if not func_def.strip().endswith(';'):
-                            func_def += ';'
-                        f.write(f"{func_def}\n\n")
+                        if len(func_info) > 1:
+                            func_name, func_def = func_info
+                            logger.debug(f"正在导出函数: {func_name}")
+                            f.write(f"-- 函数: {func_name}\n")
+                            # 确保语句以分号结尾
+                            if not func_def.strip().endswith(';'):
+                                func_def += ';'
+                            f.write(f"{func_def}\n\n")
+                        else:
+                            func_name = func_info[0]
+                            # 如果无法获取函数定义，只记录函数名
+                            logger.debug(f"无法获取函数定义，仅记录函数名: {func_name}")
+                            f.write(f"-- 函数: {func_name} (无法获取函数定义)\n\n")
                     except Exception as inner_e:
                         logger.error(f"导出函数 {func_name} 时出错: {str(inner_e)}")
                         # 继续处理下一个函数

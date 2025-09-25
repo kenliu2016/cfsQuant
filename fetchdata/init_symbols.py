@@ -1,17 +1,18 @@
 import ccxt
 import psycopg2
 from psycopg2.extras import execute_values
+import ccxt
 
 DB_CONFIG = {
     "dbname": "quant",
-    "user": "your_cfs",
+    "user": "cfs",
     "password": "Cc563479,.",
     "host": "127.0.0.1",
     "port": 5432
 }
 
-# ENABLED_EXCHANGES = ["binance", "bybit", "coinbase", "upbit", "okx"]
-ENABLED_EXCHANGES = ["coinbase", "upbit", "okx"]
+ENABLED_EXCHANGES = ["binance", "bybit", "coinbase", "upbit", "okx"]
+# ENABLED_EXCHANGES = ["coinbase", "upbit", "okx"]
 
 def get_conn():
     return psycopg2.connect(**DB_CONFIG)
@@ -40,11 +41,13 @@ def get_top_symbols(exchange, limit=50, quote_currencies=("USDT", "USDC", "USD")
 
 def upsert_codes(exchange, symbols):
     sql = """
-    INSERT INTO market_codes (exchange, code, active)
+    INSERT INTO market_codes (exchange, code, active, excode)
     VALUES %s
-    ON CONFLICT (exchange, code) DO UPDATE SET active = EXCLUDED.active
+    ON CONFLICT (exchange, code) DO UPDATE SET 
+        active = EXCLUDED.active,
+        excode = EXCLUDED.excode
     """
-    rows = [(exchange, s, True) for s in symbols]
+    rows = [(exchange, s, True, f"{exchange}-{s}") for s in symbols]
     with get_conn() as conn, conn.cursor() as cur:
         execute_values(cur, sql, rows)
 

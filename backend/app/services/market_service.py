@@ -653,13 +653,14 @@ def get_candles(code: str, start: str, end: str,
     return market_data_service.get_candles(code, start, end, interval, page, page_size)
 
 # 添加模块级别的市场代码相关函数
+@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
 def get_market_exchanges(active: bool = True) -> pd.DataFrame:
     """
     模块级别的获取交易所列表函数
     """
     return market_data_service.get_market_exchanges(active)
 
-
+@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
 def get_market_codes(exchange: str = None, active: bool = True) -> pd.DataFrame:
     """
     模块级别的获取市场代码列表函数

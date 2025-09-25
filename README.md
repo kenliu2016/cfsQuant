@@ -21,6 +21,9 @@ cd frontend
 npm install
 npm run dev
 
+启动队列
+celery -A app.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
+
 
 # 每分钟抓分钟线
 * * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1m >> /var/log/fetch_klines.log 2>&1
