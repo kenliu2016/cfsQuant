@@ -172,11 +172,6 @@ const ReportDetail: React.FC = () => {
         matching_trade: matchingTrade // 保留匹配的交易信息，便于调试
       };
     });
-
-    const hasSignals = mergedData.some(item => item.trade_signal !== 0);
-    
-    // 调试：显示匹配到的交易信号
-    const matchedTrades = mergedData.filter(item => item.trade_signal !== 0);
     
     return mergedData;
   }, [currentRunKlineData, currentRunTrades]);
@@ -212,7 +207,7 @@ const ReportDetail: React.FC = () => {
     if (currentRunTrades.length > 0) {
       
       // 处理每个交易，创建信号点
-        currentRunTrades.forEach((trade: any, index: number) => {
+        currentRunTrades.forEach((trade: any) => {
           // 使用安全的时间戳转换函数
           const tradeTime = safeConvertToTimestamp(trade.datetime);
           const tradeSide = trade.side || 'unknown';
@@ -295,7 +290,6 @@ const ReportDetail: React.FC = () => {
     const signalData = params.find(p => p.seriesType === 'scatter');
     
     // 获取当前数据点的索引
-    const dataIndex = klineData?.dataIndex || volumeData?.dataIndex || 0;
     const timeValue = klineData?.axisValue || volumeData?.axisValue || (signalData ? signalData.axisValue : '');
     
     let result = timeValue + '<br/>';
