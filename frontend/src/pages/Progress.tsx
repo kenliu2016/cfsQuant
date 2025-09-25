@@ -33,6 +33,8 @@ interface TuningTask {
   start_time?: string | null
   created_at: string
   error?: string | null
+  code?: string  // 新增：标的代码
+  params?: string  // 新增：参数网格JSON字符串
 }
 
 export default function ProgressPage() {
@@ -50,7 +52,7 @@ export default function ProgressPage() {
       const response = await client.get(`/api/tuning/${id}`, {
         params: {
           page,
-          page_size: pageSize
+          limit: pageSize  // 使用正确的参数名limit
         }
       })
       
@@ -166,6 +168,21 @@ export default function ProgressPage() {
     }
   }
 
+  // 删除调优任务
+  const handleDeleteTask = async (task: TuningTask) => {
+    try {
+      if (window.confirm(`确定要删除调优任务 ${task.task_id} 及其所有相关的回测记录吗？此操作不可撤销。`)) {
+        await client.delete(`/api/tuning/${task.task_id}`)
+        message.success('删除成功')
+        // 重新加载任务列表
+        fetchAllTasks()
+      }
+    } catch (error) {
+      console.error('删除任务失败:', error)
+      message.error('删除失败，请重试')
+    }
+  }
+
   // 查看任务详情
   const handleViewTask = (task: TuningTask) => {
     console.log('处理查看任务详情，任务ID:', task.task_id)
@@ -178,9 +195,12 @@ export default function ProgressPage() {
     // 直接设置taskId并获取任务状态，避免URL导航问题
     setTaskId(task.task_id)
     // 重置分页状态
-    setCurrentPage(1)
-    setPageSize(10)
-    fetchTaskStatus(task.task_id)
+    const page = 1
+    const size = 10
+    setCurrentPage(page)
+    setPageSize(size)
+    // 传递分页参数给fetchTaskStatus
+    fetchTaskStatus(task.task_id, page, size)
   }
 
   // 返回任务列表
@@ -272,11 +292,33 @@ export default function ProgressPage() {
                 </div>
               ) : allTasks.length > 0 ? (
                 <div className="tasks-table-container">
+                  <style>{`
+                    .table-cell-action {
+                      width: 160px;
+                      min-width: 160px;
+                      white-space: nowrap;
+                    }
+                    .table-cell-code {
+                      width: 120px;
+                      min-width: 120px;
+                    }
+                    .table-cell-params {
+                      width: 100px;
+                      min-width: 100px;
+                    }
+                    .truncate {
+                      overflow: hidden;
+                      text-overflow: ellipsis;
+                      white-space: nowrap;
+                    }
+                  `}</style>
                   <div className="tasks-table-header">
                     <div className="table-cell table-cell-strategy">策略名称</div>
+                    <div className="table-cell table-cell-code">标的代码</div>
                     <div className="table-cell table-cell-id">任务ID</div>
                     <div className="table-cell table-cell-progress">进度</div>
                     <div className="table-cell table-cell-status">状态</div>
+                    <div className="table-cell table-cell-params">参数</div>
                     <div className="table-cell table-cell-time">创建时间</div>
                     <div className="table-cell table-cell-action">操作</div>
                   </div>
@@ -289,6 +331,9 @@ export default function ProgressPage() {
                       >
                         <div className="table-cell table-cell-strategy">
                           <div className="task-strategy">{task.strategy}</div>
+                        </div>
+                        <div className="table-cell table-cell-code">
+                          <div className="task-code">{task.code || '-'}</div>
                         </div>
                         <div className="table-cell table-cell-id">
                           <div className="task-id truncate">{task.task_id}</div>
@@ -316,6 +361,11 @@ export default function ProgressPage() {
                             {getStatusText(task.status)}
                           </Tag>
                         </div>
+                        <div className="table-cell table-cell-params">
+                          <div className="task-params truncate" title={task.params || '{}'}>
+                            {task.params ? '参数已设置' : '-'}
+                          </div>
+                        </div>
                         <div className="table-cell table-cell-time">
                           <div className="task-time">{task.created_at}</div>
                         </div>
@@ -326,23 +376,40 @@ export default function ProgressPage() {
                               e.stopPropagation();
                               handleViewTask(task);
                             }}
+                            style={{ marginRight: '16px', padding: '0 8px' }}
+                            className="action-link"
                           >
                             查看详情
+                          </Button>
+                          <Button 
+                            type="link" 
+                            danger
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteTask(task);
+                            }}
+                            style={{ padding: '0 8px' }}
+                            className="action-link"
+                          >
+                            删除
                           </Button>
                         </div>
                       </div>
                     ))}
                   </div>
                   <div className="tasks-table-pagination">
-                    <List
-                      pagination={{
-                        pageSize: 10,
-                        showSizeChanger: true,
-                        showTotal: (total) => `共 ${total} 条记录`
-                      }}
-                      dataSource={[]}
-                      renderItem={() => null}
-                    />
+                    <div style={{ textAlign: 'right', padding: '16px 0' }}>
+                      <List
+                        pagination={{
+                          pageSize: 10,
+                          showSizeChanger: true,
+                          showTotal: (total) => `共 ${total} 条记录`,
+                          total: allTasks.length
+                        }}
+                        dataSource={[1]}
+                        renderItem={() => null}
+                      />
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -500,7 +567,7 @@ export default function ProgressPage() {
                   )}
                 </div>
               ) : (
-                <Empty description="暂无已完成的组合" />
+                <Empty description="暂无已完成的组合" image={Empty.PRESENTED_IMAGE_SIMPLE} className="empty-result-state" />
               )}
             </Card>
           </div>

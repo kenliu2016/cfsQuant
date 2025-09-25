@@ -29,46 +29,6 @@ interface StrategyBacktestState {
   gridLevels?: GridLevel[]; // 网格级别数据（包含名称和价格）
 }
 
-// 解析CSV数据
-const parseCSV = (csvString: string) => {
-  const lines = csvString.split('\n');
-  const result: { code: string; name: string; exchange: string; type: string }[] = [];
-  
-  // 跳过第一行标题行
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    
-    const values = lines[i].split(',');
-    if (values.length >= 2) {
-      result.push({
-        code: values[0],
-        name: values[1],
-        exchange: values[2] || '',
-        type: values[3] || ''
-      });
-    }
-  }
-  
-  return result;
-};
-
-// 使用fetch读取CSV文件
-const fetchSymbolsFromCSV = async () => {
-  try {
-    const response = await fetch('/src/assets/symbols.csv');
-    const csvText = await response.text();
-    return parseCSV(csvText);
-  } catch (error) {
-    console.error('Failed to fetch symbols from CSV:', error);
-    // 返回默认的模拟数据作为备用
-    return [
-      { code: 'AAPL', name: '苹果', exchange: 'NASDAQ', type: 'Stock' },
-      { code: 'MSFT', name: '微软', exchange: 'NASDAQ', type: 'Stock' },
-      { code: 'AMZN', name: '亚马逊', exchange: 'NASDAQ', type: 'Stock' },
-    ];
-  }
-};
-
 // 格式化价格显示
 const formatPrice = (value: number) => {
   return formatPriceWithUnit(value);
@@ -105,6 +65,12 @@ const Dashboard: React.FC = () => {
   const [cachedQueryParams, setCachedQueryParams] = useState<any>(null);
   // 刷新按钮加载状态
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  // 交易所列表
+  const [exchanges, setExchanges] = useState<{ value: string; label: string }[]>([]);
+  // 选中的交易所
+  const [exchange, setExchange] = useState<string>('');
+  // 加载交易所状态
+  const [isLoadingExchanges, setIsLoadingExchanges] = useState<boolean>(false);
 
 
   // 策略相关状态
@@ -136,6 +102,62 @@ const Dashboard: React.FC = () => {
       console.error('Failed to fetch strategies from API:', error);
       // API调用失败时使用空数组，避免显示mock数据
       setStrategiesData([]);
+    }
+  };
+  
+  // 从API获取交易所列表
+  const fetchExchangesFromAPI = async () => {
+    try {
+      setIsLoadingExchanges(true);
+      const response = await client.get('/market/market_codes/exchanges?active=true');
+      const exchangeList = response.data.rows || response.data || [];
+      setExchanges(exchangeList.map((e: any) => ({
+        value: e.exchange,
+        label: e.exchange
+      })));
+    } catch (error) {
+      console.error('Failed to fetch exchanges from API:', error);
+      // API调用失败时使用默认数据
+      setExchanges([
+        { value: 'NASDAQ', label: 'NASDAQ' },
+        { value: 'NYSE', label: 'NYSE' },
+        { value: 'HKEX', label: 'HKEX' }
+      ]);
+    } finally {
+      setIsLoadingExchanges(false);
+    }
+  };
+  
+  // 根据选中的交易所获取代码列表
+  const fetchSymbolsByExchange = async (selectedExchange: string) => {
+    try {
+      setIsLoadingSymbols(true);
+      const response = await client.get(`/market/market_codes?exchange=${selectedExchange}&active=true`);
+      const symbolList = response.data.rows || response.data || [];
+      setSymbols(symbolList.map((s: any) => ({
+        code: s.code,
+        name: s.name,
+        exchange: s.exchange,
+        type: s.type
+      })));
+      // 如果有数据，设置第一个为默认选中
+      if (symbolList.length > 0) {
+        setSymbol(symbolList[0].code);
+      }
+    } catch (error) {
+      console.error('Failed to fetch symbols by exchange from API:', error);
+      // API调用失败时使用默认数据
+      const defaultSymbols = [
+        { code: 'AAPL', name: '苹果', exchange: selectedExchange, type: 'Stock' },
+        { code: 'MSFT', name: '微软', exchange: selectedExchange, type: 'Stock' },
+        { code: 'AMZN', name: '亚马逊', exchange: selectedExchange, type: 'Stock' },
+      ];
+      setSymbols(defaultSymbols);
+      if (defaultSymbols.length > 0) {
+        setSymbol(defaultSymbols[0].code);
+      }
+    } finally {
+      setIsLoadingSymbols(false);
     }
   };
 
@@ -224,7 +246,7 @@ const Dashboard: React.FC = () => {
         end: new Date().toISOString()
       };
       
-      const response = await client.post('/backtest', {
+      const response = await client.post('/api/backtest', {
         params: backtestParams,
         strategy: strategyName
       });
@@ -323,24 +345,22 @@ const Dashboard: React.FC = () => {
   // 加载symbol数据和市场概览数据
   useEffect(() => {
     const loadSymbols = async () => {
-      setIsLoadingSymbols(true);
-      try {
-        const symbolsData = await fetchSymbolsFromCSV();
-        setSymbols(symbolsData);
-        // 如果有数据，设置第一个为默认选中
-        if (symbolsData.length > 0 && !symbolsData.find(s => s.code === symbol)) {
-          setSymbol(symbolsData[0].code);
-        }
-        // 加载市场概览数据
-        await loadMarketOverview(symbolsData);
-      } catch (error) {
-        console.error('Error loading symbols:', error);
-      } finally {
-        setIsLoadingSymbols(false);
+      // 先加载交易所列表
+      await fetchExchangesFromAPI();
+      // 如果没有选中的交易所，默认选择第一个交易所
+      if (exchanges.length > 0 && !exchange) {
+        setExchange(exchanges[0].value);
       }
     };
     loadSymbols();
   }, []);
+  
+  // 当选中的交易所变化时，加载对应的代码列表
+  useEffect(() => {
+    if (exchange) {
+      fetchSymbolsByExchange(exchange);
+    }
+  }, [exchange]);
 
 
 
@@ -1247,17 +1267,32 @@ const Dashboard: React.FC = () => {
         {/* 顶部工具栏 */}
         <div style={{ padding: '12px 16px', backgroundColor: '#1E1E2E', borderBottom: '1px solid #3E3E5A' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
+            {/* 交易所选择器 */}
+            <div style={{ marginRight: '16px' }}>
+              <Select
+                value={exchange}
+                onChange={setExchange}
+                style={{ width: '120px', backgroundColor: '#FFFFFF', borderColor: '#4E4E6A', color: '#000' }}
+                options={exchanges}
+                loading={isLoadingExchanges}
+                placeholder="选择交易所"
+                size="small"
+                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } } }}
+              />
+            </div>
+            
             {/* 股票选择器 */}
             <div style={{ marginRight: '16px' }}>
               <Select
                 value={symbol}
                 onChange={setSymbol}
-                style={{ width: '120px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
+                style={{ width: '120px', backgroundColor: '#FFFFFF', borderColor: '#4E4E6A', color: '#000' }}
                 options={symbols.map(s => ({ label: s.code, value: s.code }))}
                 loading={isLoadingSymbols}
-                placeholder="选择股票"
+                placeholder="选择代码"
                 size="small"
-                styles={{ popup: { root: { backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' } } }}
+                disabled={!exchange}
+                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } } }}
                 optionFilterProp="label"
                 filterOption={(input, option) => {
                   if (!option) return false;

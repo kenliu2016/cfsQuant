@@ -1,0 +1,25 @@
+loggers:
+  db:
+    level: INFO
+    format: "%(asctime)s [%(levelname)s] [DB] %(message)s"
+    filename: "db.log"
+    mode: "a"
+  
+  api:
+    level: INFO
+    format: "%(asctime)s [%(levelname)s] [API] %(message)s"
+    filename: "api.log"
+    mode: "a"
+    
+  trader:
+    level: INFO
+    format: "%(asctime)s [%(levelname)s] [TRADER] %(message)s"
+    filename: "trader.log"
+    mode: "a"
+    
+defaults:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(message)s"
+  directory: "logs"
+  mode: "a"
+  propagate: false

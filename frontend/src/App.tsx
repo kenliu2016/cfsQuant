@@ -8,6 +8,7 @@ import Tuning from './pages/Tuning';
 import Monitor from './pages/Monitor';
 import Reports from './pages/Reports';
 import Progress from './pages/Progress';
+import ReportDetail from './pages/ReportDetail';
 import './custom-menu.css';
 
 const { Sider, Content } = Layout;
@@ -32,20 +33,15 @@ const App: React.FC = () => {
       label: 'Strategy',
       onClick: () => navigate('/strategy'),
     },
+        {
+      key: 'reports',
+      label: 'Reports',
+      onClick: () => navigate('/reports'),
+    },
     {
       key: 'tuning',
       label: 'Tuning',
       onClick: () => navigate('/tuning'),
-    },
-    {
-      key: 'monitor',
-      label: 'Monitor',
-      onClick: () => navigate('/monitor'),
-    },
-    {
-      key: 'reports',
-      label: 'Reports',
-      onClick: () => navigate('/reports'),
     },
     {
       key: 'progress',
@@ -105,6 +101,7 @@ const App: React.FC = () => {
             <Route path="/tuning" element={<Tuning />} />
             <Route path="/monitor" element={<Monitor />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/reports/:runId" element={<ReportDetail />} />
             <Route path="/progress" element={<Progress />} />
             <Route path="*" element={<Dashboard />} />
           </Routes>

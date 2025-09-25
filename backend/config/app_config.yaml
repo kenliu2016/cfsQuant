@@ -1,0 +1,20 @@
+app:
+  name: "Trading Suite"
+  version: "1.0.0"
+  debug: false
+  
+logging:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(message)s"
+  directory: "logs"
+  
+database:
+  pool_size: 20
+  max_overflow: 40
+  pool_timeout: 30
+  pool_recycle: 1800
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0

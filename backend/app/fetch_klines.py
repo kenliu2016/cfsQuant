@@ -23,7 +23,7 @@ MAX_RETRIES = 3
 SLEEP_BASE = 2
 
 INTERVAL_MAP = {'1m': '1m', '1h': '1h', '1d': '1d'}
-TABLE_MAP = {'1m': 'minute_realtime_1', '1h': 'hour_realtime_1', '1d': 'day_realtime_1'}
+TABLE_MAP = {'1m': 'minute_realtime', '1h': 'hour_realtime', '1d': 'day_realtime'}
 
 # ---------------- 限速信号量 ----------------
 BINANCE_SEMAPHORE = asyncio.Semaphore(5)  # 并发数控制

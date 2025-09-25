@@ -10,6 +10,7 @@ import os
 import asyncio
 from typing import Dict, Any, Optional, AsyncGenerator
 import yaml
+from .common import LoggerFactory
 
 # 全局变量，用于缓存数据库引擎
 _engine = None
@@ -275,20 +276,21 @@ def fetch_df(query: str, config_path: Optional[str] = None, **kwargs):
 
 async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
     """异步执行SQL查询并返回pandas DataFrame"""
-    import logging
-    import inspect
-    logger = logging.getLogger(__name__)
+    import logging  # 添加缺失的logging模块导入
+    logger = LoggerFactory.get_logger('db')
     # 设置为INFO级别以确保日志可见
     logger.setLevel(logging.INFO)
     
     if not HAS_ASYNC:
         # 如果没有异步支持，降级为同步查询
+        logger.warning("无异步支持，降级为同步查询")
         return fetch_df(query, config_path, **kwargs)
-    
+        
     try:
         import pandas as pd
         from sqlalchemy import text
     except ImportError:
+        logger.error("未安装必要的包")
         raise ImportError("未安装必要的包，请先执行: pip install pandas sqlalchemy")
     
     import asyncio
@@ -356,6 +358,9 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
                 del chunks
 
             # 优化：数据类型转换，减少内存使用
+            # 定义需要保持为float64的特殊列
+            float64_columns = ['open', 'high', 'low', 'close', 'volume', 'price', 'amount', 'fee', 'nav', 'drawdown']
+            
             for col in df.columns:
                 # 尝试将数值列转换为更高效的数据类型
                 if pd.api.types.is_integer_dtype(df[col]):
@@ -363,8 +368,12 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
                     if not df[col].isna().any():
                         df[col] = df[col].astype('int32')  # 使用更小的整数类型
                 elif pd.api.types.is_float_dtype(df[col]):
-                    # 对于浮点数，可以使用float32来减少内存使用
-                    df[col] = df[col].astype('float32')
+                    # 对于特殊的浮点数列，保持为float64以避免计算精度问题
+                    if col.lower() in float64_columns:
+                        df[col] = df[col].astype('float64')
+                    else:
+                        # 对于其他浮点数列，可以使用float32来减少内存使用
+                        df[col] = df[col].astype('float32')
                 elif pd.api.types.is_object_dtype(df[col]):
                     # 尝试推断并转换对象列
                     try:
@@ -406,7 +415,6 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
         logger.error(f"数据库操作失败: {type(e).__name__}: {e}")
         raise
     finally:
-        # 确保结果集被关闭 - 直接检查result是否不为None
         if result is not None:
             try:
                 logger.debug(f"关闭结果集，类型: {type(result)}")
@@ -522,7 +530,7 @@ def execute(query: str, config_path: Optional[str] = None, **kwargs):
 async def execute_async(query: str, config_path: Optional[str] = None, **kwargs):
     """异步执行SQL语句（适合非查询语句，如INSERT、UPDATE、DELETE等）"""
     if not HAS_ASYNC:
-        # 如果没有异步支持，降级为同步操作
+        # 如果没有异 asynchronous support, downgrade to synchronous operation
         execute(query, config_path)
         return
     
@@ -587,3 +595,24 @@ def get_session():
             raise
         finally:
             session.close()
+
+class DBConnectionManager:
+    """数据库连接管理器单例类"""
+    _instance = None
+    
+    def __init__(self):
+        self._sync_pool = None
+        self._async_pool = None
+        
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+        
+    async def init_pools(self):
+        """初始化连接池"""
+        if not self._sync_pool:
+            self._sync_pool = get_engine()
+        if not self._async_pool:
+            self._async_pool = await get_async_engine()

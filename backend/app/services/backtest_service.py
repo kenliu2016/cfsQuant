@@ -591,6 +591,18 @@ class BacktestEngine:
             backtest_service_logger.warning(f"回测ID={backtest_id}: 输入数据为空，无法执行回测")
             return {"run_id": backtest_id, "nav": [], "signals": [], "metrics": {}}
         
+        # 确保关键列的数据类型正确
+        numeric_columns = ['open', 'high', 'low', 'close', 'volume', 'price', 'amount', 'fee', 'nav', 'drawdown']
+        for col in numeric_columns:
+            if col in df.columns:
+                try:
+                    # 确保列是数值类型，并且为float64以提高计算精度
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
+                    # 替换NaN值为0
+                    df[col] = df[col].fillna(0)
+                except Exception as e:
+                    backtest_service_logger.warning(f"回测ID={backtest_id}: 转换列 {col} 为float64类型时出错: {str(e)}")
+        
         # 合并参数
         merged_params = {**DEFAULT_BACKTEST_PARAMS, **(params or {})}
         
@@ -792,6 +804,16 @@ class BacktestEngine:
                         prev_row = row
                         continue
 
+            # 执行交易前确保参数类型正确
+            try:
+                delta_qty = float(delta_qty)
+                exec_price = float(exec_price)
+                fee_rate = float(fee_rate)
+            except (ValueError, TypeError) as e:
+                backtest_service_logger.error(f"回测ID={backtest_id}: 参数类型转换失败: {str(e)}")
+                prev_row = row
+                continue
+                
             # 执行交易
             fee, realized_pnl = self.position_manager.execute_trade(delta_qty, exec_price, fee_rate)
             
@@ -832,10 +854,24 @@ class BacktestEngine:
             
             prev_row = row
         
+        # 确保nav_list中的值都是浮点数
+        try:
+            nav_list = [float(nav) for nav in nav_list]
+        except (ValueError, TypeError) as e:
+            backtest_service_logger.error(f"回测ID={backtest_id}: 转换净值数据为浮点数失败: {str(e)}")
+            nav_list = []
+        
+        # 确保initial_capital是浮点数
+        try:
+            initial_capital = float(params.get("initial_capital", 100000))
+        except (ValueError, TypeError) as e:
+            backtest_service_logger.error(f"回测ID={backtest_id}: 转换初始资金为浮点数失败: {str(e)}")
+            initial_capital = 100000.0
+        
         # 计算指标
         backtest_service_logger.debug(f"开始计算回测指标: 交易数量={len(trades)}, 净值数据点数量={len(nav_list)}")
         metrics = MetricsCalculator.calculate_performance_metrics(
-            nav_list, params.get("initial_capital", 100000), trades
+            nav_list, initial_capital, trades
         )
         
         # 构建结果

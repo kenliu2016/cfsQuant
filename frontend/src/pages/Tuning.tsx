@@ -24,17 +24,18 @@ interface RangeConfig {
   currentValue?: any;
 }
 
-export default function Tuning(){
-  const [form] = Form.useForm()
-  const [task, setTask] = useState<string | null>(null)
-  const [status] = useState<{status?: string, total?: number, finished?: number, runs?: any[]} | null>(null)
-  const [timer, setTimer] = useState<any>(null)
-  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([])
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
-  const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([])
-  const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
-  const [strategyParams, setStrategyParams] = useState<{[key: string]: ParamConfig}>({})
-  const navigate = useNavigate()
+export default function Tuning() {
+  const [form] = Form.useForm();
+  const [task, setTask] = useState<string | null>(null);
+  const [status] = useState<{status?: string, total?: number, finished?: number, runs?: any[]} | null>(null);
+  const [timer, setTimer] = useState<any>(null);
+  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([]);
+  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([]);
+  const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([]);
+  const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([]);
+  const [strategyParams, setStrategyParams] = useState<{[key: string]: ParamConfig}>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
   // 解析CSV文件加载标的数据
   const loadSymbols = async () => {
@@ -187,58 +188,68 @@ export default function Tuning(){
   },[timer])
 
   const onRun = async () => {
-    const v = await form.validateFields()
-    
-    // 构建参数范围对象
-    const paramsConfig = v.paramsConfig as {[key: string]: RangeConfig} || {};
-    const paramsGrid: {[key: string]: any[]} = {};
-    
-    // 为每个参数创建值列表
-    Object.entries(paramsConfig).forEach(([key, config]) => {
-      const { min, max, step, type } = config as RangeConfig;
-      
-      if (type === 'range' && min !== undefined && max !== undefined && step !== undefined) {
-        // 生成范围内的值列表
-        const values: number[] = [];
-        let current = min;
-        while (current <= max) {
-          values.push(current);
-          // 避免浮点精度问题
-          current = parseFloat((current + step).toFixed(10));
-        }
-        paramsGrid[key] = values;
-      } else if (type === 'list' && Array.isArray(config.options)) {
-        // 直接使用选项列表
-        paramsGrid[key] = config.options;
-      }
-    });
-    
-    const payload = { 
-      strategy: v.strategy, 
-      params: paramsGrid, 
-      code: v.code, 
-      start: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
-      end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
-      interval: v.interval
-    };
+    // 设置加载状态，防止二次点击
+    setIsLoading(true);
     
     try {
-        const r = await client.post('/tuning', payload)
-        const task_id = r.data.task_id
-        setTask(task_id)
-        message.success('任务已提交: ' + task_id)
+      const v = await form.validateFields()
+      
+      // 构建参数范围对象
+      const paramsConfig = v.paramsConfig as {[key: string]: RangeConfig} || {};
+      const paramsGrid: {[key: string]: any[]} = {};
+      
+      // 为每个参数创建值列表
+      Object.entries(paramsConfig).forEach(([key, config]) => {
+        const { min, max, step, type } = config as RangeConfig;
         
-        // 清除之前可能存在的定时器
-        if (timer) {
-          clearInterval(timer);
-          setTimer(null);
+        if (type === 'range' && min !== undefined && max !== undefined && step !== undefined) {
+          // 生成范围内的值列表
+          const values: number[] = [];
+          let current = min;
+          while (current <= max) {
+            values.push(current);
+            // 避免浮点精度问题
+            current = parseFloat((current + step).toFixed(10));
+          }
+          paramsGrid[key] = values;
+        } else if (type === 'list' && Array.isArray(config.options)) {
+          // 直接使用选项列表
+          paramsGrid[key] = config.options;
         }
-        
-        // 跳转到Progress页面并传递task_id参数
-        navigate(`/progress?task_id=${task_id}`)
+      });
+      
+      // 构建完整的参数配置JSON字符串，包含参数值、最大值、最小值、步长等信息
+      const fullParamsConfigJSON = JSON.stringify(paramsConfig);
+      
+      const payload = { 
+        strategy: v.strategy, 
+        params: paramsGrid,
+        params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
+        code: v.code, 
+        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
+        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
+        interval: v.interval
+      };
+      
+      const r = await client.post('/tuning', payload)
+      const task_id = r.data.task_id
+      setTask(task_id)
+      message.success('任务已提交: ' + task_id)
+      
+      // 清除之前可能存在的定时器
+      if (timer) {
+        clearInterval(timer);
+        setTimer(null);
+      }
+      
+      // 跳转到Progress页面并传递task_id参数
+      navigate(`/progress?task_id=${task_id}`)
     } catch (error) {
       console.error('提交寻优任务失败:', error);
       message.error('提交任务失败，请重试');
+    } finally {
+      // 无论成功失败，都重置加载状态
+      setIsLoading(false);
     }
   }
 
@@ -409,7 +420,8 @@ export default function Tuning(){
             <Button 
               type="primary" 
               onClick={onRun}
-              disabled={Object.keys(strategyParams).length === 0}
+              disabled={Object.keys(strategyParams).length === 0 || isLoading}
+              loading={isLoading}
               size="large"
               icon={<PlayCircleOutlined />}
               className="run-button"

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
-from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles
+from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
@@ -37,7 +37,9 @@ def process_market_data(df, context=""):
     # 检查datetime列是否存在
     datetime_columns = [col for col in processed_df.columns if col.lower() in ['datetime', 'date', 'time']]
     if not datetime_columns:
-        logger.warning("DataFrame中未找到datetime相关列")
+        # 只有在不是处理market_codes数据时才输出警告
+        if 'market_codes' not in context:
+            logger.warning("DataFrame中未找到datetime相关列")
     else:
         datetime_col = datetime_columns[0]
         logger.info(f"使用{datetime_col}作为datetime列")
@@ -449,3 +451,78 @@ def refresh_market_cache(code: str = Query(None, description="可选的股票代
     except Exception as e:
         logger.error(f"刷新市场数据缓存失败: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+@router.get("/market_codes/exchanges")
+def get_exchanges(active: bool = Query(True, description="是否只获取活跃的交易所")):
+    """
+    获取所有可用的交易所列表
+    
+    Args:
+        active: 是否只获取活跃的交易所
+        
+    Returns:
+        交易所列表
+    """
+    logger.info(f"接收到获取交易所列表请求: active={active}")
+    
+    try:
+        df = get_market_exchanges(active)
+        
+        # 处理结果
+        context = f"market_codes/exchanges - active={active}"
+        processed_df = process_market_data(df, context)
+        
+        # 转换为字典列表
+        result = processed_df.to_dict(orient="records")
+        
+        logger.info(f"返回交易所列表: 共{len(result)}条记录")
+        return {
+            "rows": result,
+            "total_count": len(result)
+        }
+    except Exception as e:
+        logger.error(f"获取交易所列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取交易所列表失败")
+
+@router.get("/market_codes")
+def get_codes(exchange: str = Query(None, description="交易所代码，不提供则获取所有"), 
+                active: bool = Query(True, description="是否只获取活跃的代码")):
+    """
+    获取市场代码列表，可以按交易所过滤
+    
+    Args:
+        exchange: 交易所代码，不提供则获取所有
+        active: 是否只获取活跃的代码
+        
+    Returns:
+        市场代码列表
+    """
+    logger.info(f"接收到获取市场代码列表请求: exchange={exchange}, active={active}")
+    
+    try:
+        # 直接调用底层服务函数，不经过缓存
+        df = market_data_service.get_market_codes(exchange, active)
+        logger.info(f"直接从服务获取数据，形状={df.shape}")
+        if not df.empty:
+            logger.info(f"直接从服务获取的数据预览: {df.head(2).to_dict('records')}")
+        
+        # 处理结果
+        context = f"market_codes - exchange={exchange}, active={active}"
+        processed_df = process_market_data(df, context)
+        logger.info(f"处理后的数据形状={processed_df.shape}")
+        if not processed_df.empty:
+            logger.info(f"处理后的数据预览: {processed_df.head(2).to_dict('records')}")
+        
+        # 转换为字典列表
+        result = processed_df.to_dict(orient="records")
+        logger.info(f"转换后的结果数量: {len(result)}")
+        if result:
+            logger.info(f"转换后的结果预览: {result[:2]}")
+        
+        return {
+            "rows": result,
+            "total_count": len(result)
+        }
+    except Exception as e:
+        logger.error(f"获取市场代码列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取市场代码列表失败")

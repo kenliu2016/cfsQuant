@@ -1,7 +1,7 @@
 -- 数据库DDL导出
 -- 数据库: quant
 -- 主机: localhost:5432
--- 导出时间: 2025-09-24 00:25:12
+-- 导出时间: 2025-09-25 07:37:52
 -- 导出内容: 表、视图、索引、序列等
 
 SET statement_timeout = 0;
@@ -47,18 +47,6 @@ CREATE TABLE IF NOT EXISTS public.day_prediction (
 
 -- 表: day_realtime
 CREATE TABLE IF NOT EXISTS public.day_realtime (
-    datetime timestamp NOT NULL,
-    code varchar NOT NULL,
-    open float8 NOT NULL,
-    high float8 NOT NULL,
-    low float8 NOT NULL,
-    close float8 NOT NULL,
-    volume float8 NOT NULL,
-    UNIQUE (datetime, code)
-);
-
--- 表: day_realtime_1
-CREATE TABLE IF NOT EXISTS public.day_realtime_1 (
     exchange varchar NOT NULL,
     code varchar NOT NULL,
     datetime date NOT NULL,
@@ -71,6 +59,18 @@ CREATE TABLE IF NOT EXISTS public.day_realtime_1 (
     created_at timestamp DEFAULT now(),
     updated_at timestamp DEFAULT now(),
     PRIMARY KEY (exchange, code, datetime)
+);
+
+-- 表: day_realtime_2
+CREATE TABLE IF NOT EXISTS public.day_realtime_2 (
+    datetime timestamp NOT NULL,
+    code varchar NOT NULL,
+    open float8 NOT NULL,
+    high float8 NOT NULL,
+    low float8 NOT NULL,
+    close float8 NOT NULL,
+    volume float8 NOT NULL,
+    UNIQUE (datetime, code)
 );
 
 -- 表: equity_curve
@@ -100,8 +100,8 @@ CREATE TABLE IF NOT EXISTS public.grid_levels (
     name text
 );
 
--- 表: hour_realtime_1
-CREATE TABLE IF NOT EXISTS public.hour_realtime_1 (
+-- 表: hour_realtime
+CREATE TABLE IF NOT EXISTS public.hour_realtime (
     exchange varchar NOT NULL,
     code varchar NOT NULL,
     datetime timestamp NOT NULL,
@@ -146,19 +146,6 @@ CREATE TABLE IF NOT EXISTS public.minute_prediction (
 
 -- 表: minute_realtime
 CREATE TABLE IF NOT EXISTS public.minute_realtime (
-    datetime timestamp NOT NULL,
-    code varchar NOT NULL,
-    open float8 NOT NULL,
-    high float8 NOT NULL,
-    low float8 NOT NULL,
-    close float8 NOT NULL,
-    volume float8 NOT NULL,
-    PRIMARY KEY (datetime, code),
-    UNIQUE (datetime, code)
-);
-
--- 表: minute_realtime_1
-CREATE TABLE IF NOT EXISTS public.minute_realtime_1 (
     exchange varchar NOT NULL,
     code varchar NOT NULL,
     datetime timestamp NOT NULL,
@@ -171,6 +158,19 @@ CREATE TABLE IF NOT EXISTS public.minute_realtime_1 (
     created_at timestamp DEFAULT now(),
     updated_at timestamp DEFAULT now(),
     PRIMARY KEY (exchange, code, datetime)
+);
+
+-- 表: minute_realtime_2
+CREATE TABLE IF NOT EXISTS public.minute_realtime_2 (
+    datetime timestamp NOT NULL,
+    code varchar NOT NULL,
+    open float8 NOT NULL,
+    high float8 NOT NULL,
+    low float8 NOT NULL,
+    close float8 NOT NULL,
+    volume float8 NOT NULL,
+    PRIMARY KEY (datetime, code),
+    UNIQUE (datetime, code)
 );
 
 -- 表: notify_config
@@ -306,6 +306,10 @@ CREATE TABLE IF NOT EXISTS public.tuning_tasks (
     start_time timestamp,
     timeout timestamp,
     error text,
+    code text,
+    interval text,
+    end_time timestamp,
+    params text,
     PRIMARY KEY (task_id)
 );
 
@@ -318,17 +322,17 @@ CREATE TABLE IF NOT EXISTS public.tuning_tasks (
 -- 索引: idx_day_prediction_code_time (表: day_prediction)
 CREATE INDEX idx_day_prediction_code_time ON public.day_prediction USING btree (code, datetime);
 
--- 索引: idx_day_realtime_code_time (表: day_realtime)
-CREATE INDEX idx_day_realtime_code_time ON public.day_realtime USING btree (code, datetime);
+-- 索引: idx_day_realtime_1_code_time (表: day_realtime)
+CREATE INDEX idx_day_realtime_1_code_time ON public.day_realtime USING btree (code, datetime DESC);
 
--- 索引: idx_day_realtime_datetime (表: day_realtime)
-CREATE INDEX idx_day_realtime_datetime ON public.day_realtime USING btree (datetime);
+-- 索引: idx_day_realtime_code_time (表: day_realtime_2)
+CREATE INDEX idx_day_realtime_code_time ON public.day_realtime_2 USING btree (code, datetime);
 
--- 索引: idx_day_realtime_1_code_time (表: day_realtime_1)
-CREATE INDEX idx_day_realtime_1_code_time ON public.day_realtime_1 USING btree (code, datetime DESC);
+-- 索引: idx_day_realtime_datetime (表: day_realtime_2)
+CREATE INDEX idx_day_realtime_datetime ON public.day_realtime_2 USING btree (datetime);
 
--- 索引: idx_hour_realtime_1_code_time (表: hour_realtime_1)
-CREATE INDEX idx_hour_realtime_1_code_time ON public.hour_realtime_1 USING btree (code, datetime DESC);
+-- 索引: idx_hour_realtime_1_code_time (表: hour_realtime)
+CREATE INDEX idx_hour_realtime_1_code_time ON public.hour_realtime USING btree (code, datetime DESC);
 
 -- 索引: idx_metrics_run (表: metrics)
 CREATE INDEX idx_metrics_run ON public.metrics USING btree (run_id);
@@ -336,14 +340,14 @@ CREATE INDEX idx_metrics_run ON public.metrics USING btree (run_id);
 -- 索引: idx_minute_prediction_code_time (表: minute_prediction)
 CREATE INDEX idx_minute_prediction_code_time ON public.minute_prediction USING btree (code, datetime);
 
--- 索引: idx_minute_realtime_code_time (表: minute_realtime)
-CREATE INDEX idx_minute_realtime_code_time ON public.minute_realtime USING btree (code, datetime);
+-- 索引: idx_minute_realtime_1_code_time (表: minute_realtime)
+CREATE INDEX idx_minute_realtime_1_code_time ON public.minute_realtime USING btree (code, datetime DESC);
 
--- 索引: idx_minute_realtime_datetime (表: minute_realtime)
-CREATE INDEX idx_minute_realtime_datetime ON public.minute_realtime USING btree (datetime);
+-- 索引: idx_minute_realtime_code_time (表: minute_realtime_2)
+CREATE INDEX idx_minute_realtime_code_time ON public.minute_realtime_2 USING btree (code, datetime);
 
--- 索引: idx_minute_realtime_1_code_time (表: minute_realtime_1)
-CREATE INDEX idx_minute_realtime_1_code_time ON public.minute_realtime_1 USING btree (code, datetime DESC);
+-- 索引: idx_minute_realtime_datetime (表: minute_realtime_2)
+CREATE INDEX idx_minute_realtime_datetime ON public.minute_realtime_2 USING btree (datetime);
 
 -- 索引: idx_runs_code (表: runs)
 CREATE INDEX idx_runs_code ON public.runs USING btree (code);
@@ -353,6 +357,15 @@ CREATE INDEX idx_runs_strategy ON public.runs USING btree (strategy);
 
 -- 索引: idx_tuning_results_task (表: tuning_results)
 CREATE INDEX idx_tuning_results_task ON public.tuning_results USING btree (task_id);
+
+-- 索引: idx_tuning_tasks_code (表: tuning_tasks)
+CREATE INDEX idx_tuning_tasks_code ON public.tuning_tasks USING btree (code);
+
+-- 索引: idx_tuning_tasks_interval (表: tuning_tasks)
+CREATE INDEX idx_tuning_tasks_interval ON public.tuning_tasks USING btree ("interval");
+
+-- 索引: idx_tuning_tasks_start_end_time (表: tuning_tasks)
+CREATE INDEX idx_tuning_tasks_start_end_time ON public.tuning_tasks USING btree (start_time, end_time);
 
 -- 索引: idx_tuning_tasks_start_time (表: tuning_tasks)
 CREATE INDEX idx_tuning_tasks_start_time ON public.tuning_tasks USING btree (start_time);
