@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # 后端服务
+  backend:
+    build: ./backend
+    container_name: quant-backend
+    environment:
+      - PGHOST=${PGHOST}
+      - PGPORT=${PGPORT}
+      - PGDATABASE=${PGDATABASE}
+      - PGUSER=${PGUSER}
+      - PGPASSWORD=${PGPASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_DB=${REDIS_DB}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "8000:8000"
+    restart: always
+    volumes:
+      - ./backend/app:/app/backend/app  # 开发模式下挂载代码目录
+
+  # Celery Worker服务 - 用于参数调优
+  celery_worker_tuning:
+    build: ./backend
+    container_name: quant-celery-worker-tuning
+    command: celery -A app.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
+    environment:
+      - PGHOST=${PGHOST}
+      - PGPORT=${PGPORT}
+      - PGDATABASE=${PGDATABASE}
+      - PGUSER=${PGUSER}
+      - PGPASSWORD=${PGPASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_DB=${REDIS_DB}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    depends_on:
+      - backend
+    restart: always
+    volumes:
+      - ./backend/app:/app/backend/app
+
+  # 前端服务
+  frontend:
+    build: ./frontend
+    container_name: quant-frontend
+    ports:
+      - "80:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000  # 默认为localhost，可以通过.env文件覆盖
+    depends_on:
+      - backend
+    restart: always

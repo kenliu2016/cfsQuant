@@ -7,5 +7,5 @@ asyncpg
 PyYAML
 reportlab
 redis
-rq
+celery
 ta

@@ -1272,12 +1272,12 @@ const Dashboard: React.FC = () => {
               <Select
                 value={exchange}
                 onChange={setExchange}
-                style={{ width: '120px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
+                style={{ width: '120px', backgroundColor: '#FFFFFF', borderColor: '#4E4E6A', color: '#000' }}
                 options={exchanges}
                 loading={isLoadingExchanges}
                 placeholder="选择交易所"
                 size="small"
-                styles={{ popup: { root: { backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' } } }}
+                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } } }}
               />
             </div>
             
@@ -1286,13 +1286,13 @@ const Dashboard: React.FC = () => {
               <Select
                 value={symbol}
                 onChange={setSymbol}
-                style={{ width: '120px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
+                style={{ width: '120px', backgroundColor: '#FFFFFF', borderColor: '#4E4E6A', color: '#000' }}
                 options={symbols.map(s => ({ label: s.code, value: s.code }))}
                 loading={isLoadingSymbols}
                 placeholder="选择代码"
                 size="small"
                 disabled={!exchange}
-                styles={{ popup: { root: { backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' } } }}
+                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } } }}
                 optionFilterProp="label"
                 filterOption={(input, option) => {
                   if (!option) return false;
