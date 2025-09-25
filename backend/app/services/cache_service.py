@@ -72,7 +72,6 @@ class RedisManager:
                 'health_check_interval': 15,  # 更频繁的健康检查
                 'max_connections': 50,  # 连接池大小
                 'socket_connect_timeout': 5,  # 增加连接超时时间
-                'tcp_keepalive': True
             }
             
             # 如果设置了密码，则添加密码参数
