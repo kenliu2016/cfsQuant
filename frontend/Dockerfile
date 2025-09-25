@@ -28,9 +28,9 @@ ENV VITE_API_BASE_URL=http://localhost:8000
 # 复制构建产物到Nginx的静态文件目录
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 
-# 创建一个脚本，用于在Nginx启动前替换index.html中的API地址
-RUN echo "#!/bin/sh\n\n# 替换静态文件中的API地址占位符\nfor file in $(find /usr/share/nginx/html -type f -name '*.js' -o -name '*.html' -o -name '*.css'); do\n  sed -i 's|http://localhost:8000|'"$VITE_API_BASE_URL"'|g' "$file"\ndone\n\n# 启动Nginx\nexec nginx -g 'daemon off;'" > /docker-entrypoint.d/replace_api_url.sh && \
-    chmod +x /docker-entrypoint.d/replace_api_url.sh
+# 复制替换API地址的脚本到容器中
+COPY replace_api_url.sh /docker-entrypoint.d/
+RUN chmod +x /docker-entrypoint.d/replace_api_url.sh
 
 # 暴露端口
 EXPOSE 80
