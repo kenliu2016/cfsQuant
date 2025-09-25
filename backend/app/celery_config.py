@@ -30,12 +30,19 @@ _db_config = load_db_config()
 REDIS_HOST = os.environ.get('REDIS_HOST', _db_config.get('redis', {}).get('host', 'localhost'))
 REDIS_PORT = int(os.environ.get('REDIS_PORT', _db_config.get('redis', {}).get('port', 6379)))
 REDIS_DB = int(os.environ.get('REDIS_DB', _db_config.get('redis', {}).get('db', 0)))
+REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', _db_config.get('redis', {}).get('password', ''))
 
 # 创建Celery应用实例
+# 根据是否有密码构建不同的Redis连接URL
+if REDIS_PASSWORD:
+    redis_url = f'redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}'
+else:
+    redis_url = f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}'
+
 celery_app = Celery(
     'cfsQuant',
-    broker=f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}',
-    backend=f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}',
+    broker=redis_url,
+    backend=redis_url,
     include=['app.services.tuning_service']
 )
 

@@ -1,6 +1,7 @@
 import os
 import redis
 import json
+import socket
 from functools import wraps
 from typing import Any, Callable, Optional, Dict, Tuple, List
 import hashlib
@@ -41,6 +42,7 @@ _config = load_db_config()
 REDIS_HOST = os.environ.get('REDIS_HOST', _config.get('redis', {}).get('host', 'localhost'))
 REDIS_PORT = int(os.environ.get('REDIS_PORT', _config.get('redis', {}).get('port', 6379)))
 REDIS_DB = int(os.environ.get('REDIS_DB', _config.get('redis', {}).get('db', 0)))
+REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', _config.get('redis', {}).get('password', ''))
 
 # Redis连接管理类
 class RedisManager:
@@ -53,27 +55,38 @@ class RedisManager:
     
     def connect(self):
         try:
-            # 配置Redis连接池
-            pool = redis.ConnectionPool(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                db=REDIS_DB,
-                decode_responses=True,
-                socket_timeout=5,
-                socket_keepalive=True,
-                retry_on_timeout=True,
-                health_check_interval=30,
-                max_connections=50,  # 连接池大小
-                socket_connect_timeout=3  # 连接超时时间
-            )
+            # 配置Redis连接池 - 增强稳定性配置
+            pool_params = {
+                'host': REDIS_HOST,
+                'port': REDIS_PORT,
+                'db': REDIS_DB,
+                'decode_responses': True,
+                'socket_timeout': 10,  # 增加超时时间
+                'socket_keepalive': True,
+                'socket_keepalive_options': {
+                    socket.TCP_KEEPIDLE: 60,
+                    socket.TCP_KEEPINTVL: 10,
+                    socket.TCP_KEEPCNT: 5
+                },
+                'retry_on_timeout': True,
+                'health_check_interval': 15,  # 更频繁的健康检查
+                'max_connections': 50,  # 连接池大小
+                'socket_connect_timeout': 5,  # 增加连接超时时间
+                'tcp_keepalive': True
+            }
+            
+            # 如果设置了密码，则添加密码参数
+            if REDIS_PASSWORD:
+                pool_params['password'] = REDIS_PASSWORD
+                
+            pool = redis.ConnectionPool(**pool_params)
             self.client = redis.Redis(connection_pool=pool)
             self.client.ping()
             self.is_redis_available = True
-            # Redis连接成功的信息已省略，以减少日志输出
+            logger.info(f"Redis连接成功: {REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}")
         except Exception as e:
             self.client = {}
             self.is_redis_available = False
-            # 记录连接失败，但使用WARNING级别而不是ERROR级别，减少日志噪音
             logger.warning(f"Redis连接失败，将使用内存缓存: {e}")
     
     def get_client(self):
@@ -88,6 +101,50 @@ class RedisManager:
 # 使用单例模式
 _redis_manager = RedisManager()
 _redis_client = _redis_manager.get_client()
+
+# Redis操作装饰器 - 添加重试逻辑
+def redis_operation_with_retry(max_retries=3, retry_delay=0.5):
+    """
+    Redis操作重试装饰器，针对连接重置等临时性错误提供重试机制
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            retry_count = 0
+            last_error = None
+            
+            while retry_count <= max_retries:
+                try:
+                    return func(self, *args, **kwargs)
+                except redis.RedisError as e:
+                    error_code = str(e).split()[0] if str(e).split() else ""
+                    # 特定错误类型才重试（连接重置、超时等）
+                    if any(err in str(e).lower() for err in ['connection reset by peer', 'timed out', 'error 104', 'error -2']):
+                        retry_count += 1
+                        last_error = e
+                        if retry_count <= max_retries:
+                            logger.warning(f"Redis操作失败，尝试重试({retry_count}/{max_retries}): {e}")
+                            time.sleep(retry_delay * (2 ** (retry_count - 1)))  # 指数退避
+                        else:
+                            logger.error(f"Redis操作重试失败({max_retries}次): {e}")
+                            # 更新Redis连接状态
+                            if hasattr(_redis_manager, 'is_redis_available'):
+                                _redis_manager.is_redis_available = False
+                            # 尝试重新连接
+                            _redis_manager.connect()
+                            # 如果仍然失败，使用内存缓存
+                            if not _redis_manager.is_redis_available:
+                                logger.warning("Redis连接不可用，将使用内存缓存")
+                                raise e
+                    else:
+                        # 非临时性错误，直接抛出
+                        logger.error(f"Redis操作错误: {e}")
+                        raise e
+            
+            # 所有重试都失败，抛出最后一个错误
+            raise last_error
+        return wrapper
+    return decorator
 
 # 默认过期时间（秒）
 DEFAULT_EXPIRE_TIME = 60 * 5  # 5分钟
@@ -134,6 +191,7 @@ class CacheService:
         return hashlib.md5(key_str.encode()).hexdigest()
 
     @staticmethod
+    @redis_operation_with_retry(max_retries=3)
     def get(key: str) -> Optional[Any]:
         """从缓存获取数据"""
         cache_metrics['total'] += 1
@@ -173,6 +231,7 @@ class CacheService:
             return None
 
     @staticmethod
+    @redis_operation_with_retry(max_retries=3)
     def set(key: str, value: Any, expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
         """设置缓存数据，处理各种不可JSON序列化类型，特别是datetime对象"""
         # 获取最新的客户端实例
@@ -293,6 +352,7 @@ class CacheService:
                 return "[Unserializable Object]"
 
     @staticmethod
+    @redis_operation_with_retry(max_retries=3)
     def delete(key: str) -> None:
         """删除缓存数据"""
         # 获取最新的客户端实例
@@ -305,6 +365,7 @@ class CacheService:
             client.delete(key)
 
     @staticmethod
+    @redis_operation_with_retry(max_retries=3)
     def clear(pattern: str = '*') -> None:
         """清除匹配模式的缓存"""
         # 获取最新的客户端实例
