@@ -1,9 +1,9 @@
-import { Card, Table, Button, Space, message, Select } from 'antd'
-import { useEffect, useState, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import client from '../api/client'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
+import { Card, Table, Button, Space, message, Select } from 'antd'
 
 // 格式化日期时间函数
 const formatDateTime = (dateString: string) => {
@@ -29,6 +29,42 @@ const Reports = () => {
   // 查看详情处理函数
   const handleViewDetail = (runId: string) => {
     navigate(`/reports/${runId}`)
+  }
+
+  // 单条删除处理函数
+  const handleSingleDelete = async (runId: string) => {
+    try {
+      await client.delete(`/api/runs/${runId}`);
+      message.success('删除成功');
+      // 重新加载数据
+      loadRuns(currentPage, pageSize);
+    } catch (error) {
+      console.error('删除失败:', error);
+      message.error('删除失败，请重试');
+    }
+  }
+
+  // 批量删除处理函数
+  const handleBatchDelete = async () => {
+    if (selected.length === 0) {
+      message.warning('请选择要删除的回测报告');
+      return;
+    }
+
+    try {
+      // 修改为与后端API匹配的POST请求
+      await client.post('/api/runs/batch_delete', {
+        ids: selected
+      });
+      message.success(`成功删除 ${selected.length} 条回测报告`);
+      // 清空选择
+      setSelected([]);
+      // 重新加载数据
+      loadRuns(currentPage, pageSize);
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      message.error('批量删除失败，请重试');
+    }
   }
 
   // 加载回测列表
@@ -117,16 +153,13 @@ const Reports = () => {
     // 确保排序字段和排序顺序都不为空
     if (sorter.field && sorter.order) {
       // 直接使用Table组件传递的排序字段，确保与columns中的key一致
-
-      // 立即更新排序状态，这样用户可以立即看到排序指示器的变化
       setSortField(sorter.field);
       setSortOrder(sorter.order);
       
       // 重置到第一页，因为排序后的数据分布可能完全不同
       setCurrentPage(1);
-      
-      // 注意：实际的数据重新加载会由useEffect处理，这里不再重复调用loadRuns
-    } else {
+      // 重新加载数据
+      loadRuns(1, pageSize);
     }
   }
 
@@ -257,15 +290,28 @@ const Reports = () => {
     },
     { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime },
     {
-      title: '详情',
-      key: 'detail',
+      title: '操作',
+      key: 'action',
       render: (_: any, record: { run_id: string }) => (
-        <Button 
-          type="link" 
-          onClick={() => handleViewDetail(record.run_id)}
-        >
-          查看详情
-        </Button>
+        <>
+          <Button 
+            type="link" 
+            onClick={() => handleViewDetail(record.run_id)}
+          >
+            查看详情
+          </Button>
+          <Button 
+            type="link" 
+            danger 
+            onClick={() => {
+              if (window.confirm('确定要删除这条回测报告吗？')) {
+                handleSingleDelete(record.run_id);
+              }
+            }}
+          >
+            删除
+          </Button>
+        </>
       )
     }
   ]
@@ -283,13 +329,13 @@ const Reports = () => {
     }
   }, [sortField, sortOrder])
   
-  // 单独处理分页变化的effect
+  // 监听排序状态变化，触发数据重新加载
   useEffect(() => {
-    // 只有当currentPage或pageSize变化且sortField已经设置时，才触发重新加载
-    if (currentPage > 0 && pageSize > 0 && sortField) {
-      loadRuns(currentPage, pageSize)
+    // 只有当sortField有实际值时才触发重新加载，避免不必要的刷新
+    if (sortField && sortField.trim() !== '') {
+      loadRuns(currentPage, pageSize);
     }
-  }, [currentPage, pageSize])
+  }, [sortField, sortOrder, currentPage, pageSize])
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -332,6 +378,15 @@ const Reports = () => {
           >
             刷新
           </Button>
+          <Button 
+            type="primary" 
+            danger
+            onClick={handleBatchDelete}
+            disabled={selected.length === 0}
+            className="transition-all duration-300 hover:shadow-md"
+          >
+            批量删除
+          </Button>
         </Space>
         <Table 
           rowKey="run_id" 
@@ -342,6 +397,7 @@ const Reports = () => {
             onChange: (keys)=> setSelected(keys as string[]) 
           }} 
           className="shadow-sm rounded-lg overflow-hidden"
+          scroll={{ x: 1200, y: 600 }}
           pagination={{
             current: currentPage,
             pageSize: pageSize,
@@ -350,6 +406,8 @@ const Reports = () => {
             showQuickJumper: true,
             showTotal: (total) => `共 ${total} 条记录`,
             pageSizeOptions: ['10', '20', '50', '100'],
+            showLessItems: false,
+            size: 'default',
             onChange: handlePageChange,
             onShowSizeChange: handlePageChange
           }}
