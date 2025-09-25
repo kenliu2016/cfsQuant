@@ -5,6 +5,7 @@ import time
 import json
 import logging
 from datetime import datetime
+import traceback  # 添加traceback导入
 
 # 创建logger实例
 logger = logging.getLogger('tuning_service')
@@ -23,6 +24,9 @@ from ..celery_config import celery_app
 logger.info('tuning_service logger initialized')
 
 # 日志配置已完成
+
+# 全局变量：启用内存优化模式
+enable_memory_optimization = True
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
 def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1):
@@ -43,6 +47,14 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
     Returns:
         Dict: 调优结果
     """
+    logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, code={code}")
+    
+    # 初始化计数器和结果列表
+    completed = 0
+    results = []
+    failed_runs = 0
+    max_failures = 5  # 设置最大失败次数限制
+    
     try:
         # 任务开始执行
         
@@ -53,23 +65,30 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         try:
             # 方法1: 原始调用方式
             execute("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time)
+            logger.info(f"任务{task_id}状态已更新为running")
         except Exception as e:
+            logger.warning(f"更新任务状态失败（方法1）: {str(e)}")
             try:
                 # 方法2: 使用字典传递参数
                 params = {"task_id": task_id, "status": "running", "start_time": current_time}
                 execute("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", **params)
+                logger.info(f"任务{task_id}状态已更新为running（方法2）")
             except Exception as e2:
+                logger.warning(f"更新任务状态失败（方法2）: {str(e2)}")
                 try:
                     # 方法3: 直接使用SQL字符串，不使用参数绑定
                     sql = f"UPDATE tuning_tasks SET status = 'running', start_time = '{current_time}', timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = '{task_id}'"
                     execute(sql)
-                    logger.info("方法3调用成功！")
+                    logger.info(f"任务{task_id}状态已更新为running（方法3）")
                 except Exception as e3:
-                    logger.error(f"方法3调用失败: {e3}")
-                    # 如果所有方法都失败，使用原始的execute_async函数
-                    from ..db import execute_async
-                    import asyncio
-                    asyncio.run(execute_async("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time))
+                    logger.error(f"更新任务状态失败（方法3）: {str(e3)}")
+                    try:
+                        # 如果所有方法都失败，使用原始的execute_async函数
+                        from ..db import execute_async
+                        import asyncio
+                        asyncio.run(execute_async("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time))
+                    except Exception as e4:
+                        logger.error(f"使用execute_async更新状态失败: {str(e4)}")
         
         from ..services.market_service import get_candles
         
@@ -114,87 +133,137 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         if df.empty:
             raise ValueError(f"获取的K线数据为空，交易对代码: {code}")
         
+        # 内存优化：只保留必要的列
+        if enable_memory_optimization and not df.empty:
+            required_columns = ['datetime', 'open', 'high', 'low', 'close', 'volume']
+            # 只保留存在的必要列
+            available_columns = [col for col in required_columns if col in df.columns]
+            df = df[available_columns].copy()
+            # 使用更高效的数据类型
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], downcast='float')
+        
         finished = 0
         runs = []
         
         # 遍历所有参数组合
-        for vals in itertools.product(*grids) if keys else [()]:
-            p = {k:v for k,v in zip(keys, vals)} if keys else {}
-            # 构建完整的参数对象，包含interval
-            full_params = {
-                'code': code,
-                'start': start_time,
-                'end': end_time,
-                'interval': interval,
-                **p
-            }
-            
-            # 调用run_backtest函数，传入正确的参数
-            backtest_result = run_backtest(df, full_params, strategy)
-            
-            # 安全获取run_id，确保即使backtest_result为None或不包含run_id键也能正常工作
-            run_id = backtest_result.get('run_id', 'unknown') if backtest_result else 'unknown'
-            # 确保run_id是字符串类型
-            run_id = str(run_id)
-            runs.append({'params': p, 'run_id': run_id})
-            finished += 1
-            
-            # 获取参数组合的完成时间
-            completion_time = time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # 将回测结果记录到tuning_results表中
-            try:
-                # 首先检查run_id是否存在于runs表中
-                # 这个检查是为了避免外键约束错误
-                run_exists_query = "SELECT 1 FROM runs WHERE run_id = :run_id LIMIT 1"
-                run_exists_result = fetch_df(run_exists_query, **{"run_id": run_id})
+        param_combinations = list(itertools.product(*grids)) if keys else [()]
+        total_combinations = len(param_combinations)
+        
+        for vals in param_combinations:
+            # 检查失败次数是否超过限制
+            if failed_runs >= max_failures:
+                logger.error(f"连续失败次数超过限制({max_failures})，任务中断")
+                raise Exception(f"连续失败次数超过限制({max_failures})")
                 
-                if run_exists_result.empty:
-                    logger.warning(f"Run ID {run_id} does not exist in runs table, skipping tuning_results insertion")
-                else:
-                    # 确保所有数据都是Python原生类型且可JSON序列化
-                    def make_serializable(value):
-                        """将值转换为可JSON序列化的类型"""
-                        if isinstance(value, (int, float, str, bool, type(None))):
-                            return value
-                        elif isinstance(value, list):
-                            return [make_serializable(item) for item in value]
-                        elif isinstance(value, dict):
-                            return {k: make_serializable(v) for k, v in value.items()}
-                        else:
-                            return str(value)  # 对于其他类型，转换为字符串
-                    
-                    serializable_params = make_serializable(p)
-                    
-                    # 将参数转换为JSON字符串后再存储到数据库
-                    params_json = json.dumps(serializable_params)
-                    
-                    # 验证JSON字符串的有效性
-                    try:
-                        parsed_json = json.loads(params_json)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON验证失败: {e}")
-                    
-                    result_data = {
-                        'task_id': task_id,
-                        'run_id': run_id,
-                        'params': params_json,  # 存储为JSON字符串
-                        'created_at': completion_time
-                    }
-                    
-                    result_df = pd.DataFrame([result_data])
-                    to_sql(result_df, 'tuning_results')
-            except Exception as e:
-                logger.error(f"Error creating tuning result record: {e}")
-            
-            # 更新tuning_tasks表中的进度
             try:
-                execute("UPDATE tuning_tasks SET finished = :finished WHERE task_id = :task_id", task_id=task_id, finished=finished)
-            except Exception as e:
-                pass
-            
-            # 更新Celery任务状态 - 将数值转换为Python原生int类型以支持JSON序列化
-            self.update_state(state='PROGRESS', meta={'finished': int(finished), 'total': int(total)})
+                p = {k:v for k,v in zip(keys, vals)} if keys else {}
+                # 构建完整的参数对象，包含interval
+                full_params = {
+                    'code': code,
+                    'start': start_time,
+                    'end': end_time,
+                    'interval': interval,
+                    **p
+                }
+                
+                # 调用run_backtest函数，传入正确的参数
+                backtest_result = None
+                try:
+                    backtest_result = run_backtest(df, full_params, strategy)
+                    failed_runs = 0  # 重置失败计数
+                except Exception as bt_error:
+                    failed_runs += 1
+                    logger.error(f"回测执行失败: {str(bt_error)}, 当前失败计数: {failed_runs}")
+                    # 继续处理下一个参数组合
+                    continue
+                
+                # 安全获取run_id，确保即使backtest_result为None或不包含run_id键也能正常工作
+                run_id = backtest_result.get('run_id', 'unknown') if backtest_result else 'unknown'
+                # 确保run_id是字符串类型
+                run_id = str(run_id)
+                runs.append({'params': p, 'run_id': run_id})
+                finished += 1
+                
+                # 获取参数组合的完成时间
+                completion_time = time.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 将回测结果记录到tuning_results表中
+                try:
+                    # 首先检查run_id是否存在于runs表中
+                    # 这个检查是为了避免外键约束错误
+                    run_exists_query = "SELECT 1 FROM runs WHERE run_id = :run_id LIMIT 1"
+                    run_exists_result = fetch_df(run_exists_query, **{"run_id": run_id})
+                    
+                    if not run_exists_result.empty:
+                        # 确保所有数据都是Python原生类型且可JSON序列化
+                        def make_serializable(value):
+                            """将值转换为可JSON序列化的类型"""
+                            if isinstance(value, (int, float, str, bool, type(None))):
+                                return value
+                            elif isinstance(value, list):
+                                return [make_serializable(item) for item in value]
+                            elif isinstance(value, dict):
+                                return {k: make_serializable(v) for k, v in value.items()}
+                            else:
+                                return str(value)  # 对于其他类型，转换为字符串
+                        
+                        serializable_params = make_serializable(p)
+                        
+                        # 将参数转换为JSON字符串后再存储到数据库
+                        params_json = json.dumps(serializable_params)
+                        
+                        # 验证JSON字符串的有效性
+                        try:
+                            parsed_json = json.loads(params_json)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"JSON验证失败: {e}")
+                            params_json = '{}'  # 使用空JSON作为后备
+                        
+                        result_data = {
+                            'task_id': task_id,
+                            'run_id': run_id,
+                            'params': params_json,  # 存储为JSON字符串
+                            'created_at': completion_time
+                        }
+                        
+                        # 使用更高效的方式插入数据
+                        try:
+                            execute(
+                                "INSERT INTO tuning_results (task_id, run_id, params, created_at) VALUES (:task_id, :run_id, :params, :created_at)",
+                                **result_data
+                            )
+                        except Exception as sql_error:
+                            logger.error(f"插入tuning_results失败: {str(sql_error)}")
+                            # 使用pandas的to_sql作为后备方案
+                            try:
+                                result_df = pd.DataFrame([result_data])
+                                to_sql(result_df, 'tuning_results')
+                            except Exception as df_error:
+                                logger.error(f"使用DataFrame插入tuning_results也失败: {str(df_error)}")
+                except Exception as e:
+                    logger.error(f"创建调优结果记录失败: {str(e)}")
+                
+                # 更新tuning_tasks表中的进度
+                try:
+                    execute("UPDATE tuning_tasks SET finished = :finished WHERE task_id = :task_id", task_id=task_id, finished=finished)
+                except Exception as e:
+                    pass
+                
+                # 更新Celery任务状态 - 将数值转换为Python原生int类型以支持JSON序列化
+                self.update_state(state='PROGRESS', meta={'finished': int(finished), 'total': int(total_combinations)})
+                
+                # 内存优化：定期清理不再需要的变量
+                if enable_memory_optimization and finished % 10 == 0:
+                    import gc
+                    gc.collect()
+                    
+            except Exception as combination_error:
+                failed_runs += 1
+                logger.error(f"处理参数组合时出错: {str(combination_error)}, 当前失败计数: {failed_runs}")
+                # 继续处理下一个参数组合，不中断整个任务
+                continue
         
         # 更新任务状态为完成
         try:
@@ -206,12 +275,14 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
             'task_id': task_id,
             'status': 'finished',
             'finished': int(finished),
-            'total': int(total),
+            'total': int(total_combinations),
             'runs': runs
         }
         
     except Exception as e:
         error_msg = str(e)
+        traceback_str = traceback.format_exc()
+        logger.error(f"调优任务执行失败: {error_msg}\n{traceback_str}")
         
         # 更新任务状态为错误
         try:

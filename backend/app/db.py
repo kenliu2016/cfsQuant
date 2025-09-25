@@ -358,6 +358,9 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
                 del chunks
 
             # 优化：数据类型转换，减少内存使用
+            # 定义需要保持为float64的特殊列
+            float64_columns = ['open', 'high', 'low', 'close', 'volume', 'price', 'amount', 'fee', 'nav', 'drawdown']
+            
             for col in df.columns:
                 # 尝试将数值列转换为更高效的数据类型
                 if pd.api.types.is_integer_dtype(df[col]):
@@ -365,8 +368,12 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
                     if not df[col].isna().any():
                         df[col] = df[col].astype('int32')  # 使用更小的整数类型
                 elif pd.api.types.is_float_dtype(df[col]):
-                    # 对于浮点数，可以使用float32来减少内存使用
-                    df[col] = df[col].astype('float32')
+                    # 对于特殊的浮点数列，保持为float64以避免计算精度问题
+                    if col.lower() in float64_columns:
+                        df[col] = df[col].astype('float64')
+                    else:
+                        # 对于其他浮点数列，可以使用float32来减少内存使用
+                        df[col] = df[col].astype('float32')
                 elif pd.api.types.is_object_dtype(df[col]):
                     # 尝试推断并转换对象列
                     try:
