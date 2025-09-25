@@ -420,21 +420,7 @@ const Dashboard: React.FC = () => {
       // 转换为数组并连接
       const codes = Array.from(uniqueSymbols).join(',');
       
-      // 创建缓存键
-      const cacheKey = `market_overview_${codes}_${timeframe}`;
-      
-      // 尝试从内存缓存获取数据
-      const cachedData = sessionStorage.getItem(cacheKey);
-      if (cachedData) {
-        const parsedData = JSON.parse(cachedData);
-        // 检查缓存是否在5秒内有效
-        if (Date.now() - parsedData.timestamp < 5000) {
-          setMarketOverview(parsedData.data);
-          const lastUpdatedNow = new Date();
-          setLastUpdated(lastUpdatedNow.toLocaleTimeString());
-          return parsedData.data; // 返回缓存数据以支持Promise.all
-        }
-      }
+      // 移除缓存逻辑，始终从API获取最新数据
       
       // 根据不同的时间周期设置对应的limit参数
       const timeframeToLimit = {
@@ -558,12 +544,6 @@ const Dashboard: React.FC = () => {
       // 更新最后刷新时间
       const lastUpdatedNow = new Date();
       setLastUpdated(lastUpdatedNow.toLocaleTimeString());
-      
-      // 保存到内存缓存
-      sessionStorage.setItem(cacheKey, JSON.stringify({
-        data: marketOverviewData,
-        timestamp: Date.now()
-      }));
       
       return marketOverviewData; // 返回数据以支持Promise.all
     } catch (error) {
