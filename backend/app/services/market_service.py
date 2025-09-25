@@ -109,6 +109,70 @@ class MarketDataService:
         self.datetime_parser = DateTimeParser()
         self.logger = logger
         
+    def get_market_exchanges(self, active: bool = True) -> pd.DataFrame:
+        """
+        获取所有可用的交易所列表
+        
+        Args:
+            active: 是否只获取活跃的交易所
+            
+        Returns:
+            交易所列表的DataFrame
+        """
+        try:
+            sql = """
+            SELECT DISTINCT exchange FROM market_codes
+            WHERE 1=1
+            """
+            
+            if active:
+                sql += " AND active = TRUE"
+            
+            sql += " ORDER BY exchange"
+            
+            df = fetch_df(sql)
+            self.logger.info(f"获取交易所列表成功，共{len(df)}条记录")
+            return df
+        except Exception as e:
+            self.logger.error(f"获取交易所列表失败: {e}")
+            return pd.DataFrame(columns=['exchange'])
+            
+    def get_market_codes(self, exchange: str = None, active: bool = True) -> pd.DataFrame:
+        """
+        获取市场代码列表，可以按交易所过滤
+        
+        Args:
+            exchange: 交易所代码，不提供则获取所有
+            active: 是否只获取活跃的代码
+            
+        Returns:
+            市场代码列表的DataFrame，包含code, name, exchange, type等字段
+        """
+        try:
+            sql = """
+            SELECT code, exchange, active FROM market_codes
+            WHERE 1=1
+            """
+            
+            params = {}
+            
+            if exchange:
+                sql += " AND exchange = :exchange"
+                params['exchange'] = exchange
+            
+            if active:
+                sql += " AND active = TRUE"
+            
+            sql += " ORDER BY code"
+            
+            df = fetch_df(sql, **params)
+            self.logger.info(f"获取市场代码列表成功，共{len(df)}条记录")
+            return df
+        except Exception as e:
+            self.logger.error(f"获取市场代码列表失败: {e}")
+            return pd.DataFrame(columns=['code', 'exchange', 'active'])
+        
+        
     def _prepare_query_params(self, start: Union[str, datetime], 
                             end: Union[str, datetime]) -> Tuple[datetime, datetime]:
         """准备查询参数"""
@@ -192,7 +256,7 @@ class MarketDataService:
             query_params = {"code": code, "start": start, "end": end, "interval": interval}
             return pd.DataFrame(), 0, query_params
 
-@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
+@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
 def get_predictions(code: str, start: str, end: str, interval: str = None, page: int = None, page_size: int = None):
     """
     获取预测数据，使用缓存装饰器优化性能
@@ -587,3 +651,18 @@ def get_candles(code: str, start: str, end: str,
     调用MarketDataService类的get_candles方法
     """
     return market_data_service.get_candles(code, start, end, interval, page, page_size)
+
+# 添加模块级别的市场代码相关函数
+@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
+def get_market_exchanges(active: bool = True) -> pd.DataFrame:
+    """
+    模块级别的获取交易所列表函数
+    """
+    return market_data_service.get_market_exchanges(active)
+
+@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
+def get_market_codes(exchange: str = None, active: bool = True) -> pd.DataFrame:
+    """
+    模块级别的获取市场代码列表函数
+    """
+    return market_data_service.get_market_codes(exchange, active)
