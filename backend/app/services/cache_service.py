@@ -10,6 +10,7 @@ import logging
 import os
 import yaml
 import concurrent.futures
+import numpy as np
 
 # 配置日志
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -51,9 +52,22 @@ class RedisManager:
         self.is_redis_available = False
         self.last_connection_attempt = 0
         self.retry_interval = 30  # 连接重试间隔，单位：秒
+        self.connection_history = []  # 记录连接历史，用于诊断
+        self.failed_attempts = 0  # 连续失败次数
+        self.max_failed_attempts_before_backoff = 5  # 最大失败次数后增加重试间隔
+        self.last_success_time = 0  # 上次成功连接的时间
         self.connect()
     
     def connect(self):
+        self.last_connection_attempt = time.time()
+        attempt_info = {
+            'time': self.last_connection_attempt,
+            'host': REDIS_HOST,
+            'port': REDIS_PORT,
+            'status': 'failed',
+            'error': None
+        }
+        
         try:
             # 配置Redis连接池 - 增强稳定性配置
             pool_params = {
@@ -61,17 +75,20 @@ class RedisManager:
                 'port': REDIS_PORT,
                 'db': REDIS_DB,
                 'decode_responses': True,
-                'socket_timeout': 10,  # 增加超时时间
+                'socket_timeout': 30,  # 增加超时时间至30秒
                 'socket_keepalive': True,
                 'socket_keepalive_options': {
-                    socket.TCP_KEEPIDLE: 60,
-                    socket.TCP_KEEPINTVL: 10,
-                    socket.TCP_KEEPCNT: 5
+                    socket.TCP_KEEPIDLE: 30,  # 减少空闲时间检查频率
+                    socket.TCP_KEEPINTVL: 5,  # 更频繁的保活包
+                    socket.TCP_KEEPCNT: 10,    # 增加重试次数
                 },
                 'retry_on_timeout': True,
-                'health_check_interval': 15,  # 更频繁的健康检查
-                'max_connections': 50,  # 连接池大小
-                'socket_connect_timeout': 5,  # 增加连接超时时间
+                'health_check_interval': 10,  # 更频繁的健康检查
+                'max_connections': 100,       # 增加连接池大小
+                'socket_connect_timeout': 10, # 增加连接超时时间
+                'retry_strategy': lambda retry_obj: (
+                    min(retry_obj.attempt * 100 + 100, 2000) if retry_obj.total_attempts < 5 else None
+                )  # 指数退避重试策略
             }
             
             # 如果设置了密码，则添加密码参数
@@ -80,22 +97,115 @@ class RedisManager:
                 
             pool = redis.ConnectionPool(**pool_params)
             self.client = redis.Redis(connection_pool=pool)
-            self.client.ping()
-            self.is_redis_available = True
-            logger.info(f"Redis连接成功: {REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}")
+            
+            # 执行一个简单的命令来验证连接
+            start_time = time.time()
+            response = self.client.ping()
+            ping_time = (time.time() - start_time) * 1000  # 毫秒
+            
+            # 记录连接信息
+            if response:
+                self.is_redis_available = True
+                self.failed_attempts = 0
+                self.last_success_time = time.time()
+                attempt_info['status'] = 'success'
+                attempt_info['ping_time_ms'] = ping_time
+                logger.info(f"Redis连接成功: {REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}, 延迟: {ping_time:.2f}ms")
+                
+                # 获取Redis服务器信息用于诊断
+                try:
+                    info = self.client.info('server')
+                    if info:
+                        server_version = info.get('redis_version', 'unknown')
+                        logger.info(f"Redis服务器版本: {server_version}")
+                except Exception as info_error:
+                    logger.debug(f"获取Redis服务器信息失败: {info_error}")
+            else:
+                raise Exception("Ping响应为空")
+                
         except Exception as e:
             self.client = {}
             self.is_redis_available = False
-            logger.warning(f"Redis连接失败，将使用内存缓存: {e}")
+            self.failed_attempts += 1
+            attempt_info['error'] = str(e)
+            
+            # 根据失败次数动态调整重试间隔
+            if self.failed_attempts > self.max_failed_attempts_before_backoff:
+                backoff_multiplier = min(2 ** (self.failed_attempts // 5), 16)  # 最多增加到16倍
+                self.retry_interval = 30 * backoff_multiplier
+                logger.warning(f"连续{self.failed_attempts}次Redis连接失败，增加重试间隔到{self.retry_interval}秒")
+            
+            # 记录详细的错误信息，包括错误类型和错误码
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.warning(
+                f"Redis连接失败[{error_type}]，将使用内存缓存: {error_msg}, "
+                f"服务器: {REDIS_HOST}:{REDIS_PORT}, 当前重试间隔: {self.retry_interval}秒"
+            )
+            
+            # 对于特定错误类型，提供更具体的故障排除建议
+            if 'connection reset by peer' in error_msg.lower():
+                logger.warning("故障排除建议: 检查Redis服务器防火墙设置、maxclients配置或连接超时设置")
+            elif 'connection refused' in error_msg.lower():
+                logger.warning("故障排除建议: 检查Redis服务器是否正在运行，端口是否开放，以及绑定地址配置")
+        
+        # 保存连接历史，限制最多保存100条记录
+        self.connection_history.append(attempt_info)
+        if len(self.connection_history) > 100:
+            self.connection_history.pop(0)
     
     def get_client(self):
         # 如果Redis之前连接失败，在指定间隔后尝试重新连接
         if not self.is_redis_available and isinstance(self.client, dict):
             current_time = time.time()
             if current_time - self.last_connection_attempt >= self.retry_interval:
-                self.last_connection_attempt = current_time
+                logger.debug(f"尝试重新连接Redis (间隔{self.retry_interval}秒)")
                 self.connect()
+        
+        # 如果Redis可用，定期验证连接状态
+        elif self.is_redis_available and current_time - self.last_success_time > 60:  # 每分钟检查一次
+            try:
+                # 非阻塞的方式检查连接状态
+                if hasattr(self.client, 'ping'):
+                    # 使用线程池执行ping操作，避免阻塞主线程
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(self.client.ping)
+                        # 设置一个短超时，避免长时间阻塞
+                        try:
+                            future.result(timeout=1.0)
+                            self.last_success_time = time.time()
+                        except concurrent.futures.TimeoutError:
+                            logger.warning("Redis连接检查超时，可能连接不稳定")
+                            # 不立即切换到内存缓存，让后续操作触发重试
+            except Exception as e:
+                logger.warning(f"Redis连接状态检查失败: {e}")
+                # 不立即切换到内存缓存，让后续操作触发重试
+        
         return self.client
+        
+    def get_connection_status(self):
+        """获取Redis连接状态信息，用于监控和诊断"""
+        current_time = time.time()
+        return {
+            'is_available': self.is_redis_available,
+            'host': REDIS_HOST,
+            'port': REDIS_PORT,
+            'db': REDIS_DB,
+            'last_connection_attempt': self.last_connection_attempt,
+            'last_connection_attempt_ago': current_time - self.last_connection_attempt,
+            'last_success_time': self.last_success_time,
+            'last_success_ago': current_time - self.last_success_time if self.last_success_time > 0 else None,
+            'failed_attempts': self.failed_attempts,
+            'retry_interval': self.retry_interval,
+            'connection_history_size': len(self.connection_history)
+        }
+        
+    def reset_connection(self):
+        """强制重置Redis连接"""
+        logger.info("强制重置Redis连接")
+        self.client = None
+        self.is_redis_available = False
+        self.connect()
 
 # 使用单例模式
 _redis_manager = RedisManager()
@@ -114,30 +224,73 @@ def redis_operation_with_retry(max_retries=3, retry_delay=0.5):
             
             while retry_count <= max_retries:
                 try:
+                    # 确保获取最新的客户端实例
+                    if hasattr(_redis_manager, 'get_client'):
+                        client = _redis_manager.get_client()
+                        if isinstance(client, dict) and retry_count > 0:
+                            logger.warning(f"Redis仍不可用，继续使用内存缓存(尝试{retry_count}/{max_retries})")
                     return func(self, *args, **kwargs)
                 except redis.RedisError as e:
-                    error_code = str(e).split()[0] if str(e).split() else ""
+                    error_msg = str(e).lower()
+                    error_code = error_msg.split()[0] if error_msg.split() else ""
+                    
                     # 特定错误类型才重试（连接重置、超时等）
-                    if any(err in str(e).lower() for err in ['connection reset by peer', 'timed out', 'error 104', 'error -2']):
+                    retryable_errors = [
+                        'connection reset by peer', 
+                        'timed out', 
+                        'error 104', 
+                        'error -2',
+                        'connection refused',
+                        'no route to host',
+                        'connection aborted',
+                        'broken pipe'
+                    ]
+                    
+                    if any(err in error_msg for err in retryable_errors):
                         retry_count += 1
                         last_error = e
+                        
+                        # 详细记录错误信息，包括操作类型和服务器信息
+                        operation_name = func.__name__ if hasattr(func, '__name__') else 'unknown'
+                        logger.warning(
+                            f"Redis操作[{operation_name}]失败 ({REDIS_HOST}:{REDIS_PORT}), "
+                            f"错误类型: {type(e).__name__}, 错误: {e}, "
+                            f"尝试重试({retry_count}/{max_retries})"
+                        )
+                        
                         if retry_count <= max_retries:
-                            logger.warning(f"Redis操作失败，尝试重试({retry_count}/{max_retries}): {e}")
-                            time.sleep(retry_delay * (2 ** (retry_count - 1)))  # 指数退避
+                            # 指数退避策略，增加抖动以避免多个客户端同时重试
+                            backoff_time = retry_delay * (2 ** (retry_count - 1))
+                            jitter = np.random.uniform(0.8, 1.2)  # 添加10%-20%的随机抖动
+                            sleep_time = backoff_time * jitter
+                            
+                            logger.debug(f"等待{sleep_time:.2f}秒后重试Redis操作")
+                            time.sleep(sleep_time)
+                            
+                            # 在重试前尝试重新连接
+                            if retry_count % 2 == 0:  # 每隔一次重试尝试重新连接
+                                logger.debug("重试前尝试重新建立Redis连接")
+                                _redis_manager.connect()
                         else:
-                            logger.error(f"Redis操作重试失败({max_retries}次): {e}")
+                            logger.error(
+                                f"Redis操作[{operation_name}]重试失败({max_retries}次), "
+                                f"将切换到内存缓存模式: {e}"
+                            )
                             # 更新Redis连接状态
                             if hasattr(_redis_manager, 'is_redis_available'):
                                 _redis_manager.is_redis_available = False
-                            # 尝试重新连接
+                            # 强制尝试重新连接
                             _redis_manager.connect()
                             # 如果仍然失败，使用内存缓存
                             if not _redis_manager.is_redis_available:
                                 logger.warning("Redis连接不可用，将使用内存缓存")
                                 raise e
                     else:
-                        # 非临时性错误，直接抛出
-                        logger.error(f"Redis操作错误: {e}")
+                        # 非临时性错误，记录详细错误信息后抛出
+                        operation_name = func.__name__ if hasattr(func, '__name__') else 'unknown'
+                        logger.error(
+                            f"Redis操作[{operation_name}]遇到非临时性错误: {type(e).__name__}: {e}"
+                        )
                         raise e
             
             # 所有重试都失败，抛出最后一个错误
