@@ -28,6 +28,9 @@ ENV VITE_API_BASE_URL=http://localhost:8000
 # 复制构建产物到Nginx的静态文件目录
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 
+# 复制自定义Nginx配置文件
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 # 复制替换API地址的脚本到容器中
 COPY replace_api_url.sh /docker-entrypoint.d/
 RUN chmod +x /docker-entrypoint.d/replace_api_url.sh
