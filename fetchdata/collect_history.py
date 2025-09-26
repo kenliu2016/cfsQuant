@@ -4,7 +4,7 @@ import psycopg2
 import time
 import json
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 DB_CONFIG = {
     "dbname": "quant",
@@ -71,7 +71,8 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     print(f"[INFO] {exchange} {symbol} {timeframe} 写入 {len(df)} 条", flush=True)
 
 def fetch_ohlcv_last_3y(exchange, symbol, timeframe, conn, limit=1000):
-    since = int((datetime.utcnow() - timedelta(days=365*3)).timestamp() * 1000)
+    # 使用 timezone.utc 替代 datetime.UTC 以兼容较旧的 Python 版本
+    since = int((datetime.now(timezone.utc) - timedelta(days=365*3)).timestamp() * 1000)
     ms_in_tf = {"1m": 60*1000, "1h": 3600*1000, "1d": 86400*1000}[timeframe]
 
     while True:
