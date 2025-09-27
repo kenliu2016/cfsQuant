@@ -29,43 +29,27 @@ interface StrategyBacktestState {
   gridLevels?: GridLevel[]; // 网格级别数据（包含名称和价格）
 }
 
-// 解析CSV数据
-const parseCSV = (csvString: string) => {
-  const lines = csvString.split('\n');
-  const result: { code: string; name: string; exchange: string; type: string }[] = [];
-  
-  // 跳过第一行标题行
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    
-    const values = lines[i].split(',');
-    if (values.length >= 2) {
-      result.push({
-        code: values[0],
-        name: values[1],
-        exchange: values[2] || '',
-        type: values[3] || ''
-      });
-    }
-  }
-  
-  return result;
-};
-
-// 使用fetch读取CSV文件
-const fetchSymbolsFromCSV = async () => {
+// 从API获取watch状态为true的market_codes
+const fetchWatchListFromAPI = async () => {
   try {
-    const response = await fetch('/src/assets/symbols.csv');
-    const csvText = await response.text();
-    return parseCSV(csvText);
+    const response = await client.get('/api/market/market_codes', {
+      params: {
+        watch: true
+      }
+    });
+    
+    // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
+    const marketCodes = response.data.rows || [];
+    // 将数据转换为前端需要的格式
+    return marketCodes.map((item: any) => ({
+      code: item.excode,
+      excode: item.excode, 
+      exchange: item.exchange
+    }));
   } catch (error) {
-    console.error('Failed to fetch symbols from CSV:', error);
-    // 返回默认的模拟数据作为备用
-    return [
-      { code: 'AAPL', name: '苹果', exchange: 'NASDAQ', type: 'Stock' },
-      { code: 'MSFT', name: '微软', exchange: 'NASDAQ', type: 'Stock' },
-      { code: 'AMZN', name: '亚马逊', exchange: 'NASDAQ', type: 'Stock' },
-    ];
+    console.error('Failed to fetch watch list from API:', error);
+    // API调用失败时使用空数组或默认数据
+    return [];
   }
 };
 
@@ -325,14 +309,25 @@ const Dashboard: React.FC = () => {
     const loadSymbols = async () => {
       setIsLoadingSymbols(true);
       try {
-        const symbolsData = await fetchSymbolsFromCSV();
-        setSymbols(symbolsData);
-        // 如果有数据，设置第一个为默认选中
-        if (symbolsData.length > 0 && !symbolsData.find(s => s.code === symbol)) {
-          setSymbol(symbolsData[0].code);
+        // 从API获取watch状态为true的market_codes
+        const symbolsData = await fetchWatchListFromAPI();
+        
+        // 只使用API返回的数据，不使用CSV作为备选
+        if (symbolsData.length > 0) {
+          setSymbols(symbolsData);
+          
+          if (!symbolsData.find((s: any) => s.code === symbol)) {
+            setSymbol(symbolsData[0].code);
+          }
+          
+          await loadMarketOverview(symbolsData);
+        } else {
+          // 如果API返回空数据，清空市场概览
+          console.warn('No watchlist data from API');
+          setSymbols([]);
+          setMarketOverview([]);
+          setSelectedSymbolData(null);
         }
-        // 加载市场概览数据
-        await loadMarketOverview(symbolsData);
       } catch (error) {
         console.error('Error loading symbols:', error);
       } finally {
@@ -341,6 +336,41 @@ const Dashboard: React.FC = () => {
     };
     loadSymbols();
   }, []);
+  
+  // 刷新市场概览数据的函数
+  const refreshMarketOverview = async () => {
+    if (isRefreshing) return;
+    
+    setIsRefreshing(true);
+    try {
+      // 从API获取最新的watch列表
+      const symbolsData = await fetchWatchListFromAPI();
+      
+      if (symbolsData.length > 0) {
+        // 更新symbols状态
+        setSymbols(symbolsData);
+        
+        // 确保当前选中的symbol仍然在列表中，否则选中第一个
+        if (!symbolsData.find((s: any) => s.code === symbol)) {
+          setSymbol(symbolsData[0].code);
+        }
+        
+        // 加载最新的市场概览数据
+        await loadMarketOverview(symbolsData);
+      } else {
+        message.warning('暂无关注列表数据');
+        // 清空市场概览
+        setSymbols([]);
+        setMarketOverview([]);
+        setSelectedSymbolData(null);
+      }
+    } catch (error) {
+      console.error('Failed to refresh market overview:', error);
+      message.error('刷新市场概览失败');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
 
 
@@ -384,21 +414,10 @@ const Dashboard: React.FC = () => {
   }, [marketOverview, symbol]);
 
   // 调用API获取市场概览数据 - 使用批量查询优化性能并添加内存缓存
-  const loadMarketOverview = async (symbolsData: { code: string; name: string; exchange: string; type: string }[]) => {
+  const loadMarketOverview = async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
     try {
-      // 创建一个包含市场概览卡片symbol和选中symbol的集合，自动去重
-      const uniqueSymbols = new Set<string>();
-      
-      // 添加市场概览卡片的所有symbol
-      symbolsData.forEach(item => uniqueSymbols.add(item.code));
-      
-      // 添加被选择器选中的symbol（如果存在且不在市场概览卡片中）
-      if (symbol && !symbolsData.find(item => item.code === symbol)) {
-        uniqueSymbols.add(symbol);
-      }
-      
-      // 转换为数组并连接
-      const codes = Array.from(uniqueSymbols).join(',');
+      // 只使用API返回的watch=true的symbol，不再添加额外的symbol
+      const codes = symbolsData.map(item => item.code).join(',');
       
       // 创建缓存键
       const cacheKey = `market_overview_${codes}_${timeframe}`;
@@ -477,9 +496,8 @@ const Dashboard: React.FC = () => {
               const changePercent = ((latestBar.close - previousBar.close) / previousBar.close * 100).toFixed(2);
               
               return {
-                id: item.code,
-                code: item.code,
-                name: item.name,
+                id: item.excode,
+                code: item.excode,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
@@ -493,9 +511,8 @@ const Dashboard: React.FC = () => {
               const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
               
               return {
-                id: item.code,
-                code: item.code,
-                name: item.name,
+                id: item.excode,
+                code: item.excode,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
@@ -510,9 +527,8 @@ const Dashboard: React.FC = () => {
             const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
             
             return {
-              id: item.code,
-              code: item.code,
-              name: item.name,
+              id: item.excode,
+              code: item.excode,
               price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
               change: parseFloat(change),
               changePercent: parseFloat(changePercent),
@@ -523,9 +539,8 @@ const Dashboard: React.FC = () => {
         
         // 如果没有数据或数据无效，返回基本信息
         return {
-          id: item.code,
-          code: item.code,
-          name: item.name,
+          id: item.excode,
+          code: item.excode,
           price: '-',
           change: 0,
           changePercent: 0,
@@ -1157,19 +1172,7 @@ const Dashboard: React.FC = () => {
                 type="text" 
                 size="small" 
                 style={{ color: '#8E8EA0', fontSize: '12px', marginLeft: '8px' }}
-                onClick={async () => {
-                  if (symbols.length > 0 && !isRefreshing) {
-                    setIsRefreshing(true);
-                    try {
-                      await loadMarketOverview(symbols);
-                      message.success('数据已刷新');
-                    } catch (error) {
-                      message.error('刷新失败');
-                    } finally {
-                      setIsRefreshing(false);
-                    }
-                  }
-                }}
+                onClick={refreshMarketOverview}
                 loading={isRefreshing}
               >
                 {isRefreshing ? '刷新中...' : '刷新'}

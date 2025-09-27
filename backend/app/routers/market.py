@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException
 from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service
+from ..db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
@@ -489,25 +490,55 @@ def get_exchanges(active: bool = Query(True, description="是否只获取活跃�
 
 @router.get("/market_codes")
 def get_codes(exchange: str = Query(None, description="交易所代码，不提供则获取所有"), 
-                active: bool = Query(True, description="是否只获取活跃的代码")):
+                code: str = Query(None, description="交易对代码，不提供则获取所有"),
+                active: bool = Query(None, description="是否只获取活跃的代码"),
+                watch: bool = Query(None, description="是否只获取关注的代码")):
     """
-    获取市场代码列表，可以按交易所过滤
+    获取市场代码列表，可以按交易所、交易对、活跃状态和关注状态过滤
     
     Args:
         exchange: 交易所代码，不提供则获取所有
-        active: 是否只获取活跃的代码
+        code: 交易对代码，不提供则获取所有
+        active: 是否只获取活跃的代码，为None时获取所有
+        watch: 是否只获取关注的代码，为None时获取所有
         
     Returns:
         市场代码列表
     """
-    logger.info(f"接收到获取市场代码列表请求: exchange={exchange}, active={active}")
+    logger.info(f"接收到获取市场代码列表请求: exchange={exchange}, code={code}, active={active}, watch={watch}")
     
     try:
         # 直接调用底层服务函数，不经过缓存
-        df = market_data_service.get_market_codes(exchange, active)
-        logger.info(f"直接从服务获取数据，形状={df.shape}")
+        # 注意：需要修改服务函数以支持active为None的情况
+        sql = """
+        SELECT code, exchange, active, excode, watch FROM market_codes
+        WHERE 1=1
+        """
+        
+        params = {}
+        
+        if exchange:
+            sql += " AND exchange = :exchange"
+            params['exchange'] = exchange
+        
+        if code:
+            sql += " AND code ILIKE :code"
+            params['code'] = f"%{code}%"
+        
+        if active is not None:
+            sql += " AND active = :active"
+            params['active'] = active
+            
+        if watch is not None:
+            sql += " AND watch = :watch"
+            params['watch'] = watch
+        
+        sql += " ORDER BY excode"
+        
+        df = fetch_df(sql, **params)
+        logger.info(f"直接从数据库获取数据，形状={df.shape}")
         if not df.empty:
-            logger.info(f"直接从服务获取的数据预览: {df.head(2).to_dict('records')}")
+            logger.info(f"直接从数据库获取的数据预览: {df.head(2).to_dict('records')}")
         
         # 处理结果
         context = f"market_codes - exchange={exchange}, active={active}"
@@ -529,3 +560,221 @@ def get_codes(exchange: str = Query(None, description="交易所代码，不提�
     except Exception as e:
         logger.error(f"获取市场代码列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail="获取市场代码列表失败")
+
+
+@router.post("/market_codes")
+def add_code(code_data: dict):
+    """
+    添加市场代码
+    
+    Args:
+        code_data: 包含市场代码信息的字典
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到添加市场代码请求: {code_data}")
+    
+    try:
+        # 检查必要字段
+        required_fields = ['exchange', 'code', 'excode']
+        for field in required_fields:
+            if field not in code_data:
+                raise HTTPException(status_code=400, detail=f"缺少必要字段: {field}")
+        
+        # 检查是否已存在
+        check_sql = """
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        check_params = {'exchange': code_data['exchange'], 'code': code_data['code']}
+        check_df = fetch_df(check_sql, **check_params)
+        
+        if len(check_df) > 0:
+            raise HTTPException(status_code=400, detail=f"市场代码已存在: {code_data['exchange']}:{code_data['code']}")
+        
+        # 插入新记录
+        insert_sql = """
+        INSERT INTO market_codes (exchange, code, excode, active, watch)
+        VALUES (:exchange, :code, :excode, :active, :watch)
+        """
+        
+        # 设置默认值
+        insert_params = {
+            'exchange': code_data['exchange'],
+            'code': code_data['code'],
+            'excode': code_data['excode'],
+            'active': code_data.get('active', True),
+            'watch': code_data.get('watch', False)
+        }
+        
+        fetch_df(insert_sql, **insert_params)
+        logger.info(f"添加市场代码成功: {code_data['exchange']}:{code_data['code']}")
+        
+        return {"success": True, "message": "添加成功"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"添加市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="添加失败")
+
+
+@router.put("/market_codes/{exchange}/{code}")
+def update_code(exchange: str, code: str, update_data: dict):
+    """
+    更新市场代码
+    
+    Args:
+        exchange: 交易所代码
+        code: 市场代码
+        update_data: 要更新的字段
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到更新市场代码请求: {exchange}:{code}, 更新数据: {update_data}")
+    
+    try:
+        # 检查记录是否存在
+        check_sql = """
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        check_params = {'exchange': exchange, 'code': code}
+        check_df = fetch_df(check_sql, **check_params)
+        
+        if len(check_df) == 0:
+            raise HTTPException(status_code=404, detail=f"市场代码不存在: {exchange}:{code}")
+        
+        # 构建更新语句
+        # 只能更新watch和active字段
+        allowed_fields = ['watch', 'active']
+        update_fields = {k: v for k, v in update_data.items() if k in allowed_fields}
+        
+        if not update_fields:
+            return {"success": True, "message": "没有需要更新的字段"}
+        
+        update_sql = """
+        UPDATE market_codes SET
+        """
+        
+        # 添加更新字段
+        set_clauses = []
+        params = {'exchange': exchange, 'code': code}
+        
+        for field, value in update_fields.items():
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+        
+        update_sql += ", ".join(set_clauses)
+        update_sql += " WHERE exchange = :exchange AND code = :code"
+        
+        fetch_df(update_sql, **params)
+        logger.info(f"更新市场代码成功: {exchange}:{code}")
+        
+        return {"success": True, "message": "更新成功"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"更新市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="更新失败")
+
+
+@router.delete("/market_codes/{exchange}/{code}")
+def delete_code(exchange: str, code: str):
+    """
+    删除市场代码
+    
+    Args:
+        exchange: 交易所代码
+        code: 市场代码
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到删除市场代码请求: {exchange}:{code}")
+    
+    try:
+        # 检查记录是否存在
+        check_sql = """
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        check_params = {'exchange': exchange, 'code': code}
+        check_df = fetch_df(check_sql, **check_params)
+        
+        if len(check_df) == 0:
+            raise HTTPException(status_code=404, detail=f"市场代码不存在: {exchange}:{code}")
+        
+        # 执行删除
+        delete_sql = """
+        DELETE FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        delete_params = {'exchange': exchange, 'code': code}
+        
+        fetch_df(delete_sql, **delete_params)
+        logger.info(f"删除市场代码成功: {exchange}:{code}")
+        
+        return {"success": True, "message": "删除成功"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"删除市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="删除失败")
+
+
+@router.post("/market_codes/batch_update")
+def batch_update_codes(batch_data: dict):
+    """
+    批量更新市场代码
+    
+    Args:
+        batch_data: 包含keys(要更新的记录键列表)和updates(要更新的字段)的字典
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到批量更新市场代码请求: {batch_data}")
+    
+    try:
+        # 检查必要字段
+        if 'keys' not in batch_data or 'updates' not in batch_data:
+            raise HTTPException(status_code=400, detail="缺少必要字段: keys 或 updates")
+        
+        keys = batch_data['keys']
+        updates = batch_data['updates']
+        
+        if not keys or not isinstance(keys, list):
+            raise HTTPException(status_code=400, detail="keys必须是非空的列表")
+        
+        # 只能更新watch和active字段
+        allowed_fields = ['watch', 'active']
+        update_fields = {k: v for k, v in updates.items() if k in allowed_fields}
+        
+        if not update_fields:
+            return {"success": True, "message": "没有需要更新的字段"}
+        
+        # 构建更新语句
+        update_sql = """
+        UPDATE market_codes SET
+        """
+        
+        # 添加更新字段
+        set_clauses = []
+        params = {}
+        
+        for field, value in update_fields.items():
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+        
+        update_sql += ", ".join(set_clauses)
+        update_sql += " WHERE CONCAT(exchange, ':', code) = ANY(:keys)"
+        params['keys'] = keys
+        
+        # 使用execute函数而非fetch_df，因为更新操作不返回数据
+        execute(update_sql, **params)
+        logger.info(f"批量更新市场代码成功，共更新 {len(keys)} 条记录")
+        
+        return {"success": True, "message": f"批量更新成功，共更新 {len(keys)} 条记录"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"批量更新市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="批量更新失败")
