@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, validator
 class Candle(BaseModel):
     datetime: str
     open: float

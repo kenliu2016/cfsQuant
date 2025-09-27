@@ -1,11 +1,15 @@
 fastapi
 uvicorn[standard]
+fastapi
+pydantic
 pandas
 sqlalchemy[asyncio]
 psycopg2-binary
 asyncpg
 PyYAML
 reportlab
-redis
+redis>=4.0.0,<5.0.0
 celery
-ta
+numpy
+scipy
+matplotlib

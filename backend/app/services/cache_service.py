@@ -85,10 +85,7 @@ class RedisManager:
                 'retry_on_timeout': True,
                 'health_check_interval': 10,  # 更频繁的健康检查
                 'max_connections': 100,       # 增加连接池大小
-                'socket_connect_timeout': 10, # 增加连接超时时间
-                'retry_strategy': lambda retry_obj: (
-                    min(retry_obj.attempt * 100 + 100, 2000) if retry_obj.total_attempts < 5 else None
-                )  # 指数退避重试策略
+                'socket_connect_timeout': 10  # 增加连接超时时间
             }
             
             # 如果设置了密码，则添加密码参数

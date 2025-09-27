@@ -1,6 +1,5 @@
-import logging
 import os
-from pathlib import Path
+import logging
 
 
 def setup_logger_with_file_handler(

@@ -113,7 +113,14 @@ fi
 echo "\n6. 检查网络连接..."
 
 # 检查到数据库的连接
-DB_CONNECT_TEST=$(docker exec -t quant-backend bash -c "psql -h $PGHOST -U $PGUSER -d $PGDATABASE -c 'SELECT 1;'" 2>/dev/null)
+# 从.env文件读取配置
+PGHOST=$(grep -oP '(?<=PGHOST=).*' .env)
+PGUSER=$(grep -oP '(?<=PGUSER=).*' .env)
+PGDATABASE=$(grep -oP '(?<=PGDATABASE=).*' .env)
+PGPASSWORD=$(grep -oP '(?<=PGPASSWORD=).*' .env)
+
+# 测试数据库连接
+DB_CONNECT_TEST=$(docker exec -t quant-backend bash -c "PGPASSWORD=$PGPASSWORD psql -h $PGHOST -U $PGUSER -d $PGDATABASE -c 'SELECT 1;'") 2>/dev/null
 if [[ $DB_CONNECT_TEST == *"1 row"* ]]; then
     echo "✅ 数据库连接测试通过"
 else
@@ -122,7 +129,12 @@ else
 fi
 
 # 检查到Redis的连接
-REDIS_CONNECT_TEST=$(docker exec -t quant-backend bash -c "redis-cli -h $REDIS_HOST -p $REDIS_PORT -a $REDIS_PASSWORD ping" 2>/dev/null)
+REDIS_HOST=$(grep -oP '(?<=REDIS_HOST=).*' .env)
+REDIS_PORT=$(grep -oP '(?<=REDIS_PORT=).*' .env)
+REDIS_PASSWORD=$(grep -oP '(?<=REDIS_PASSWORD=).*' .env)
+
+# 测试Redis连接
+REDIS_CONNECT_TEST=$(docker exec -t quant-backend bash -c "redis-cli -h $REDIS_HOST -p $REDIS_PORT -a $REDIS_PASSWORD ping") 2>/dev/null
 if [ "$REDIS_CONNECT_TEST" = "PONG" ]; then
     echo "✅ Redis连接测试通过"
 else
