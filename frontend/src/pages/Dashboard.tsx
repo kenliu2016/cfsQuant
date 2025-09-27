@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Select, Button, Modal, Checkbox, message, DatePicker } from 'antd';
+import { Select, Button, Modal, Checkbox, message, DatePicker, Input } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, BarChartOutlined, LineChartOutlined, CodeOutlined, CloseOutlined } from '@ant-design/icons';
@@ -29,7 +29,7 @@ interface StrategyBacktestState {
   gridLevels?: GridLevel[]; // 网格级别数据（包含名称和价格）
 }
 
-// 从API获取watch状态为true的market_codes
+// 从API获取watch状态为true的market_codes（用于市场动态卡片）
 const fetchWatchListFromAPI = async () => {
   try {
     const response = await client.get('/api/market/market_codes', {
@@ -49,6 +49,31 @@ const fetchWatchListFromAPI = async () => {
   } catch (error) {
     console.error('Failed to fetch watch list from API:', error);
     // API调用失败时使用空数组或默认数据
+    return [];
+  }
+};
+
+// 从API获取active状态为true的market_codes（用于symbol下拉选择框）
+const fetchActiveSymbolsFromAPI = async () => {
+  try {
+    const response = await client.get('/api/market/market_codes', {
+      params: {
+        active: true
+      }
+    });
+    
+    // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
+    const marketCodes = response.data.rows || [];
+    // 将数据转换为前端需要的格式
+    return marketCodes.map((item: any) => ({
+      code: item.excode,
+      excode: item.excode, 
+      exchange: item.exchange,
+      name: item.name || '' // 保留name字段用于过滤
+    }));
+  } catch (error) {
+    console.error('Failed to fetch active symbols from API:', error);
+    // API调用失败时使用空数组
     return [];
   }
 };
@@ -309,22 +334,26 @@ const Dashboard: React.FC = () => {
     const loadSymbols = async () => {
       setIsLoadingSymbols(true);
       try {
-        // 从API获取watch状态为true的market_codes
-        const symbolsData = await fetchWatchListFromAPI();
+        // symbol下拉选择框使用active=true的数据
+        const activeSymbolsData = await fetchActiveSymbolsFromAPI();
         
-        // 只使用API返回的数据，不使用CSV作为备选
-        if (symbolsData.length > 0) {
-          setSymbols(symbolsData);
+        if (activeSymbolsData.length > 0) {
+          setSymbols(activeSymbolsData);
           
-          if (!symbolsData.find((s: any) => s.code === symbol)) {
-            setSymbol(symbolsData[0].code);
+          if (!activeSymbolsData.find((s: any) => s.code === symbol)) {
+            setSymbol(activeSymbolsData[0].code);
           }
-          
-          await loadMarketOverview(symbolsData);
         } else {
-          // 如果API返回空数据，清空市场概览
-          console.warn('No watchlist data from API');
+          console.warn('No active symbols data from API');
           setSymbols([]);
+        }
+        
+        // 市场动态卡片使用watch=true的数据
+        const watchlistData = await fetchWatchListFromAPI();
+        if (watchlistData.length > 0) {
+          await loadMarketOverview(watchlistData);
+        } else {
+          console.warn('No watchlist data from API');
           setMarketOverview([]);
           setSelectedSymbolData(null);
         }
@@ -343,24 +372,14 @@ const Dashboard: React.FC = () => {
     
     setIsRefreshing(true);
     try {
-      // 从API获取最新的watch列表
-      const symbolsData = await fetchWatchListFromAPI();
+      // 刷新市场动态卡片数据（watch=true）
+      const watchlistData = await fetchWatchListFromAPI();
       
-      if (symbolsData.length > 0) {
-        // 更新symbols状态
-        setSymbols(symbolsData);
-        
-        // 确保当前选中的symbol仍然在列表中，否则选中第一个
-        if (!symbolsData.find((s: any) => s.code === symbol)) {
-          setSymbol(symbolsData[0].code);
-        }
-        
+      if (watchlistData.length > 0) {
         // 加载最新的市场概览数据
-        await loadMarketOverview(symbolsData);
+        await loadMarketOverview(watchlistData);
       } else {
         message.warning('暂无关注列表数据');
-        // 清空市场概览
-        setSymbols([]);
         setMarketOverview([]);
         setSelectedSymbolData(null);
       }
@@ -1250,22 +1269,34 @@ const Dashboard: React.FC = () => {
         {/* 顶部工具栏 */}
         <div style={{ padding: '12px 16px', backgroundColor: '#1E1E2E', borderBottom: '1px solid #3E3E5A' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
-            {/* 股票选择器 */}
+            {/* 交易对选择器 */}
             <div style={{ marginRight: '16px' }}>
               <Select
                 value={symbol}
                 onChange={setSymbol}
-                style={{ width: '120px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
+                style={{ width: '220px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
                 options={symbols.map(s => ({ label: s.code, value: s.code }))}
                 loading={isLoadingSymbols}
                 placeholder="选择股票"
                 size="small"
-                styles={{ popup: { root: { backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' } } }}
+                showSearch={true}
+                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } }}}
                 optionFilterProp="label"
                 filterOption={(input, option) => {
                   if (!option) return false;
-                  return ((option.label as string).toLowerCase().includes(input.toLowerCase())) ||
-                    (symbols.find(s => s.code === option.value)?.name.toLowerCase().includes(input.toLowerCase()) || false);
+                  // 根据输入的关键字过滤选项
+                  const lowerInput = input.toLowerCase();
+                  const lowerLabel = (option.label as string).toLowerCase();
+                  
+                  // 检查标签是否包含输入的关键字
+                  const labelMatch = lowerLabel.includes(lowerInput);
+                  
+                  // 如果有name属性，也检查name是否包含输入的关键字
+                  const symbolInfo = symbols.find(s => s.code === option.value);
+                  const nameMatch = symbolInfo && symbolInfo.name && 
+                                  symbolInfo.name.toLowerCase().includes(lowerInput);
+                  
+                  return labelMatch || nameMatch;
                 }}
               />
             </div>
