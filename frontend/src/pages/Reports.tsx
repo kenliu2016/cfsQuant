@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { Card, Table, Button, Space, message, Select } from 'antd'
 import { useState, useEffect, useMemo } from 'react'
 import client from '../api/client'
+import SymbolSelector from '../components/SymbolSelector'
 
 // 格式化日期时间函数
 const formatDateTime = (dateString: string) => {
@@ -18,19 +19,12 @@ const Reports = () => {
   const [selected, setSelected] = useState<string[]>([])
   const [searchText, setSearchText] = useState<string>('')
   const [strategySearchText, setStrategySearchText] = useState<string>('')
-  // 添加一些默认的mock数据，确保即使API调用失败，选择器也能显示placeholder
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(20)
   const [sortField, setSortField] = useState<string>('totalReturn')
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend')
   const [loading, setLoading] = useState<boolean>(false)
-  // TODO: 以下搜索相关状态暂时未使用，如有需要可以取消注释
-  /*
-  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([])
-  const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([])
-  */
   const [fallbackRuns, setFallbackRuns] = useState<any[]>([])
   const [fallbackDataLoaded, setFallbackDataLoaded] = useState<boolean>(false)
   const [initialized, setInitialized] = useState<boolean>(false)
@@ -50,38 +44,7 @@ const Reports = () => {
     }
   }
 
-  // 从API加载标的数据
-  const loadSymbols = async () => {
-    try {
-      const response = await client.get('/api/market/market_codes');
-      const marketCodes = response.data.rows || [];
-      
-      // 格式化数据为Select组件需要的格式，使用excode字段
-      const symbolData = marketCodes.map((item: any) => ({
-        value: item.excode, // 提交时使用的字段
-        label: `${item.excode}` // 显示的标签
-      }));
-      
-      setFilteredSymbols(symbolData);
-    } catch (error) {
-      console.error('加载标的数据失败:', error);
-      // 如果API调用失败，从回测记录中提取标的作为备选
-      try {
-        const fallbackData = await loadFallbackData();
-        if (fallbackData.length > 0) {
-          const symbols: string[] = Array.from(new Set(fallbackData.map((run: any) => run.code)));
-          setFilteredSymbols(symbols.map((s) => ({ value: s, label: s })));
-        } else {
-          // 添加mock数据确保placeholder显示
-          setFilteredSymbols([{value: 'mock', label: 'mock symbol'}]);
-        }
-      } catch (fallbackError) {
-        console.error('加载备选标的数据也失败:', fallbackError);
-        // 添加mock数据确保placeholder显示
-        setFilteredSymbols([{value: 'mock', label: 'mock symbol'}]);
-      }
-    }
-  }
+
 
 
   // 加载策略列表
@@ -418,12 +381,9 @@ const Reports = () => {
 
     const initializeData = async () => {
       try {
-        // 并行加载所有初始数据，但只调用一次
-        await Promise.all([
-          loadSymbols(),
-          loadStrategies()
-        ]);
-        // 等待其他数据加载完成后再加载回测列表
+        // 加载策略数据
+        await loadStrategies();
+        // 等待策略数据加载完成后再加载回测列表
         await loadRuns();
         // 设置初始化完成标志
         setInitialized(true);
@@ -460,17 +420,15 @@ const Reports = () => {
               handleSearchChange()
             }}
           />
-          <Select
+          <SymbolSelector
             placeholder="请选择或输入标的"
             style={{ width: 320 }}
-            showSearch
-            allowClear
-            options={filteredSymbols}
             value={searchText || undefined}
             onChange={(value) => {
               setSearchText(value)
               handleSearchChange()
             }}
+            allowClear
           />
           <Button 
             icon={<ReloadOutlined />}

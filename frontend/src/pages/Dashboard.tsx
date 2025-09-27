@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Select, Button, Modal, Checkbox, message, DatePicker, Input } from 'antd';
+import { Button, Modal, Checkbox, message, DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, BarChartOutlined, LineChartOutlined, CodeOutlined, CloseOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import client from '../api/client';
 import { formatPriceWithUnit } from '../utils/priceFormatter';
+import SymbolSelector from '../components/SymbolSelector';
 
 // 定义回测结果类型
 interface BacktestSignal {
@@ -53,31 +54,6 @@ const fetchWatchListFromAPI = async () => {
   }
 };
 
-// 从API获取active状态为true的market_codes（用于symbol下拉选择框）
-const fetchActiveSymbolsFromAPI = async () => {
-  try {
-    const response = await client.get('/api/market/market_codes', {
-      params: {
-        active: true
-      }
-    });
-    
-    // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
-    const marketCodes = response.data.rows || [];
-    // 将数据转换为前端需要的格式
-    return marketCodes.map((item: any) => ({
-      code: item.excode,
-      excode: item.excode, 
-      exchange: item.exchange,
-      name: item.name || '' // 保留name字段用于过滤
-    }));
-  } catch (error) {
-    console.error('Failed to fetch active symbols from API:', error);
-    // API调用失败时使用空数组
-    return [];
-  }
-};
-
 // 格式化价格显示
 const formatPrice = (value: number) => {
   return formatPriceWithUnit(value);
@@ -96,7 +72,7 @@ const Dashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(false);
   // 股票列表
-  const [symbols, setSymbols] = useState<any[]>([]);
+  const [symbols] = useState<any[]>([]);
   // 选中的股票
   const [symbol, setSymbol] = useState<string>('');
   // 时间周期
@@ -334,20 +310,6 @@ const Dashboard: React.FC = () => {
     const loadSymbols = async () => {
       setIsLoadingSymbols(true);
       try {
-        // symbol下拉选择框使用active=true的数据
-        const activeSymbolsData = await fetchActiveSymbolsFromAPI();
-        
-        if (activeSymbolsData.length > 0) {
-          setSymbols(activeSymbolsData);
-          
-          if (!activeSymbolsData.find((s: any) => s.code === symbol)) {
-            setSymbol(activeSymbolsData[0].code);
-          }
-        } else {
-          console.warn('No active symbols data from API');
-          setSymbols([]);
-        }
-        
         // 市场动态卡片使用watch=true的数据
         const watchlistData = await fetchWatchListFromAPI();
         if (watchlistData.length > 0) {
@@ -1270,36 +1232,18 @@ const Dashboard: React.FC = () => {
         <div style={{ padding: '12px 16px', backgroundColor: '#1E1E2E', borderBottom: '1px solid #3E3E5A' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             {/* 交易对选择器 */}
-            <div style={{ marginRight: '16px' }}>
-              <Select
-                value={symbol}
-                onChange={setSymbol}
-                style={{ width: '220px', backgroundColor: '#3E3E5A', borderColor: '#4E4E6A' }}
-                options={symbols.map(s => ({ label: s.code, value: s.code }))}
-                loading={isLoadingSymbols}
-                placeholder="选择股票"
-                size="small"
-                showSearch={true}
-                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } }}}
-                optionFilterProp="label"
-                filterOption={(input, option) => {
-                  if (!option) return false;
-                  // 根据输入的关键字过滤选项
-                  const lowerInput = input.toLowerCase();
-                  const lowerLabel = (option.label as string).toLowerCase();
-                  
-                  // 检查标签是否包含输入的关键字
-                  const labelMatch = lowerLabel.includes(lowerInput);
-                  
-                  // 如果有name属性，也检查name是否包含输入的关键字
-                  const symbolInfo = symbols.find(s => s.code === option.value);
-                  const nameMatch = symbolInfo && symbolInfo.name && 
-                                  symbolInfo.name.toLowerCase().includes(lowerInput);
-                  
-                  return labelMatch || nameMatch;
-                }}
-              />
-            </div>
+              <div style={{ marginRight: '16px' }}>
+                <SymbolSelector 
+                  value={symbol}
+                  onChange={setSymbol}
+                  onSymbolsLoaded={(loadedSymbols) => {
+                    // 当组件首次加载数据时，如果当前没有选中的symbol，则选中第一个
+                    if (!symbol && loadedSymbols.length > 0) {
+                      setSymbol(loadedSymbols[0].code);
+                    }
+                  }}
+                />
+              </div>
 
             {/* 股票价格和变动信息 */}
             {selectedSymbolData && (

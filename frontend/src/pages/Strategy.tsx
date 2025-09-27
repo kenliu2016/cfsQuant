@@ -1,10 +1,11 @@
 
 import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col, Select } from 'antd'
 const { Option } = Select
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
+import SymbolSelector from '../components/SymbolSelector'
 
 const { Content } = Layout
 
@@ -164,7 +165,7 @@ const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete, codeLoading
 }
 
 // 用户操作区组件
-const UserOperationPanel = ({ form, current, onRun, isBacktesting, filteredSymbols, onSymbolSearch }: any) => {
+const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
   if (!current) {
     return <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       请选择策略后进行操作
@@ -183,14 +184,7 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting, filteredSymbo
           <Row gutter={[8, 0]}>
             <Col span={12}>
               <Form.Item label="标的" name="code" rules={[{required:true}]} labelCol={{span:24}}>
-                <Select
-                  placeholder="请选择或搜索标的"
-                  showSearch
-                  filterOption={false}
-                  onSearch={onSymbolSearch}
-                  style={{ width: '100%' }}
-                  options={filteredSymbols}
-                />
+                <SymbolSelector style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -234,8 +228,6 @@ export default function StrategyPage(){
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [codeLoading, setCodeLoading] = useState<boolean>(false)
   const [isBacktesting, setIsBacktesting] = useState<boolean>(false)
-  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([]);
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([]);
   
   const refreshStrategyTree = () => {
     // 清除localStorage中的策略缓存
@@ -243,39 +235,8 @@ export default function StrategyPage(){
     setRefreshTrigger(prev => prev + 1)
   }
 
-  // 从API加载标的数据
-  const loadSymbols = async () => {
-    try {
-      const response = await client.get('/api/market/market_codes');
-      const marketCodes = response.data.rows || [];
-      
-      // 格式化数据为Select组件需要的格式，使用excode字段
-      const symbolData = marketCodes.map((item: any) => ({
-        value: item.excode, // 提交时使用的字段
-        label: `${item.excode}` // 显示的标签
-      }));
-      
-      setSymbols(symbolData);
-      setFilteredSymbols(symbolData);
-    } catch (error) {
-      console.error('加载标的数据失败:', error);
-    }
-  }
 
-  // 使用useCallback缓存搜索函数
-  const handleSymbolSearch = useCallback((inputValue: string) => {
-    if (!inputValue) {
-      setFilteredSymbols(symbols);
-      return;
-    }
-    
-    const lowerInput = inputValue.toLowerCase();
-    const filtered = symbols.filter(symbol => 
-      symbol.value.toLowerCase().includes(lowerInput) ||
-      symbol.label.toLowerCase().includes(lowerInput)
-    );
-    setFilteredSymbols(filtered);
-  }, [symbols])
+
 
   const onSelect = async (strategy:any) => {
     if (!strategy) return
@@ -312,6 +273,7 @@ export default function StrategyPage(){
         end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
         interval: v.interval // 使用用户选择的时间间隔
       }
+      console.log('params1111111111:', params)
       // 最终payload只提交封装后的params和strategy
       const payload = { params, strategy: current!.name }
       const r = await client.post('/api/backtest', payload)
@@ -388,10 +350,7 @@ export default function StrategyPage(){
     })
   }
 
-  // 初始化时加载标的数据
-  useEffect(() => {
-    loadSymbols();
-  }, [])
+
 
   return (
     <Layout style={{ background:'#fff', height: '100vh', overflow: 'hidden' }}>
@@ -410,9 +369,7 @@ export default function StrategyPage(){
                 form={form} 
                 current={current} 
                 onRun={onRun} 
-                isBacktesting={isBacktesting} 
-                filteredSymbols={filteredSymbols}
-                onSymbolSearch={handleSymbolSearch}
+                isBacktesting={isBacktesting}
               />
             </div>
           </Col>

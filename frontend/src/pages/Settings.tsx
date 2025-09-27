@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Modal, Form, Input, Checkbox, message, Popconfirm } from 'antd';
+import { Card, Table, Button, Modal, Form, Input, Checkbox, message, Popconfirm, Select } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined, SyncOutlined, EyeInvisibleOutlined, EyeOutlined, DatabaseOutlined, SearchOutlined } from '@ant-design/icons';
 import client from '../api/client';
 
-// 定义市场代码的接口
+// 定义交易对的接口
 interface MarketCode {
   exchange: string;
   code: string;
@@ -23,8 +23,10 @@ const Settings: React.FC = () => {
   const [editForm] = Form.useForm();
   const [exchangeFilter, setExchangeFilter] = useState<string>('');
   const [codeFilter, setCodeFilter] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(15);
 
-  // 加载市场代码数据
+  // 加载交易对数据
   const loadMarketCodes = async () => {
     setLoading(true);
     try {
@@ -32,13 +34,15 @@ const Settings: React.FC = () => {
         params: {
           active: null, // 获取所有代码，包括非活跃的
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined
+          code: codeFilter || undefined,
+          page: currentPage,
+          page_size: pageSize
         }
       });
       setMarketCodes(response.data.rows || []);
     } catch (error) {
-      console.error('加载市场代码失败:', error);
-      message.error('加载市场代码失败');
+      console.error('加载交易对失败:', error);
+      message.error('加载交易对失败');
     } finally {
       setLoading(false);
     }
@@ -61,12 +65,82 @@ const Settings: React.FC = () => {
     setSelectedRowKeys([]);
   };
 
+  // 过滤观察交易对
+  const handleWatchFilter = (value: boolean) => {
+    setCurrentPage(1);
+    // 保存原始请求参数结构，但通过接口传递watch参数
+    const fetchFilteredCodes = async () => {
+      setLoading(true);
+      try {
+        const response = await client.get('/api/market/market_codes', {
+          params: {
+            active: null,
+            watch: value,
+            page: 1,
+            page_size: pageSize
+          }
+        });
+        setMarketCodes(response.data.rows || []);
+      } catch (error) {
+        console.error('加载交易对失败:', error);
+        message.error('加载交易对失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchFilteredCodes();
+    setSelectedRowKeys([]);
+  };
+
+  // 过滤接入交易对
+  const handleActiveFilter = (value: boolean) => {
+    setCurrentPage(1);
+    // 保存原始请求参数结构，但通过接口传递active参数
+    const fetchFilteredCodes = async () => {
+      setLoading(true);
+      try {
+        const response = await client.get('/api/market/market_codes', {
+          params: {
+            active: value,
+            watch: null,
+            page: 1,
+            page_size: pageSize
+          }
+        });
+        setMarketCodes(response.data.rows || []);
+      } catch (error) {
+        console.error('加载交易对失败:', error);
+        message.error('加载交易对失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchFilteredCodes();
+    setSelectedRowKeys([]);
+  };
+
   // 重置过滤
   const handleResetFilter = () => {
     setExchangeFilter('');
     setCodeFilter('');
+    setCurrentPage(1);
+    setPageSize(15);
     loadMarketCodes();
     setSelectedRowKeys([]);
+  };
+
+  // 处理分页变化
+  const handlePageChange = (page: number, newPageSize: number) => {
+    setCurrentPage(page);
+    setPageSize(newPageSize);
+    loadMarketCodes();
+  };
+
+  // 处理每页条数变化
+  const handleShowSizeChange = (_current: number, size: number) => {
+    setCurrentPage(1);
+    setPageSize(size);
+    loadMarketCodes();
   };
 
   // 打开添加模态框
@@ -88,7 +162,7 @@ const Settings: React.FC = () => {
     setIsEditModalVisible(true);
   };
 
-  // 添加市场代码
+  // 添加交易对
   const handleAdd = async (values: any) => {
     try {
       await client.post('/api/market/market_codes', values);
@@ -101,7 +175,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  // 更新市场代码
+  // 更新交易对
   const handleUpdate = async (values: any) => {
     if (!currentCode) return;
     
@@ -116,7 +190,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  // 删除市场代码
+  // 删除交易对
   const handleDelete = async (exchange: string, code: string) => {
     try {
       await client.delete(`/api/market/market_codes/${encodeURIComponent(exchange)}/${encodeURIComponent(code)}`);
@@ -220,7 +294,7 @@ const Settings: React.FC = () => {
             编辑
           </Button>
           <Popconfirm
-            title="确定要删除这个市场代码吗？"
+            title="确定要删除这个交易对吗？"
             onConfirm={() => handleDelete(record.exchange, record.code)}
             okText="是"
             cancelText="否"
@@ -244,20 +318,27 @@ const Settings: React.FC = () => {
 
   return (
     <div style={{ padding: '10px', height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <Card title="市场代码管理" extra={
+      <Card title="交易对管理" extra={
           <Button type="primary" icon={<PlusOutlined />} size="small" onClick={handleAddModalOpen}>
             添加
           </Button>
         } style={{ flex: '1', display: 'flex', flexDirection: 'column', marginBottom: '0' }}>
         {/* 过滤条件输入 */}
         <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-          <Input
+          <Select
             placeholder="按交易所过滤"
-            value={exchangeFilter}
-            onChange={(e) => setExchangeFilter(e.target.value)}
+            value={exchangeFilter || undefined}
+            onChange={(value) => setExchangeFilter(value || '')}
             style={{ width: '160px' }}
             size="small"
-          />
+            allowClear
+          >
+            <Select.Option value="binance">binance</Select.Option>
+            <Select.Option value="bybit">bybit</Select.Option>
+            <Select.Option value="coinbase">coinbase</Select.Option>
+            <Select.Option value="upbit">upbit</Select.Option>
+            <Select.Option value="okx">okx</Select.Option>
+          </Select>
           <Input
             placeholder="按交易对过滤"
             value={codeFilter}
@@ -275,6 +356,18 @@ const Settings: React.FC = () => {
           </Button>
           <Button onClick={handleResetFilter} size="small">
             重置
+          </Button>
+          <Button
+            size="small"
+            onClick={() => handleWatchFilter(true)}
+          >
+            所有观察交易对
+          </Button>
+          <Button
+            size="small"
+            onClick={() => handleActiveFilter(true)}
+          >
+            所有接入交易对
           </Button>
           <Button
             icon={<SyncOutlined />}
@@ -328,7 +421,7 @@ const Settings: React.FC = () => {
           </Button>
         </div>
 
-        {/* 市场代码表格 */}
+        {/* 交易对表格 */}
         <div style={{ flex: '1', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Table
             rowSelection={rowSelection}
@@ -337,19 +430,22 @@ const Settings: React.FC = () => {
             rowKey={(record) => `${record.exchange}:${record.code}`}
             loading={loading}
             pagination={{
-              pageSize: 15,
+              current: currentPage,
+              pageSize: pageSize,
               showSizeChanger: true,
               showTotal: (total) => `共 ${total} 条记录`,
+              onChange: handlePageChange,
+              onShowSizeChange: handleShowSizeChange
             }}
-            scroll={{ y: 'calc(100vh - 180px)' }}
+            scroll={{ y: 'calc(100vh - 280px)' }}
             size="middle"
           />
         </div>
       </Card>
 
-      {/* 添加市场代码模态框 */}
+      {/* 添加交易对模态框 */}
       <Modal
-        title="添加市场代码"
+        title="添加交易对"
         open={isAddModalVisible}
         onCancel={() => setIsAddModalVisible(false)}
         footer={null}
@@ -397,9 +493,9 @@ const Settings: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* 编辑市场代码模态框 */}
+      {/* 编辑交易对模态框 */}
       <Modal
-        title="编辑市场代码"
+        title="编辑交易对"
         open={isEditModalVisible}
         onCancel={() => setIsEditModalVisible(false)}
         footer={null}
