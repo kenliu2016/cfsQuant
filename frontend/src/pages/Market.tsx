@@ -149,7 +149,7 @@ export default function Market() {
       const v = await form.validateFields()
       const [start, end] = v.timeRange
       // 日线图不需要额外的时分秒信息
-      const res = await client.get('/market/daily', {
+      const res = await client.get('/api/market/daily', {
         params: {
           code: v.code,
           start: start.format('YYYY-MM-DD HH:mm:ss'),
@@ -174,7 +174,7 @@ export default function Market() {
       start = start.startOf('day')
       end = end.endOf('day')
       
-      const res = await client.get('/market/intraday', {
+      const res = await client.get('/api/market/intraday', {
         params: {
           code: v.code,
           start: start.format('YYYY-MM-DD HH:mm:ss'),

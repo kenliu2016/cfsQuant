@@ -1,7 +1,7 @@
 
 import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col, Select } from 'antd'
 const { Option } = Select
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
@@ -164,7 +164,7 @@ const CodeEditor = ({ current, code, onCodeChange, onSave, onDelete, codeLoading
 }
 
 // 用户操作区组件
-const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
+const UserOperationPanel = ({ form, current, onRun, isBacktesting, filteredSymbols, onSymbolSearch }: any) => {
   if (!current) {
     return <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       请选择策略后进行操作
@@ -176,14 +176,21 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
       <Form 
         form={form} 
         layout="vertical" 
-        initialValues={{ code: 'BTCUSDT', range: [dayjs().add(-7,'day'), dayjs()] }}
+        initialValues={{ code: 'binance-BTC/USDT', range: [dayjs().add(-7,'day'), dayjs()] }}
         style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <Row gutter={[8, 0]}>
             <Col span={12}>
               <Form.Item label="标的" name="code" rules={[{required:true}]} labelCol={{span:24}}>
-                <Input style={{width: '100%'}}/>
+                <Select
+                  placeholder="请选择或搜索标的"
+                  showSearch
+                  filterOption={false}
+                  onSearch={onSymbolSearch}
+                  style={{ width: '100%' }}
+                  options={filteredSymbols}
+                />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -227,12 +234,48 @@ export default function StrategyPage(){
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [codeLoading, setCodeLoading] = useState<boolean>(false)
   const [isBacktesting, setIsBacktesting] = useState<boolean>(false)
+  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([]);
+  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([]);
   
   const refreshStrategyTree = () => {
     // 清除localStorage中的策略缓存
     localStorage.removeItem('strategies_cache')
     setRefreshTrigger(prev => prev + 1)
   }
+
+  // 从API加载标的数据
+  const loadSymbols = async () => {
+    try {
+      const response = await client.get('/api/market/market_codes');
+      const marketCodes = response.data.rows || [];
+      
+      // 格式化数据为Select组件需要的格式，使用excode字段
+      const symbolData = marketCodes.map((item: any) => ({
+        value: item.excode, // 提交时使用的字段
+        label: `${item.excode}` // 显示的标签
+      }));
+      
+      setSymbols(symbolData);
+      setFilteredSymbols(symbolData);
+    } catch (error) {
+      console.error('加载标的数据失败:', error);
+    }
+  }
+
+  // 使用useCallback缓存搜索函数
+  const handleSymbolSearch = useCallback((inputValue: string) => {
+    if (!inputValue) {
+      setFilteredSymbols(symbols);
+      return;
+    }
+    
+    const lowerInput = inputValue.toLowerCase();
+    const filtered = symbols.filter(symbol => 
+      symbol.value.toLowerCase().includes(lowerInput) ||
+      symbol.label.toLowerCase().includes(lowerInput)
+    );
+    setFilteredSymbols(filtered);
+  }, [symbols])
 
   const onSelect = async (strategy:any) => {
     if (!strategy) return
@@ -286,7 +329,7 @@ export default function StrategyPage(){
   const onNew = async () => {
     if (!newName) return message.warning('请输入策略名')
     try {
-      const r = await client.post('/strategies', { name: newName, description: newDescription })
+      const r = await client.post('/api/strategies', { name: newName, description: newDescription })
       if (r.data && r.data.status === 'ok') {
         message.success('已创建策略文件')
         setShowNew(false)
@@ -303,7 +346,7 @@ export default function StrategyPage(){
         // 获取新策略的代码（默认为空）
         setCodeLoading(true)
         try {
-          const codeRes = await client.get(`/strategies/${newName}/code`)
+          const codeRes = await client.get(`/api/strategies/${newName}/code`)
           setCode(codeRes.data?.code || '')
         } catch (error) {
           console.error('获取策略代码失败:', error)
@@ -335,7 +378,7 @@ export default function StrategyPage(){
       title: '确认删除策略',
       content: `将删除策略 ${current.name} 的文件及其数据库记录。`,
       onOk: async ()=>{
-        await client.delete(`/strategies/${current.name}`)
+        await client.delete(`/api/strategies/${current.name}`)
         message.success('已删除')
         setCurrent(null)
         setCode('')
@@ -344,6 +387,11 @@ export default function StrategyPage(){
       }
     })
   }
+
+  // 初始化时加载标的数据
+  useEffect(() => {
+    loadSymbols();
+  }, [])
 
   return (
     <Layout style={{ background:'#fff', height: '100vh', overflow: 'hidden' }}>
@@ -358,7 +406,14 @@ export default function StrategyPage(){
             </div>
             {/* 左下：执行参数和按钮 */}
             <div style={{ height: '36%' }}>
-              <UserOperationPanel form={form} current={current} onRun={onRun} isBacktesting={isBacktesting} />
+              <UserOperationPanel 
+                form={form} 
+                current={current} 
+                onRun={onRun} 
+                isBacktesting={isBacktesting} 
+                filteredSymbols={filteredSymbols}
+                onSymbolSearch={handleSymbolSearch}
+              />
             </div>
           </Col>
           {/* 右侧：代码编辑区 */}

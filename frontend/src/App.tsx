@@ -5,7 +5,6 @@ import { Routes, Route, useNavigate } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Strategy from './pages/Strategy';
 import Tuning from './pages/Tuning';
-import Monitor from './pages/Monitor';
 import Reports from './pages/Reports';
 import Progress from './pages/Progress';
 import ReportDetail from './pages/ReportDetail';
@@ -99,7 +98,6 @@ const App: React.FC = () => {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/strategy" element={<Strategy />} />
             <Route path="/tuning" element={<Tuning />} />
-            <Route path="/monitor" element={<Monitor />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/reports/:runId" element={<ReportDetail />} />
             <Route path="/progress" element={<Progress />} />

@@ -8,11 +8,12 @@ router = APIRouter(prefix="/api", tags=["backtest"])
 async def backtest(req: BacktestRequest):
     
     # 从params中获取所有需要的字段
-    code = req.params['code']
+    # 支持code或excode字段
+    code = req.params.get('code')
     start = req.params['start']
     end = req.params['end']
     interval = req.params['interval']
-    
+    print(f"Backtest request: code={code}, start={start}, end={end}, interval={interval}")
     # 调用get_candles获取K线数据
     candles_result = get_candles(code, start, end, interval)
     

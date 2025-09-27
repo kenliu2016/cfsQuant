@@ -301,7 +301,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
     
     Args:
         strategy: 策略名称
-        code: 交易对代码
+        code: 交易对代码（注意：这里实际上接收的是前端传入的excode值）
         params_grid: 参数网格
         interval: K线周期
         start: 开始时间（旧参数名，向后兼容）
@@ -358,7 +358,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
             'total': total,
             'finished': 0,
             'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-            # 新增字段
+            # 注意：这里存储的是前端传入的excode值
             'code': code,
             'interval': interval,
             'start_time': start_time,  # 保存开始时间
@@ -409,8 +409,9 @@ def get_all_tuning_tasks() -> List[Dict[str, Any]]:
                 'start_time': str(row['start_time']) if pd.notna(row['start_time']) else None,
                 'created_at': str(row['created_at']),
                 'error': row['error'] if pd.notna(row['error']) else None,
-                # 新增字段
-                'code': row['code'] if pd.notna(row['code']) else '',  # 标的代码
+                # 注意：在数据库中存储的code字段实际上是前端传入的excode值
+                'code': row['code'] if pd.notna(row['code']) else '',  # 数据库中存储的是excode值
+                'excode': row['code'] if pd.notna(row['code']) else '',  # 保持与前端一致的excode值
                 'params': row['params'] if pd.notna(row['params']) else '{}'  # 参数网格JSON字符串
             }
             tasks.append(task_info)
@@ -512,6 +513,11 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                 }
                 runs.append(run_info)
         
+        # 从tuning_tasks表中获取code值
+        code_query = "SELECT code FROM tuning_tasks WHERE task_id = :task_id"
+        code_result = fetch_df(code_query, **{"task_id": task_id})
+        code_value = code_result['code'].iloc[0] if not code_result.empty else ''
+        
         status_info = {
             'task_id': task_id,
             'status': result.iloc[0]['status'],
@@ -523,7 +529,9 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
             'runs': runs,  # 返回实际的已完成组合数据
             'runs_total_count': runs_total_count,
             'page': page,
-            'page_size': page_size
+            'page_size': page_size,
+            'code': code_value,  # 注意：数据库中存储的code字段实际上是前端传入的excode值
+            'excode': code_value  # 保持与前端一致的excode值
         }
         
         # 移除调试日志，避免不必要的日志输出

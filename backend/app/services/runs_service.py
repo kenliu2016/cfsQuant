@@ -196,11 +196,7 @@ def run_detail(run_id: str):
         }
         return {
             "info": default_run_info,
-            "metrics": [],
-            "equity": [],
-            "trades": [],
-            "grid_levels": [],
-            "klines": []
+            "metrics": []
         }
     
     # 获取指标数据
@@ -273,33 +269,6 @@ def run_detail(run_id: str):
                 df_m = total_profit_row
             else:
                 df_m = pd.concat([df_m, total_profit_row], ignore_index=True)
-    # 从整合后的trades表中读取equity相关数据
-    # 注意：我们现在从trades表中获取nav和drawdown数据，而不是从equity_curve表
-    df_e = fetch_df("""
-        SELECT datetime, nav, drawdown 
-        FROM trades 
-        WHERE run_id=:rid 
-        ORDER BY datetime
-    """, rid=run_id)
-    
-    # 如果trades表中没有equity数据（比如没有交易的情况），我们需要处理这种边缘情况
-    if df_e.empty:
-        # 创建一个最小的equity数据集，避免前端显示为空
-        # 这里可以考虑从runs表获取初始和结束时间，创建一些基本的equity数据点
-        df_e = pd.DataFrame({
-            'datetime': [pd.Timestamp.now()],
-            'nav': [0],
-            'drawdown': [0]
-        })
-    
-    # 获取交易记录数据，包括整合后的字段
-    df_t = fetch_df("""
-        SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
-               realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
-        FROM trades
-        WHERE run_id = :rid
-        ORDER BY datetime
-    """, rid=run_id)
     
     # 确保返回的数据是可JSON序列化的
     run_info = df_run.iloc[0].to_dict()
@@ -332,22 +301,6 @@ def run_detail(run_id: str):
             # 如果解析失败，设置为空字典
             run_info['paras'] = {}
     
-    # 处理equity数据中的datetime类型和特殊浮点值
-    if not df_e.empty:
-        # 确保datetime列是字符串类型
-        if 'datetime' in df_e.columns:
-            df_e['datetime'] = df_e['datetime'].astype(str)
-        
-        # 处理equity数据中的数值列
-        numeric_columns_e = df_e.select_dtypes(include=['float64']).columns
-        for col in numeric_columns_e:
-            # 将NaN替换为0
-            df_e[col] = df_e[col].fillna(0)
-            # 将Infinity和-Infinity替换为0
-            df_e[col] = df_e[col].replace([float('inf'), float('-inf')], 0)
-            # 确保所有值都是可JSON序列化的float类型
-            df_e[col] = df_e[col].astype(float)
-    
     # 处理metrics数据中的特殊浮点值
     if not df_m.empty:
         # 处理metric_value列
@@ -359,70 +312,12 @@ def run_detail(run_id: str):
             # 确保所有值都是可JSON序列化的float类型
             df_m['metric_value'] = df_m['metric_value'].astype(float)
     
-    # 处理交易记录中的datetime类型和特殊浮点值
-    if not df_t.empty:
-        # 确保datetime列是字符串类型
-        if 'datetime' in df_t.columns:
-            df_t['datetime'] = df_t['datetime'].astype(str)
-        
-        # 处理数值列中的NaN、Infinity和-Infinity等特殊浮点值
-        numeric_columns = df_t.select_dtypes(include=['float64']).columns
-        for col in numeric_columns:
-            # 将NaN替换为0
-            df_t[col] = df_t[col].fillna(0)
-            # 将Infinity和-Infinity替换为0
-            df_t[col] = df_t[col].replace([float('inf'), float('-inf')], 0)
-            # 确保所有值都是可JSON序列化的float类型
-            df_t[col] = df_t[col].astype(float)
+    logger.debug(f"成功获取回测详情基本信息和指标，run_id: {run_id}, 策略: {run_info.get('strategy', '未知')}")
     
-    # 获取网格级别数据
-    grid_levels = get_grid_levels(run_id)
-    
-    # 获取K线数据
-    klines = []
-    try:
-        from .market_service import MarketDataService
-        market_service = MarketDataService()
-        
-        # 从run_info中获取所需参数
-        code = run_info.get('code', '')
-        interval = run_info.get('interval', '1m')
-        start_time = run_info.get('start_time', '')
-        end_time = run_info.get('end_time', '')
-        
-        if code and start_time and end_time:
-            # 调用市场服务获取K线数据
-            df_candles, _ = market_service.get_candles(code, start_time, end_time, interval)
-            
-            # 确保返回的数据是可JSON序列化的
-            if not df_candles.empty:
-                # 处理datetime类型
-                if 'datetime' in df_candles.columns:
-                    df_candles['datetime'] = df_candles['datetime'].astype(str)
-                
-                # 处理数值列中的特殊值
-                numeric_columns = df_candles.select_dtypes(include=['float64', 'int64']).columns
-                for col in numeric_columns:
-                    df_candles[col] = df_candles[col].fillna(0)
-                    df_candles[col] = df_candles[col].replace([float('inf'), float('-inf')], 0)
-                    df_candles[col] = df_candles[col].astype(float)
-                
-                klines = df_candles.to_dict(orient="records")
-        logger.debug(f"成功获取K线数据，run_id: {run_id}, 数据点数量: {len(klines)}")
-    except Exception as e:
-        logger.error(f"获取K线数据失败: {str(e)}")
-        klines = []
-    
-    logger.debug(f"成功获取回测详情，run_id: {run_id}, 策略: {run_info.get('strategy', '未知')}")
-    
-    # 统一返回数据：基本信息、指标数据、equity数据、交易数据、网格级别数据和K线数据
+    # 统一返回数据：只返回基本信息和指标数据
     return {
         "info": run_info,
-        "metrics": df_m.to_dict(orient="records"),
-        "equity": df_e.to_dict(orient="records"),
-        "trades": df_t.to_dict(orient="records"),
-        "grid_levels": grid_levels,
-        "klines": klines
+        "metrics": df_m.to_dict(orient="records")
     }
 
 def delete_run(run_id: str) -> bool:
@@ -503,3 +398,120 @@ def batch_delete_runs(run_ids: list) -> dict:
         "failed": failed_count,
         "failed_ids": failed_ids
     }
+
+# 新增独立查询函数
+def get_run_equity(run_id: str, limit: int = 1000):
+    """获取回测的equity曲线数据"""
+    # 从trades表中读取equity相关数据
+    df_e = fetch_df("""
+        SELECT datetime, nav, drawdown 
+        FROM trades 
+        WHERE run_id=:rid 
+        ORDER BY datetime
+    """, rid=run_id)
+    
+    # 如果trades表中没有equity数据（比如没有交易的情况），处理边缘情况
+    if df_e.empty:
+        # 创建一个最小的equity数据集，避免前端显示为空
+        df_e = pd.DataFrame({
+            'datetime': [pd.Timestamp.now()],
+            'nav': [0],
+            'drawdown': [0]
+        })
+    elif len(df_e) > limit:  # 限制equity数据量
+        # 采样策略：均匀采样
+        df_e = df_e.iloc[np.unique(np.linspace(0, len(df_e)-1, min(limit, len(df_e)), dtype=int))]
+    
+    # 处理datetime类型和特殊浮点值
+    if not df_e.empty:
+        # 确保datetime列是字符串类型
+        if 'datetime' in df_e.columns:
+            df_e['datetime'] = df_e['datetime'].astype(str)
+        
+        # 处理equity数据中的数值列
+        numeric_columns_e = df_e.select_dtypes(include=['float64']).columns
+        for col in numeric_columns_e:
+            # 将NaN替换为0
+            df_e[col] = df_e[col].fillna(0)
+            # 将Infinity和-Infinity替换为0
+            df_e[col] = df_e[col].replace([float('inf'), float('-inf')], 0)
+            # 确保所有值都是可JSON序列化的float类型
+            df_e[col] = df_e[col].astype(float)
+    
+    logger.debug(f"成功获取回测equity数据，run_id: {run_id}, 数据点数量: {len(df_e)}")
+    return df_e.to_dict(orient="records")
+
+def get_run_trades(run_id: str, limit: int = 1000):
+    """获取回测的交易记录数据"""
+    # 获取交易记录数据，添加limit限制
+    df_t = fetch_df("""
+        SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
+               realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
+        FROM trades
+        WHERE run_id = :rid
+        ORDER BY datetime
+        LIMIT :limit
+    """, rid=run_id, limit=limit)
+    
+    # 处理datetime类型和特殊浮点值
+    if not df_t.empty:
+        # 确保datetime列是字符串类型
+        if 'datetime' in df_t.columns:
+            df_t['datetime'] = df_t['datetime'].astype(str)
+        
+        # 处理数值列中的NaN、Infinity和-Infinity等特殊浮点值
+        numeric_columns = df_t.select_dtypes(include=['float64']).columns
+        for col in numeric_columns:
+            # 将NaN替换为0
+            df_t[col] = df_t[col].fillna(0)
+            # 将Infinity和-Infinity替换为0
+            df_t[col] = df_t[col].replace([float('inf'), float('-inf')], 0)
+            # 确保所有值都是可JSON序列化的float类型
+            df_t[col] = df_t[col].astype(float)
+    
+    logger.debug(f"成功获取回测交易记录，run_id: {run_id}, 交易数量: {len(df_t)}")
+    return df_t.to_dict(orient="records")
+
+def get_run_klines(run_id: str, limit: int = 2000):
+    """获取回测的K线数据"""
+    klines = []
+    try:
+        # 先获取回测基本信息
+        df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM runs WHERE run_id=:rid""", rid=run_id)
+        if not df_run.empty:
+            run_data = df_run.iloc[0]
+            code = run_data.get('code', '')
+            interval = run_data.get('interval', '1m')
+            start_time = run_data.get('start_time', '')
+            end_time = run_data.get('end_time', '')
+            
+            if code and start_time and end_time:
+                from .market_service import MarketDataService
+                market_service = MarketDataService()
+                
+                # 调用市场服务获取K线数据
+                df_candles, _ = market_service.get_candles(code, start_time, end_time, interval)
+                
+                # 限制K线数据量
+                if not df_candles.empty and len(df_candles) > limit:
+                    # 采样策略：均匀采样
+                    df_candles = df_candles.iloc[np.unique(np.linspace(0, len(df_candles)-1, min(limit, len(df_candles)), dtype=int))]
+                
+                # 确保返回的数据是可JSON序列化的
+                if not df_candles.empty:
+                    # 处理datetime类型
+                    if 'datetime' in df_candles.columns:
+                        df_candles['datetime'] = df_candles['datetime'].astype(str)
+                    
+                    # 处理数值列中的特殊值
+                    numeric_columns = df_candles.select_dtypes(include=['float64', 'int64']).columns
+                    for col in numeric_columns:
+                        df_candles[col] = df_candles[col].fillna(0)
+                        df_candles[col] = df_candles[col].replace([float('inf'), float('-inf')], 0)
+                        df_candles[col] = df_candles[col].astype(float)
+                    
+                    klines = df_candles.to_dict(orient="records")
+        logger.debug(f"成功获取回测K线数据，run_id: {run_id}, 数据点数量: {len(klines)}")
+    except Exception as e:
+        logger.error(f"获取回测K线数据失败: {str(e)}")
+    return klines

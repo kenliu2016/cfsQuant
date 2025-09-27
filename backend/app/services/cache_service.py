@@ -77,16 +77,20 @@ class RedisManager:
                 'decode_responses': True,
                 'socket_timeout': 30,  # 增加超时时间至30秒
                 'socket_keepalive': True,
-                'socket_keepalive_options': {
-                    socket.TCP_KEEPIDLE: 30,  # 减少空闲时间检查频率
-                    socket.TCP_KEEPINTVL: 5,  # 更频繁的保活包
-                    socket.TCP_KEEPCNT: 10,    # 增加重试次数
-                },
                 'retry_on_timeout': True,
                 'health_check_interval': 10,  # 更频繁的健康检查
                 'max_connections': 100,       # 增加连接池大小
                 'socket_connect_timeout': 10  # 增加连接超时时间
             }
+            
+            # 仅在支持TCP_KEEPIDLE等常量的系统上添加这些选项（如Linux）
+            # macOS通常不支持这些常量
+            if hasattr(socket, 'TCP_KEEPIDLE') and hasattr(socket, 'TCP_KEEPINTVL') and hasattr(socket, 'TCP_KEEPCNT'):
+                pool_params['socket_keepalive_options'] = {
+                    socket.TCP_KEEPIDLE: 30,  # 减少空闲时间检查频率
+                    socket.TCP_KEEPINTVL: 5,  # 更频繁的保活包
+                    socket.TCP_KEEPCNT: 10,    # 增加重试次数
+                }
             
             # 如果设置了密码，则添加密码参数
             if REDIS_PASSWORD:

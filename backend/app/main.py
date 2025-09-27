@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from .routers import strategies, market, backtest, health, export, runs, predictions, tuning, monitor, trades
+from .routers import strategies, market, backtest, health, export, runs, tuning, trades
 import os
 import asyncio
 import logging
@@ -69,13 +69,25 @@ async def global_exception_handler(request: Request, exc: Exception):
     """处理所有未捕获的异常"""
     logger.error(f"全局异常: {str(exc)}", exc_info=True)
     
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "detail": "服务器内部错误，请稍后重试",
-            "error_type": type(exc).__name__
-        }
-    )
+    try:
+        # 尝试返回包含异常类型的详细错误信息
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": "服务器内部错误，请稍后重试",
+                "error_type": type(exc).__name__
+            }
+        )
+    except Exception as e:
+        # 如果在处理异常时又发生了错误，返回更简单的错误信息
+        logger.error(f"处理全局异常时发生异常: {str(e)}")
+        # 使用最基本的JSON响应，避免再次出现序列化错误
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": "服务器内部错误，请稍后重试"
+            }
+        )
 
 # 添加请求验证异常处理器
 @app.exception_handler(RequestValidationError)
@@ -83,24 +95,33 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     """处理请求验证异常"""
     logger.warning(f"请求验证失败: {str(exc)}")
     
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "detail": "请求参数验证失败",
-            "errors": exc.errors()
-        }
-    )
+    try:
+        # 尝试正常返回错误信息
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "detail": "请求参数验证失败",
+                "errors": exc.errors()
+            }
+        )
+    except Exception as e:
+        # 如果在处理验证错误时又发生了错误（如JSON序列化错误），返回更简单的错误信息
+        logger.error(f"处理验证错误时发生异常: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "detail": "请求参数验证失败",
+                "error_summary": str(exc)
+            }
+        )
 
 app.include_router(health.router)
 app.include_router(market.router)
-app.include_router(predictions.router)
 app.include_router(strategies.router)
 app.include_router(backtest.router)
 app.include_router(runs.router)
 app.include_router(export.router)
-
 app.include_router(tuning.router)
-app.include_router(tuning.available_router)
 app.include_router(trades.router)
 
 def prewarm_market_cache():

@@ -8,7 +8,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/market", tags=["market"])
+router = APIRouter(prefix="/api/market", tags=["market"])
 
 # 定义通用的数据处理函数
 def process_market_data(df, context=""):
@@ -134,7 +134,7 @@ def process_market_data(df, context=""):
 # 定义通用的日期时间解析函数
 def parse_datetime(dt_str, default=None):
     """
-    尝试多种格式解析日期时间字符串
+    尝试多种格式解析日期时间字符串，确保不会抛出无法序列化的异常
     """
     if dt_str is None:
         return default
@@ -148,7 +148,6 @@ def parse_datetime(dt_str, default=None):
         "%d-%m-%Y %H:%M:%S",
         "%d-%m-%Y",
     ]
-    
     for fmt in formats:
         try:
             return datetime.strptime(dt_str, fmt)
@@ -169,10 +168,14 @@ def parse_datetime(dt_str, default=None):
     except (ValueError, TypeError):
         pass
     
+    # 始终返回默认值，而不是抛出ValueError异常
     if default is not None:
+        logger.warning(f"无法解析日期时间: {dt_str}，使用默认值: {default}")
         return default
     
-    raise ValueError(f"无法解析日期时间: {dt_str}")
+    # 如果没有提供默认值，返回当前时间
+    logger.error(f"无法解析日期时间: {dt_str}，也没有提供默认值，返回当前时间")
+    return datetime.now()
 
 @router.get("/candles")
 def candles(code: str = Query(...), start: str = Query(None), end: str = Query(None), interval: str = Query("1m"), 

@@ -701,7 +701,8 @@ class BacktestEngine:
         # 参数
         fee_rate = float(params.get("fee_rate", 0.001))
         base_slippage = float(params.get("slippage", 0.0002))
-        code = params.get("code", "")
+        # 支持code或excode字段
+        code = params.get("code")
         
         # 回测数据
         data = df.reset_index(drop=True)

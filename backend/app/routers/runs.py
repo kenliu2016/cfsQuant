@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 import numpy as np
 import logging
-from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs
-from fastapi import HTTPException
+from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs, get_run_equity, get_run_trades, get_run_klines
+from fastapi import HTTPException, APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -52,10 +52,37 @@ async def get_grid_levels_endpoint(run_id: str):
 
 @router.get("/runs/{run_id}")
 async def runs_detail(run_id: str):
-    # 现在run_detail函数直接返回包含四部分数据的字典
+    # 调用服务层获取回测详情数据（只返回基本信息和指标）
     detail_data = run_detail(run_id)
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(detail_data)
+    return processed_data
+
+# 获取回测equity曲线数据
+@router.get("/runs/{run_id}/equity")
+async def get_run_equity_endpoint(run_id: str, limit: int = 1000):
+    # 调用服务层获取equity数据
+    equity_data = get_run_equity(run_id, limit)
+    # 确保所有数据都是可JSON序列化的Python原生类型
+    processed_data = convert_numpy_types(equity_data)
+    return processed_data
+
+# 获取回测交易记录数据
+@router.get("/runs/{run_id}/trades")
+async def get_run_trades_endpoint(run_id: str, limit: int = 1000):
+    # 调用服务层获取交易记录数据
+    trades_data = get_run_trades(run_id, limit)
+    # 确保所有数据都是可JSON序列化的Python原生类型
+    processed_data = convert_numpy_types(trades_data)
+    return processed_data
+
+# 获取回测K线数据
+@router.get("/runs/{run_id}/klines")
+async def get_run_klines_endpoint(run_id: str, limit: int = 2000):
+    # 调用服务层获取K线数据
+    klines_data = get_run_klines(run_id, limit)
+    # 确保所有数据都是可JSON序列化的Python原生类型
+    processed_data = convert_numpy_types(klines_data)
     return processed_data
 
 @router.delete("/runs/{run_id}")

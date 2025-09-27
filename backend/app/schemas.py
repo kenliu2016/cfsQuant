@@ -19,7 +19,12 @@ class BacktestRequest(BaseModel):
 
     @validator('params')
     def validate_params(cls, v):
-        required_fields = ['code', 'start', 'end', 'interval']
+        # 支持code或excode字段
+        if 'code' not in v and 'excode' not in v:
+            raise ValueError(f"Missing required field in params: either 'code' or 'excode' is required")
+        
+        # 其他必需字段
+        required_fields = ['start', 'end', 'interval']
         for field in required_fields:
             if field not in v:
                 raise ValueError(f"Missing required field in params: {field}")

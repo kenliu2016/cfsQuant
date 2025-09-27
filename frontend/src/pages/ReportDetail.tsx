@@ -29,8 +29,105 @@ const ReportDetail: React.FC = () => {
   const [currentRunDetail, setCurrentRunDetail] = useState<any>({});
   const [currentRunTrades, setCurrentRunTrades] = useState<any[]>([]);
   const [currentRunKlineData, setCurrentRunKlineData] = useState<any[]>([]);
-  const [currentRunEquity, setCurrentRunEquity] = useState<any[]>([]);
   const [currentRunGridLevels, setCurrentRunGridLevels] = useState<GridLevel[]>([]);
+  const [tabLoading, setTabLoading] = useState<{[key: string]: boolean}>({ 
+    '4': false, // K线交易图
+    '5': false  // 交易记录
+  });
+  
+  // 处理K线图点击事件
+  const handleChartClick = async (params: any) => {
+    try {
+      console.log('K线图点击事件触发:', params);
+      
+      // 确保有回测ID和标的代码
+      if (!runId || !currentRunDetail.code) {
+        console.warn('缺少回测ID或标的代码，无法查询K线数据');
+        return;
+      }
+      
+      // 获取点击的数据点信息
+      let clickedIndex = -1;
+      let clickedData = null;
+      
+      // 处理不同类型的点击事件
+      if (params && params.dataIndex !== undefined) {
+        // 直接点击在数据点上
+        clickedIndex = params.dataIndex;
+        clickedData = params.data;
+      } else if (params && params.componentType === 'grid' && params.value !== undefined) {
+        // 点击在图表区域，可以通过xAxis坐标找到最近的数据点
+        const xAxisIndex = params.value[0];
+        // 找到最接近的K线索引
+        if (xAxisIndex >= 0 && currentRunKlineData && currentRunKlineData.length > 0) {
+          clickedIndex = Math.min(Math.max(0, Math.round(xAxisIndex)), currentRunKlineData.length - 1);
+          clickedData = currentRunKlineData[clickedIndex];
+        }
+      }
+      
+      // 获取点击的K线对应的时间点
+      const clickedTime = clickedData?.datetime || (currentRunKlineData && currentRunKlineData[clickedIndex]?.datetime);
+      if (!clickedTime) {
+        console.warn('无法获取点击的时间点信息');
+        return;
+      }
+      
+      console.log('点击K线数据点:', {
+        time: clickedTime,
+        index: clickedIndex,
+        data: clickedData,
+        code: currentRunDetail.code
+      });
+      
+      // 查询/api/market/candles接口
+      console.log('开始查询/api/market/candles接口...');
+      const candlesResponse = await client.get('/api/market/candles', {
+        params: {
+          code: currentRunDetail.code,
+          start: dayjs(clickedTime).subtract(1, 'day').format('YYYY-MM-DD HH:mm:ss'),
+          end: dayjs(clickedTime).add(1, 'day').format('YYYY-MM-DD HH:mm:ss'),
+          interval: '15m'
+        }
+      });
+      console.log('/api/market/candles 响应数据条数:', candlesResponse.data?.rows?.length || 0);
+      
+      // 查询/api/runs/grid_levels接口
+      console.log('开始查询/api/runs/grid_levels接口...');
+      const gridLevelsResponse = await client.get('/api/runs/grid_levels', {
+        params: {
+          run_id: runId
+        }
+      });
+      console.log('/api/runs/grid_levels 响应数据条数:', gridLevelsResponse.data?.length || 0);
+      
+      // 更新网格级别数据，以便在图表上显示
+      setCurrentRunGridLevels(gridLevelsResponse.data || []);
+      
+      message.success(`成功查询K线数据: ${currentRunDetail.code} 在 ${dayjs(clickedTime).format('MM-DD HH:mm')}`);
+    } catch (error) {
+      console.error('查询K线或网格数据失败:', error);
+      message.error('查询K线或网格数据失败');
+    }
+  };
+  
+  // 定义ECharts事件处理器
+  const onEvents = {
+    'click': handleChartClick
+  };
+
+  // 处理Tab切换
+  const handleTabChange = (activeKey: string) => {
+    // 当切换到K线交易图标签(4)时，按需加载数据
+    if (activeKey === '4' && runId) {
+      loadKlineData(runId);
+      loadGridLevelsData(runId);
+      loadTradesData(runId);
+    }
+    // 当切换到交易记录标签(5)时，按需加载交易数据
+    else if (activeKey === '5' && runId && currentRunTrades.length === 0) {
+      loadTradesData(runId);
+    }
+  };
 
   // 格式化日期时间 - 增强版，支持多种时间格式
   const formatDateTime = (timestamp: any) => {
@@ -95,38 +192,71 @@ const ReportDetail: React.FC = () => {
     return Date.now(); // 回退到当前时间
   };
 
-  // 加载回测详情数据（从单个API获取所有数据）
+  // 加载回测基本信息和指标数据
   const loadRunDetail = async (runId: string) => {
     try {
       setLoading(true);
-      // 只调用一次API，获取所有数据
+      // 只获取基本信息和指标数据
       const res = await client.get('/api/runs/' + runId);
       console.log('API response structure:', res.data);
-      // 提取并设置所有数据
+      // 提取并设置基本信息和指标数据
       setCurrentRunId(runId);
       setCurrentRunDetail(res.data.info || {});
-      setCurrentRunTrades(res.data.trades || []);
-      setCurrentRunGridLevels(res.data.grid_levels || []);
-      
-
-      
-      // 直接从API返回中获取K线数据
-      if (res.data.klines) {
-        setCurrentRunKlineData(res.data.klines || []);
-      } else {
-        // 如果没有直接返回K线数据，则保持当前值不变
-        console.log('当前API响应中未包含klines字段');
-      }
-      
-      // 如果有equity数据也一并处理
-      if (res.data.equity) {
-        setCurrentRunEquity(res.data.equity || []);
-      }
     } catch (error) {
       console.error('加载回测详情失败:', error);
       message.error('加载回测详情失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 按需加载K线数据
+  const loadKlineData = async (runId: string) => {
+    if (currentRunKlineData.length > 0) return; // 如果已有数据则不再加载
+    
+    try {
+      setTabLoading(prev => ({ ...prev, '4': true }));
+      const res = await client.get('/api/runs/' + runId + '/klines', {
+        params: { limit: 2000 }
+      });
+      setCurrentRunKlineData(res.data || []);
+    } catch (error) {
+      console.error('加载K线数据失败:', error);
+      message.error('加载K线数据失败');
+    } finally {
+      setTabLoading(prev => ({ ...prev, '4': false }));
+    }
+  };
+
+  // 按需加载交易记录数据
+  const loadTradesData = async (runId: string) => {
+    if (currentRunTrades.length > 0) return; // 如果已有数据则不再加载
+    
+    try {
+      setTabLoading(prev => ({ ...prev, '5': true }));
+      const res = await client.get('/api/runs/' + runId + '/trades', {
+        params: { limit: 1000 }
+      });
+      setCurrentRunTrades(res.data || []);
+    } catch (error) {
+      console.error('加载交易记录失败:', error);
+      message.error('加载交易记录失败');
+    } finally {
+      setTabLoading(prev => ({ ...prev, '5': false }));
+    }
+  };
+
+  // 按需加载网格级别数据
+  const loadGridLevelsData = async (runId: string) => {
+    if (currentRunGridLevels.length > 0) return; // 如果已有数据则不再加载
+    
+    try {
+      const res = await client.get('/api/runs/grid_levels', {
+        params: { run_id: runId }
+      });
+      setCurrentRunGridLevels(res.data || []);
+    } catch (error) {
+      console.error('加载网格级别数据失败:', error);
     }
   };
 
@@ -649,7 +779,7 @@ const ReportDetail: React.FC = () => {
     }}>
       <Spin spinning={loading}>
         {currentRunDetail && Object.keys(currentRunDetail).length > 0 ? (
-          <Tabs>
+          <Tabs onChange={handleTabChange}>
             {/* 基本信息 */}
             <TabPane tab="基本信息" key="1">
               <div style={{padding: 24}}>
@@ -729,24 +859,7 @@ const ReportDetail: React.FC = () => {
                     <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
                       <Statistic 
                         title="夏普率" 
-                        value={(() => {
-                          // 优先使用后端计算的夏普率，如果不存在则使用前端计算的值
-                          if (currentRunDetail.sharpe) {
-                            return currentRunDetail.sharpe.toFixed(2);
-                          }
-                          // 简单计算夏普率（假设无风险利率为0）
-                          const returns = currentRunEquity.map((item: any, index: number) => {
-                            if (index === 0) return 0
-                            return (item.nav - currentRunEquity[index - 1].nav) / currentRunEquity[index - 1].nav
-                          }).filter((r: number) => r !== 0)
-                          
-                          if (returns.length === 0) return 0
-                          
-                          const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length
-                          const stdDev = Math.sqrt(returns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / returns.length)
-                          
-                          return stdDev === 0 ? 0 : (meanReturn / stdDev * Math.sqrt(252)).toFixed(2) // 假设252个交易日
-                        })()}
+                        value={currentRunDetail.sharpe ? currentRunDetail.sharpe.toFixed(2) : '0.00'}
                       />
                     </Card>
                   </Space>
@@ -777,8 +890,7 @@ const ReportDetail: React.FC = () => {
                     <Card style={{width: '100%', borderRadius: '8px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 0'}}>
                       <Statistic 
                         title="最大回撤" 
-                        value={(currentRunDetail.max_drawdown ? currentRunDetail.max_drawdown * 100 : 
-                                (currentRunEquity.length > 0 ? currentRunEquity.reduce((max, item) => Math.min(max, item.drawdown), 0) * 100 : 0)).toFixed(2)} 
+                        value={currentRunDetail.max_drawdown ? (currentRunDetail.max_drawdown * 100).toFixed(2) : '0.00'} 
                         suffix="%" 
                         valueStyle={{ color: '#f5222d' }}
                       />
@@ -791,10 +903,13 @@ const ReportDetail: React.FC = () => {
              {/* K线交易图 */}
             <TabPane tab="K线交易图" key="4">
               <div style={{ height: 'calc(100vh - 100px)', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {getKlineOption ? (
+                {tabLoading['4'] ? (
+                  <Spin size="large" />
+                ) : getKlineOption ? (
                   <ReactECharts 
                     option={getKlineOption} 
                     style={{ height: '100%', width: '100%' }} 
+                    onEvents={onEvents}
                   />
                 ) : (
                   <div style={{ textAlign: 'center', color: '#8c8c8c' }}>

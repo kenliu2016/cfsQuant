@@ -37,30 +37,17 @@ export default function Tuning() {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  // 解析CSV文件加载标的数据
+  // 从API加载标的数据
   const loadSymbols = async () => {
     try {
-      const response = await fetch('/src/assets/symbols.csv');
-      const csvText = await response.text();
+      const response = await client.get('/api/market/market_codes');
+      const marketCodes = response.data.rows || [];
       
-      // 解析CSV
-      const lines = csvText.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
-      
-      const symbolData = [];
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
-        const symbolObj = headers.reduce((obj, header, index) => {
-          obj[header] = values[index]?.trim();
-          return obj;
-        }, {} as any);
-        
-        // 将code和name格式化为Select组件需要的格式
-        symbolData.push({
-          value: symbolObj.code,
-          label: `${symbolObj.code} - ${symbolObj.name}`
-        });
-      }
+      // 格式化数据为Select组件需要的格式，使用excode字段
+      const symbolData = marketCodes.map((item: any) => ({
+        value: item.excode, // 提交时使用的字段
+        label: `${item.excode}` // 显示的标签
+      }));
       
       setSymbols(symbolData);
       setFilteredSymbols(symbolData);
@@ -225,13 +212,13 @@ export default function Tuning() {
         strategy: v.strategy, 
         params: paramsGrid,
         params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
-        code: v.code, 
-        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
-        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
+        excode: v.code, // 使用excode字段提交
+        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
+        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), 
         interval: v.interval
       };
       
-      const r = await client.post('/tuning', payload)
+      const r = await client.post('/api/tuning', payload)
       const task_id = r.data.task_id
       setTask(task_id)
       message.success('任务已提交: ' + task_id)
@@ -358,7 +345,7 @@ export default function Tuning() {
     <div className="tuning-page">
       <Card title={<div className="card-title"><SettingOutlined className="title-icon" /> 参数寻优</div>} className="main-card">
         <Form form={form} layout="vertical" initialValues={{ 
-          code: 'BTCUSDT', 
+          code: 'binance-BTC/USDT', 
           range: [dayjs().add(-30, 'day'), dayjs()],
           interval: '1m',
           paramsConfig: {} 

@@ -439,7 +439,7 @@ const Dashboard: React.FC = () => {
       const timestamp = `${timestampNow.getFullYear()}-${String(timestampNow.getMonth() + 1).padStart(2, '0')}-${String(timestampNow.getDate()).padStart(2, '0')}T${String(timestampNow.getHours()).padStart(2, '0')}:${String(timestampNow.getMinutes()).padStart(2, '0')}`;
       
       // 调用批量查询API
-      const response = await client.get('/market/batch-candles', {
+      const response = await client.get('/api/market/batch-candles', {
         params: {
           codes: codes,
           interval: timeframe,
@@ -594,7 +594,7 @@ const Dashboard: React.FC = () => {
         }
       }
       
-      const response = await client.get('/market/candles', { params });
+      const response = await client.get('/api/market/candles', { params });
       // 暂存query_params
       if (response && response.data && response.data.query_params) {
         setCachedQueryParams(response.data.query_params);

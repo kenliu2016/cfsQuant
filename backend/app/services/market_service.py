@@ -146,11 +146,11 @@ class MarketDataService:
             active: 是否只获取活跃的代码
             
         Returns:
-            市场代码列表的DataFrame，包含code, name, exchange, type等字段
+            市场代码列表的DataFrame，包含code, name, exchange, excode等字段
         """
         try:
             sql = """
-            SELECT code, exchange, active FROM market_codes
+            SELECT code, exchange, active, excode FROM market_codes
             WHERE 1=1
             """
             
@@ -163,14 +163,14 @@ class MarketDataService:
             if active:
                 sql += " AND active = TRUE"
             
-            sql += " ORDER BY code"
+            sql += " ORDER BY excode"
             
             df = fetch_df(sql, **params)
             self.logger.info(f"获取市场代码列表成功，共{len(df)}条记录")
             return df
         except Exception as e:
             self.logger.error(f"获取市场代码列表失败: {e}")
-            return pd.DataFrame(columns=['code', 'exchange', 'active'])
+            return pd.DataFrame(columns=['code', 'exchange', 'active', 'excode'])
         
         
     def _prepare_query_params(self, start: Union[str, datetime], 
