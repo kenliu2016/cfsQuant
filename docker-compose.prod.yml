@@ -94,35 +94,6 @@ services:
           cpus: '1.0'
           memory: '1G'
 
-  # Celery Beat服务 - 用于调度定时任务
-  celery_beat:
-    build: 
-      context: ./backend
-      args:
-        - ENVIRONMENT=production
-        - TZ=Asia/Shanghai
-    container_name: quant-celery-beat
-    command: celery -A app.celery_config.celery_app beat --loglevel=info
-    environment:
-      - TZ=Asia/Shanghai
-      - PGHOST=${PGHOST}
-      - PGPORT=${PGPORT}
-      - PGDATABASE=${PGDATABASE}
-      - PGUSER=${PGUSER}
-      - PGPASSWORD=${PGPASSWORD}
-      - REDIS_HOST=${REDIS_HOST}
-      - REDIS_PORT=${REDIS_PORT}
-      - REDIS_DB=${REDIS_DB}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-    networks:
-      - quant-network
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: always
-    volumes:
-      - logs:/app/backend/logs
-
   # 前端服务
   frontend:
     build: 
