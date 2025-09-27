@@ -68,7 +68,7 @@ services:
         - ENVIRONMENT=production
         - TZ=Asia/Shanghai
     container_name: quant-celery-worker-tuning
-    command: celery -A app.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
+    command: celery -A app.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning
     environment:
       - TZ=Asia/Shanghai
       - PGHOST=${PGHOST}

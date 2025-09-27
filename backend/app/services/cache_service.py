@@ -152,9 +152,9 @@ class RedisManager:
             self.connection_history.pop(0)
     
     def get_client(self):
+        current_time = time.time()  # 将current_time定义移到方法开头，确保所有分支都能访问
         # 如果Redis之前连接失败，在指定间隔后尝试重新连接
         if not self.is_redis_available and isinstance(self.client, dict):
-            current_time = time.time()
             if current_time - self.last_connection_attempt >= self.retry_interval:
                 logger.debug(f"尝试重新连接Redis (间隔{self.retry_interval}秒)")
                 self.connect()
