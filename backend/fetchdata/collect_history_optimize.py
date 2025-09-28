@@ -2,6 +2,7 @@ import ccxt
 import pandas as pd
 import psycopg2
 import time
+import ccxt
 from datetime import datetime, timedelta
 
 # =========================
@@ -9,24 +10,47 @@ from datetime import datetime, timedelta
 # =========================
 def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     if df.empty:
+        return 
+    
+    # 映射timeframe到数据库表名
+    table_mapping = {
+        '1m': 'minute_realtime',
+        '1h': 'hour_realtime',
+        '1d': 'day_realtime'
+    }
+    
+    table = table_mapping.get(timeframe)
+    if not table:
+        print(f"[ERROR] 不支持的timeframe: {timeframe}")
         return
-    table = f"ohlcv_{timeframe}"
+        # 生成 code 值，格式为 exchange-code
+    code = f"{exchange}-{symbol}"   
+
     cur = conn.cursor()
     for _, row in df.iterrows():
-        cur.execute(f"""
-            INSERT INTO {table} (exchange, code, timestamp, open, high, low, close, volume)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (exchange, code, timestamp) DO NOTHING
-        """, (
-            exchange,
-            symbol,
-            row["timestamp"].to_pydatetime(),
-            float(row["open"]),
-            float(row["high"]),
-            float(row["low"]),
-            float(row["close"]),
-            float(row["volume"])
-        ))
+        # 根据表的不同，处理timestamp字段名
+        timestamp_field = "datetime" if table != "day_realtime" else "datetime"
+        timestamp_value = row["timestamp"].to_pydatetime()
+        
+        try:
+            cur.execute(f"""
+                INSERT INTO {table} (exchange, code, {timestamp_field}, open, high, low, close, volume,raw)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (exchange, code, {timestamp_field}) DO NOTHING
+            """, (
+                exchange,
+                code,
+                timestamp_value,
+                float(row["open"]),
+                float(row["high"]),
+                float(row["low"]),
+                float(row["close"]),
+                float(row["volume"]),
+                row.to_json(),
+            ))
+        except Exception as e:
+            print(f"[ERROR] 写入数据失败: {e}")
+    
     conn.commit()
     cur.close()
     print(f"[DEBUG] {exchange} {symbol} {timeframe} 写入 {len(df)} 条")
@@ -85,7 +109,7 @@ def fetch_ohlcv_paginated(exchange, exchange_name, symbol, timeframe, since, unt
 def main():
     # 连接数据库
     conn = psycopg2.connect(
-        dbname="quqnt",
+        dbname="quant",
         user="cfs",
         password="Aa520@cfs",
         host="localhost",
@@ -94,7 +118,7 @@ def main():
 
     # 支持的交易所
     exchanges = {
-        "binance": ccxt.binance({"enableRateLimit": True}),
+      #  "binance": ccxt.binance({"enableRateLimit": True}),
         "okx": ccxt.okx({"enableRateLimit": True}),
         "bybit": ccxt.bybit({"enableRateLimit": True}),
         "coinbase": ccxt.coinbase({"enableRateLimit": True}),
@@ -107,7 +131,7 @@ def main():
 
     # 示例：每个交易所选 5 个 symbol（实际从数据库取 top50）
     sample_symbols = {
-        "binance": ["BTC/USDT", "ETH/USDT"],
+      #  "binance": ["BTC/USDT", "ETH/USDT"],
         "okx": ["BTC/USDT", "ETH/USDT"],
         "bybit": ["BTC/USDT", "ETH/USDT"],
         "coinbase": ["BTC/USDT", "ETH/USDT"],

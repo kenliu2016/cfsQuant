@@ -456,7 +456,7 @@ const Reports = () => {
             onChange: (keys)=> setSelected(keys as string[]) 
           }} 
           className="shadow-sm rounded-lg overflow-hidden"
-          scroll={{ x: 1200, y: 600 }}
+          scroll={{ x: 1200, y: 780 }}
           pagination={{
             current: currentPage,
             pageSize: pageSize,

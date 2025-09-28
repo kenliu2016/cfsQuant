@@ -5,18 +5,17 @@ import time
 import ccxt
 from datetime import datetime, timedelta, timezone
 
-# 数据库配置
+# ================== 数据库配置 ==================
 DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
     "dbname": "quant",
     "user": "cfs",
-    "password": "Aa520@cfs",
+    "password": "Cc563479,.",
+    "host": "127.0.0.1",
+    "port": 5432
 }
 
-# ================== 工具 ==================
+# ================== 工具函数 ==================
 def get_exchange(name):
-    """根据交易所名字返回 ccxt 实例"""
     exchanges = {
         "binance": ccxt.binance,
         "bybit": ccxt.bybit,
@@ -26,10 +25,8 @@ def get_exchange(name):
     }
     if name not in exchanges:
         raise ValueError(f"不支持的交易所: {name}")
-    ex = exchanges[name]({"enableRateLimit": True})
-    return ex
+    return exchanges[name]({"enableRateLimit": True})
 
-# ================== 分区工具 ==================
 def ensure_partition(conn, table, target_date):
     """在写入前确保分区存在"""
     if table in ["minute_realtime", "hour_realtime"]:
@@ -58,9 +55,7 @@ def ensure_partition(conn, table, target_date):
     with conn.cursor() as cur:
         cur.execute(sql)
     conn.commit()
-    # print(f"[INFO] 确保分区存在: {partition_name}", flush=True)
 
-# ================== 数据写入 ==================
 def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     """插入或更新 OHLCV 数据"""
     if df.empty:
@@ -74,6 +69,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     with conn.cursor() as cur:
         for _, row in df.iterrows():
             ensure_partition(conn, table, row["timestamp"].to_pydatetime())
+
             cur.execute(f"""
                 INSERT INTO {table} 
                 (exchange, code, datetime, open, high, low, close, volume, raw)
@@ -98,59 +94,47 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
                 row.to_json(),
             ))
     conn.commit()
-    print(f"[INFO] {exchange} {symbol} {timeframe} 写入 {len(df)} 条", flush=True)
+    print(f"[INFO] {exchange} {symbol} {timeframe} 实时写入 {len(df)} 条", flush=True)
 
-# ================== 分页抓取 ==================
-def fetch_ohlcv_paginated(exchange, exchange_name, symbol, timeframe, since, until, conn):
-    """分页抓取历史 OHLCV，并边拉边写数据库"""
-    limit = 1000
-    ms_per_unit = {
-        "1m": 60 * 1000,
-        "1h": 60 * 60 * 1000,
-        "1d": 24 * 60 * 60 * 1000
-    }[timeframe]
+def fetch_latest_ohlcv(exchange, symbol, timeframe="1m", limit=100):
+    """获取最新 N 根 K 线"""
+    try:
+        data = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+    except Exception as e:
+        print(f"[WARN] fetch_latest_ohlcv {exchange.id} {symbol} {timeframe} 出错: {e}")
+        return pd.DataFrame()
 
-    now_ms = int(until.timestamp() * 1000)
-    since_ms = int(since.timestamp() * 1000)
+    if not data:
+        return pd.DataFrame()
 
-    while since_ms < now_ms:
-        try:
-            data = exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
-        except Exception as e:
-            print(f"[WARN] {exchange_name} {symbol} {timeframe} fetch_ohlcv 出错: {e}, 等待 5 秒重试")
-            time.sleep(5)
-            continue
-
-        if not data:
-            break
-
-        df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-
-        upsert_ohlcv(exchange_name, symbol, df, timeframe, conn)
-
-        since_ms = int(df["timestamp"].iloc[-1].timestamp() * 1000) + ms_per_unit
-        time.sleep(exchange.rateLimit / 1000)
+    df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    return df
 
 # ================== 主入口 ==================
 if __name__ == "__main__":
-    end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=365*3)  # 最近三年
+    poll_interval = 5  # 每 60 秒轮询一次
+    limit = 100         # 每次取最近 100 根 K 线
 
     with psycopg2.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
             codes = cur.fetchall()
-        print(f"[DEBUG] 查询到 {len(codes)} 个交易对")
+        print(f"[DEBUG] 查询到 {len(codes)} 个 active=true 交易对")
 
-        for exchange_name, symbol in codes:
-            try:
-                ex = get_exchange(exchange_name)
-            except Exception as e:
-                print(f"[ERROR] 无法创建交易所 {exchange_name}: {e}")
-                continue
+        while True:
+            for exchange_name, symbol in codes:
+                try:
+                    ex = get_exchange(exchange_name)
+                except Exception as e:
+                    print(f"[ERROR] 无法初始化交易所 {exchange_name}: {e}")
+                    continue
 
-            for tf in ["1m","1h","1d"]:
-                print(f"[START] {exchange_name} {symbol} {tf} 从 {start_time} 到 {end_time}")
-                fetch_ohlcv_paginated(ex, exchange_name, symbol, tf, start_time, end_time, conn)
-                print(f"[DONE] {exchange_name} {symbol} {tf} 三年历史补齐完成")
+                for tf in ["1m","1h","1d"]:
+                    df = fetch_latest_ohlcv(ex, symbol, tf, limit=limit)
+                    if df.empty:
+                        continue
+                    upsert_ohlcv(exchange_name, symbol, df, tf, conn)
+
+            print(f"[LOOP] 本轮实时采集完成 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+            time.sleep(poll_interval)

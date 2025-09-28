@@ -472,7 +472,7 @@ def get_run_trades(run_id: str, limit: int = 1000):
     logger.debug(f"成功获取回测交易记录，run_id: {run_id}, 交易数量: {len(df_t)}")
     return df_t.to_dict(orient="records")
 
-def get_run_klines(run_id: str, limit: int = 2000):
+def get_run_klines(run_id: str, limit: int = 5000):
     """获取回测的K线数据"""
     klines = []
     try:

@@ -180,25 +180,41 @@ const Settings: React.FC = () => {
     if (!currentCode) return;
     
     try {
-      await client.put(`/api/market/market_codes/${encodeURIComponent(currentCode.exchange)}/${encodeURIComponent(currentCode.code)}`, values);
+      // 使用查询参数而不是路径参数，避免URL路径中的斜杠问题
+      const url = `/api/market/market_codes`;
+      console.log('Sending PUT request to:', url, 'with params:', { exchange: currentCode.exchange, code: currentCode.code });
+      const response = await client.put(url, values, {
+        params: { exchange: currentCode.exchange, code: currentCode.code }
+      });
+      console.log('Update response:', response);
       message.success('更新成功');
       setIsEditModalVisible(false);
       loadMarketCodes();
-    } catch (error) {
+    } catch (error: any) {
       console.error('更新失败:', error);
-      message.error('更新失败');
+      console.error('Error config:', error.config?.url);
+      console.error('Error response:', error.response);
+      message.error('更新失败: ' + (error.message || '未知错误'));
     }
   };
 
   // 删除交易对
   const handleDelete = async (exchange: string, code: string) => {
     try {
-      await client.delete(`/api/market/market_codes/${encodeURIComponent(exchange)}/${encodeURIComponent(code)}`);
+      // 使用查询参数而不是路径参数，避免URL路径中的斜杠问题
+      const url = `/api/market/market_codes`;
+      console.log('Sending DELETE request to:', url, 'with params:', { exchange, code });
+      const response = await client.delete(url, {
+        params: { exchange, code }
+      });
+      console.log('Delete response:', response);
       message.success('删除成功');
       loadMarketCodes();
-    } catch (error) {
+    } catch (error: any) {
       console.error('删除失败:', error);
-      message.error('删除失败');
+      console.error('Error config:', error.config?.url);
+      console.error('Error response:', error.response);
+      message.error('删除失败: ' + (error.message || '未知错误'));
     }
   };
 

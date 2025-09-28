@@ -52,7 +52,7 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
     }
   };
 
-  // 加载symbol数据
+  // 加载symbol数据 - 只在组件挂载时加载一次
   useEffect(() => {
     const loadSymbols = async () => {
       setIsLoading(true);
@@ -70,7 +70,7 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
       }
     };
     loadSymbols();
-  }, [onSymbolsLoaded]);
+  }, []); // 空依赖数组，只在组件挂载时执行一次
 
   // 自定义过滤函数
   const filterOption = (input: string, option?: { label: string; value: string }): boolean => {

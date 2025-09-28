@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Body
 from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service
 from ..db import fetch_df, execute
 from datetime import datetime, timedelta
@@ -219,7 +219,7 @@ def candles(code: str = Query(...), start: str = Query(None), end: str = Query(N
             start_dt = today - timedelta(days=60)
             end_dt = now_raw
         elif interval == "1W":
-            # 1W: 默认查询最近8个月的数据
+            # 1W: 默认查询最近8个月的的数据
             start_dt = today - timedelta(days=240)
             end_dt = now_raw
         elif interval == "1M":
@@ -311,7 +311,7 @@ def daily(code: str = Query(...), start: str = Query(None), end: str = Query(Non
             start_dt = today - timedelta(days=60)
             end_dt = now
         elif interval == "1W":
-            # 1W: 默认查询最近8个月的数据
+            # 1W: 默认查询最近8个月的的数据
             start_dt = today - timedelta(days=240)
             end_dt = now
         elif interval == "1M":
@@ -618,14 +618,14 @@ def add_code(code_data: dict):
         raise HTTPException(status_code=500, detail="添加失败")
 
 
-@router.put("/market_codes/{exchange}/{code}")
-def update_code(exchange: str, code: str, update_data: dict):
+@router.put("/market_codes")
+def update_code(exchange: str = Query(...), code: str = Query(...), update_data: dict = Body(...)):
     """
     更新市场代码
     
     Args:
-        exchange: 交易所代码
-        code: 市场代码
+        exchange: 交易所代码（通过查询参数传递）
+        code: 市场代码（通过查询参数传递）
         update_data: 要更新的字段
     
     Returns:
@@ -667,7 +667,8 @@ def update_code(exchange: str, code: str, update_data: dict):
         update_sql += ", ".join(set_clauses)
         update_sql += " WHERE exchange = :exchange AND code = :code"
         
-        fetch_df(update_sql, **params)
+        # 使用execute函数执行UPDATE操作，而不是fetch_df
+        execute(update_sql, **params)
         logger.info(f"更新市场代码成功: {exchange}:{code}")
         
         return {"success": True, "message": "更新成功"}
@@ -678,14 +679,14 @@ def update_code(exchange: str, code: str, update_data: dict):
         raise HTTPException(status_code=500, detail="更新失败")
 
 
-@router.delete("/market_codes/{exchange}/{code}")
-def delete_code(exchange: str, code: str):
+@router.delete("/market_codes")
+def delete_code(exchange: str = Query(...), code: str = Query(...)):
     """
     删除市场代码
     
     Args:
-        exchange: 交易所代码
-        code: 市场代码
+        exchange: 交易所代码（通过查询参数传递）
+        code: 市场代码（通过查询参数传递）
     
     Returns:
         成功信息
@@ -709,7 +710,8 @@ def delete_code(exchange: str, code: str):
         """
         delete_params = {'exchange': exchange, 'code': code}
         
-        fetch_df(delete_sql, **delete_params)
+        # 使用execute函数执行DELETE操作，而不是fetch_df
+        execute(delete_sql, **delete_params)
         logger.info(f"删除市场代码成功: {exchange}:{code}")
         
         return {"success": True, "message": "删除成功"}

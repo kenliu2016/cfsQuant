@@ -3,13 +3,13 @@ import psycopg2
 import pandas as pd
 import time
 import ccxt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ================== 数据库配置 ==================
 DB_CONFIG = {
     "dbname": "quant",
     "user": "cfs",
-    "password": "Cc563479,.",
+    "password": "Aa520@cfs",
     "host": "127.0.0.1",
     "port": 5432
 }
@@ -113,7 +113,7 @@ def fetch_latest_ohlcv(exchange, symbol, timeframe="1m", limit=100):
 
 # ================== 主入口 ==================
 if __name__ == "__main__":
-    poll_interval = 60  # 每 60 秒轮询一次
+    poll_interval = 35  # 每 60 秒轮询一次
     limit = 100         # 每次取最近 100 根 K 线
 
     with psycopg2.connect(**DB_CONFIG) as conn:
@@ -136,5 +136,5 @@ if __name__ == "__main__":
                         continue
                     upsert_ohlcv(exchange_name, symbol, df, tf, conn)
 
-            print(f"[LOOP] 本轮实时采集完成 {datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+            print(f"[LOOP] 本轮实时采集完成 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
             time.sleep(poll_interval)

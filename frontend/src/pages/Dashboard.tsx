@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Button, Modal, Checkbox, message, DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -30,29 +30,50 @@ interface StrategyBacktestState {
   gridLevels?: GridLevel[]; // 网格级别数据（包含名称和价格）
 }
 
+// 定义市场概览项类型
+interface MarketOverviewItem {
+  id: string;
+  code: string;
+  price: string | number;
+  change: number;
+  changePercent: number;
+  trend: 'up' | 'down' | 'neutral';
+}
+
 // 从API获取watch状态为true的market_codes（用于市场动态卡片）
-const fetchWatchListFromAPI = async () => {
-  try {
-    const response = await client.get('/api/market/market_codes', {
-      params: {
-        watch: true
-      }
-    });
-    
-    // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
-    const marketCodes = response.data.rows || [];
-    // 将数据转换为前端需要的格式
-    return marketCodes.map((item: any) => ({
-      code: item.excode,
-      excode: item.excode, 
-      exchange: item.exchange
-    }));
-  } catch (error) {
-    console.error('Failed to fetch watch list from API:', error);
-    // API调用失败时使用空数组或默认数据
-    return [];
-  }
-};
+  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
+  const fetchWatchListFromAPI = async () => {
+    try {
+      const response = await client.get('/api/market/market_codes', {
+        params: {
+          watch: true
+        }
+      });
+      
+      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
+      const marketCodes = response.data.rows || [];
+      // 将数据转换为前端需要的格式
+      return marketCodes.map((item: any) => ({
+        code: item.excode,
+        excode: item.excode, 
+        exchange: item.exchange
+      }));
+    } catch (error) {
+      console.error('Failed to fetch watch list from API:', error);
+      // API调用失败时使用空数组或默认数据
+      return [];
+    }
+  };
+
+// 定义MarketOverviewItem接口
+interface MarketOverviewItem {
+  id: string;
+  code: string;
+  price: number | string;
+  change: number;
+  changePercent: number;
+  trend: 'up' | 'down' | 'neutral';
+}
 
 // 格式化价格显示
 const formatPrice = (value: number) => {
@@ -61,22 +82,22 @@ const formatPrice = (value: number) => {
 
 const Dashboard: React.FC = () => {
   // 市场概览数据
-  const [marketOverview, setMarketOverview] = useState<any[]>([]);
+  const [marketOverview, setMarketOverview] = useState<MarketOverviewItem[]>([]);
   // 上次刷新时间
   const [lastUpdated, setLastUpdated] = useState<string>('');
   // 当前选中股票的概览数据
-  const [selectedSymbolData, setSelectedSymbolData] = useState<any>(null);
+  const [selectedSymbolData, setSelectedSymbolData] = useState<MarketOverviewItem | null>(null);
   // 图表数据
   const [candleData, setCandleData] = useState<any[]>([]);
   // 加载状态
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(false);
   // 股票列表
-  const [symbols] = useState<any[]>([]);
+  const [symbols, setSymbols] = useState<any[]>([]);
   // 选中的股票
   const [symbol, setSymbol] = useState<string>('');
   // 时间周期
-  const [timeframe, setTimeframe] = useState<string>('1D');
+  const [timeframe, setTimeframe] = useState<string>('1m');
   // 图表类型 - 修正类型定义，使用candlestick而不是candle
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
   // 日期范围选择状态
@@ -84,6 +105,11 @@ const Dashboard: React.FC = () => {
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
   // 日历选择器是否有光标激活
   const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
+  // 使用useCallback优化onSymbolsLoaded回调，避免触发无限循环
+  const handleSymbolsLoaded = useCallback((loadedSymbols: any[]) => {
+    // 更新symbols状态
+    setSymbols(loadedSymbols);
+  }, []);
   // 定时器引用，用于5秒后自动收起日历选择器
   const datePickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 存储从API获取的查询参数
@@ -94,24 +120,18 @@ const Dashboard: React.FC = () => {
 
   // 策略相关状态
   const [showStrategiesModal, setShowStrategiesModal] = useState<boolean>(false);
-  // 未使用的策略选择状态 - 保留结构
-  // const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
   const [floatingStrategies, setFloatingStrategies] = useState<Array<{id: string, name: string, position: {x: number, y: number}}>>([]);
-  // API获取的策略数据 - 添加默认的硬编码策略数据
   const [strategiesData, setStrategiesData] = useState<Array<{id: string, name: string}>>([
     { id: '1', name: 'Hardcoded Strategy 1' },
     { id: '2', name: 'Hardcoded Strategy 2' },
     { id: '3', name: 'Hardcoded Strategy 3' }
   ]);
-  // 策略加载状态 - 暂未使用但保留结构
-  const [_, __] = useState<boolean>(false);
   
   // 回测相关状态
   const [strategyBacktestStates, setStrategyBacktestStates] = useState<Record<string, StrategyBacktestState>>({});
   
   // 从API获取策略数据
   const fetchStrategiesFromAPI = async () => {
-
     try {
       const response = await client.get('/api/strategies');
       // 假设后端返回的数据结构是 { rows: [{ id: string, name: string }] }
@@ -247,7 +267,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // 处理添加策略并自动运行回测
+  // 处理添加策略并自动运行回测 - 场景4: 策略添加后自动回测
   const handleAddStrategy = async (strategyId: string, strategyName: string) => {
     // 检查是否已存在同名策略
     const existingIndex = floatingStrategies.findIndex(s => s.name === strategyName);
@@ -287,7 +307,7 @@ const Dashboard: React.FC = () => {
     
     // 如果选择了股票，则自动运行回测
     if (symbol) {
-      await runBacktest(strategyId, strategyName);
+      await runBacktest(strategyId, strategyName); // 自动触发场景4的API调用
     } else {
       message.warning('请先选择股票再添加策略');
     }
@@ -306,14 +326,22 @@ const Dashboard: React.FC = () => {
   }, [showStrategiesModal]);
 
   // 加载symbol数据和市场概览数据
+  // 场景5: 首页加载时 - 组件首次挂载时触发
   useEffect(() => {
     const loadSymbols = async () => {
       setIsLoadingSymbols(true);
       try {
         // 市场动态卡片使用watch=true的数据
         const watchlistData = await fetchWatchListFromAPI();
+        // 更新symbols状态
+        setSymbols(watchlistData);
+        
         if (watchlistData.length > 0) {
           await loadMarketOverview(watchlistData);
+          // 如果当前没有选中的symbol，则选中第一个
+          if (!symbol) {
+            setSymbol(watchlistData[0].code);
+          }
         } else {
           console.warn('No watchlist data from API');
           setMarketOverview([]);
@@ -329,6 +357,7 @@ const Dashboard: React.FC = () => {
   }, []);
   
   // 刷新市场概览数据的函数
+  // 场景3: 市场概览刷新 - 点击刷新按钮时触发
   const refreshMarketOverview = async () => {
     if (isRefreshing) return;
     
@@ -357,6 +386,7 @@ const Dashboard: React.FC = () => {
 
   
   // 优化：并行处理市场概览和K线数据请求
+  // 场景1: symbol选择器变更，场景2: timeframe选择变更 - 当symbol或timeframe变化时触发
   useEffect(() => {
     if (symbols.length > 0 && symbol) {
       // 创建一个内存缓存键
@@ -395,6 +425,7 @@ const Dashboard: React.FC = () => {
   }, [marketOverview, symbol]);
 
   // 调用API获取市场概览数据 - 使用批量查询优化性能并添加内存缓存
+  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
   const loadMarketOverview = async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
     try {
       // 只使用API返回的watch=true的symbol，不再添加额外的symbol
@@ -451,7 +482,7 @@ const Dashboard: React.FC = () => {
       const batchData = response.data;
       
       // 处理批量数据，为每个股票创建概览信息
-      const marketOverviewData = symbolsData.map(item => {
+      const marketOverviewData: MarketOverviewItem[] = symbolsData.map(item => {
         const symbolData = batchData[item.code];
         
         if (symbolData) {
@@ -482,7 +513,7 @@ const Dashboard: React.FC = () => {
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
-                trend: isUp ? 'up' : 'down'
+                trend: isUp ? 'up' : 'down' as const
               };
             } else if (sortedData.length === 1) {
               // 如果排序后只有一个有效数据，使用开盘价和收盘价计算变化
@@ -497,7 +528,7 @@ const Dashboard: React.FC = () => {
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
-                trend: isUp ? 'up' : 'down'
+                trend: isUp ? 'up' : 'down' as const
               };
             }
           } else if (dataArray.length === 1) {
@@ -508,13 +539,13 @@ const Dashboard: React.FC = () => {
             const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
             
             return {
-              id: item.excode,
-              code: item.excode,
-              price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
-              change: parseFloat(change),
-              changePercent: parseFloat(changePercent),
-              trend: isUp ? 'up' : 'down'
-            };
+                id: item.excode,
+                code: item.excode,
+                price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
+                change: parseFloat(change),
+                changePercent: parseFloat(changePercent),
+                trend: isUp ? 'up' : 'down' as const
+              };
           }
         }
         
@@ -525,7 +556,7 @@ const Dashboard: React.FC = () => {
           price: '-',
           change: 0,
           changePercent: 0,
-          trend: 'neutral'
+          trend: 'neutral' as const
         };
       });
       
@@ -556,6 +587,7 @@ const Dashboard: React.FC = () => {
   // 已移除时间范围选择相关函数
 
   // 获取蜡烛图数据 - 添加内存缓存优化
+  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)中被调用
   const fetchData = async (startTime?: Date, endTime?: Date): Promise<any[]> => {
     if (!symbol) return [];
     
@@ -1236,12 +1268,7 @@ const Dashboard: React.FC = () => {
                 <SymbolSelector 
                   value={symbol}
                   onChange={setSymbol}
-                  onSymbolsLoaded={(loadedSymbols) => {
-                    // 当组件首次加载数据时，如果当前没有选中的symbol，则选中第一个
-                    if (!symbol && loadedSymbols.length > 0) {
-                      setSymbol(loadedSymbols[0].code);
-                    }
-                  }}
+                  onSymbolsLoaded={handleSymbolsLoaded}
                 />
               </div>
 
