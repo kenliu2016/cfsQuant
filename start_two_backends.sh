@@ -81,15 +81,15 @@ view_tuning_logs() {
 show_help() {
     echo -e "${GREEN}cfsQuant 两套Backend服务管理脚本${NC}"
     echo -e "用法: $0 [start|stop|status|logs|help]"
-    echo -e "\n命令:\"
+    echo -e "\n命令:"  # 修复了多余的反引号
     echo -e "  start    启动两套backend服务"
     echo -e "  stop     停止两套backend服务"
     echo -e "  status   查看服务状态"
     echo -e "  logs     查看参数调优任务日志"
     echo -e "  help     显示帮助信息"
-    echo -e "\n说明:"
+    echo -e "\n说明:"  
     echo -e "  此脚本用于管理两套backend服务的部署，确保参数调优任务在第二套服务中执行。"
-    echo -e "  主服务(backend_primary)负责处理API请求，第二套服务(backend_secondary)负责处理Celery任务。"
+    echo -e "  主服务\(backend_primary\)负责处理API请求，第二套服务\(backend_secondary\)负责处理Celery任务。"  # 转义了圆括号
 }
 
 # 主函数
