@@ -610,16 +610,29 @@ const Dashboard: React.FC = () => {
     if (!symbol) return [];
     
     setIsLoading(true);
-    try {
+    try {  
       const params: any = {
         code: symbol,
         interval: timeframe
       };
       
-      // 如果提供了开始和结束时间，则添加到参数中
+      // 检查是否有指定时间范围
       if (startTime && endTime) {
+        // 有时间范围时，按时间范围查询，不使用limit参数
         params.start = startTime.toISOString();
         params.end = endTime.toISOString();
+      } else {
+        // 没有时间范围时，按limit参数查询最近的记录
+        // 计算limit值
+        let limit = 2; // 默认值
+        // 提取时间周期中的数字部分和单位
+        const match = timeframe.match(/^(\d+)([mhdDWM])$/i);
+        if (match) {
+          const number = parseInt(match[1]);
+          // 对于所有以m,h,D,W,M结尾的时间周期，limit值等于数字部分乘以1001
+          limit = number * 1001;
+        }
+        params.limit = limit;
       }
       
       // 创建缓存键

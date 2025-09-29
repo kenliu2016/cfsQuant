@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Body
-from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service
+from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service, get_latest_candles
 from ..db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
@@ -181,56 +181,14 @@ def parse_datetime(dt_str, default=None):
 @router.get("/candles")
 def candles(code: str = Query(...), start: str = Query(None), end: str = Query(None), interval: str = Query("1m"), 
                  page: int = Query(None, ge=1, description="页码，从1开始"), 
-                 page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    logger.info(f"接收到candles请求: code={code}, start={start}, end={end}, interval={interval}, page={page}, page_size={page_size}")
+                 page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条"),
+                 limit: int = Query(None, ge=1, le=70000, description="查询最近的记录条数，最大70000条")):
+    logger.info(f"接收到candles请求: code={code}, start={start}, end={end}, interval={interval}, page={page}, page_size={page_size}, limit={limit}")
     
-    # 根据interval参数设置默认的查询时间范围
-    now_raw = datetime.now()
-    today = datetime(now_raw.year, now_raw.month, now_raw.day)
-
-    if not start and not end:
-        logger.info(f"未提供start和end参数，使用默认时间范围")
-        if interval == "1m":
-            # 1m: 默认查询当天的数据
-            start_dt = today
-            end_dt = now_raw
-        elif interval == "5m":
-            # 5m: 默认查询最近5天的数据
-            start_dt = today - timedelta(days=4)
-            end_dt = now_raw
-        elif interval == "15m":
-            # 15m: 默认查询最近15天的数据
-            start_dt = today - timedelta(days=14)
-            end_dt = now_raw
-        elif interval == "30m":
-            # 30m: 默认查询最近30天的数据
-            start_dt = today - timedelta(days=29)
-            end_dt = now_raw
-        elif interval == "1h" or interval == "60m":
-            # 1h或60m: 默认查询最近60天的数据
-            start_dt = today - timedelta(days=59)
-            end_dt = now_raw
-        elif interval == "4h":
-            # 4h: 默认查询最近90天的数据
-            start_dt = today - timedelta(days=89)
-            end_dt = now_raw
-        elif interval == "1D":
-            # 1D: 默认查询最近2个月的数据
-            start_dt = today - timedelta(days=60)
-            end_dt = now_raw
-        elif interval == "1W":
-            # 1W: 默认查询最近8个月的的数据
-            start_dt = today - timedelta(days=240)
-            end_dt = now_raw
-        elif interval == "1M":
-            # 1M: 默认查询最近3年的数据
-            start_dt = today - timedelta(days=1095)
-            end_dt = now_raw
-        else:
-            # 默认查询最近1个月的数据
-            start_dt = today - timedelta(days=30)
-            end_dt = now_raw
-    else:
+    # 处理查询逻辑：有时间范围按时间范围查询，没有时间范围按limit查询最近记录
+    if start and end:
+        # 有时间范围时，按时间范围查询
+        logger.info(f"有时间范围参数，按时间范围查询")
         # 将字符串类型的日期时间转换为datetime对象
         try:
             start_dt = parse_datetime(start)
@@ -238,9 +196,14 @@ def candles(code: str = Query(...), start: str = Query(None), end: str = Query(N
         except ValueError:
             logger.error(f"日期时间格式错误: start={start}, end={end}")
             raise HTTPException(status_code=400, detail="日期时间格式错误，请使用YYYY-MM-DD HH:MM:SS或YYYY-MM-DDTHH:MM:SS格式")
+        result = get_candles(code, start_dt, end_dt, interval, page, page_size)
+    else:
+        # 没有时间范围时，按limit参数查询最近的记录
+        logger.info(f"没有时间范围参数，按limit查询最近的记录")
+        # 调用新的方法查询最近的K线数据
+        result = get_latest_candles(code, interval, limit)
 
-    logger.info(f"查询参数: code={code}, start_dt={start_dt}, end_dt={end_dt}, interval={interval}")
-    result = get_candles(code, start_dt, end_dt, interval, page, page_size)
+    logger.info(f"查询参数: code={code}, interval={interval}")
 
     # 处理返回结果
     if isinstance(result, tuple):

@@ -641,23 +641,73 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
     # 预定义价格相关列，确保它们被正确处理
     price_columns = ['open', 'high', 'low', 'close', 'volume']
     
+    # 特殊字符串列，需要保留为字符串类型
+    special_string_columns = ['code', 'iso_week', 'year_month', 'time_frame']
+    
     # 批量检测和转换datetime列，优化性能
     datetime_columns = []
     numeric_columns = []
     
-    # 提前识别可能的datetime列和数值列
+    # 对于特殊字符串列的处理：确保它们不会被错误识别为数值或日期列
+    for col in special_string_columns:
+        if col in df.columns:
+            # 标记为字符串列，避免后续处理将其识别为数值或日期
+            df[col] = df[col].astype(str)
+            # 检查并修复特殊字符串列中的NaT值和空值
+            if col == 'code':
+                if 'NaT' in df[col].values or any(pd.isna(df[col])) or any(df[col] == ''):
+                    # 尝试从数据中提取code值（如果有）
+                    valid_codes = df[col][(df[col] != 'NaT') & (df[col] != '')].dropna()
+                    if not valid_codes.empty:
+                        # 使用第一个有效code值填充空值
+                        first_valid_code = valid_codes.iloc[0]
+                        df[col] = df[col].replace({'NaT': first_valid_code, '': first_valid_code})
+                        df[col] = df[col].fillna(first_valid_code)
+            else:
+                # 其他特殊字符串列，将'NaT'和空值转换为空字符串
+                df[col] = df[col].replace({'NaT': ''})
+                df[col] = df[col].fillna('')
+    
+    # 预定义datetime列名列表，优先处理这些列
+    priority_datetime_columns = ['datetime', 'date', 'time', 'timestamp', 'created_at', 'updated_at']
+    
+    # 优先识别并转换预定义的datetime列
+    for col in priority_datetime_columns:
+        if col in df.columns and col not in special_string_columns:
+            datetime_columns.append(col)
+    
+    # 提前识别可能的其他datetime列和数值列
     for col in df.columns:
+        # 跳过已识别的datetime列和特殊字符串列
+        if col in datetime_columns or col in special_string_columns:
+            continue
+        
         if df[col].dtype == 'object':
             try:
                 # 仅转换非空值，减少不必要的处理
-                mask = pd.notna(df[col])
+                mask = pd.notna(df[col]) & (df[col] != '')
                 if mask.any():
                     # 尝试转换前10个非空值作为测试，避免全量检查
                     sample_size = min(10, mask.sum())
                     sample_values = df.loc[mask, col].iloc[:sample_size]
                     
                     # 检查是否是datetime列
-                    if all(isinstance(val, str) and (('-' in val and ':' in val) or len(val) >= 8) for val in sample_values):
+                    # 基于值格式的判断
+                    # 检查样本值是否具有日期时间特征
+                    date_patterns = [
+                        lambda x: isinstance(x, str) and (('-' in x or '/' in x) and len(x) >= 8),
+                        lambda x: isinstance(x, str) and ('T' in x and ':' in x),
+                        lambda x: isinstance(x, str) and x.isdigit() and len(x) > 8  # 可能是时间戳
+                    ]
+                    
+                    # 计算匹配日期模式的值的比例
+                    match_count = 0
+                    for val in sample_values:
+                        if any(pattern(val) for pattern in date_patterns):
+                            match_count += 1
+                    
+                    # 如果超过50%的值匹配日期模式，则认为是datetime列
+                    if match_count / len(sample_values) > 0.5:
                         datetime_columns.append(col)
                     # 检查是否是数值列
                     elif all(isinstance(val, (int, float)) or (
@@ -676,19 +726,67 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
     if datetime_columns:
         for col in datetime_columns:
             try:
-                mask = pd.notna(df[col])
+                mask = pd.notna(df[col]) & (df[col] != '')
                 if mask.any():
-                    # 指定常见的日期时间格式，避免格式推断警告
-                    try:
-                        # 尝试ISO格式 (YYYY-MM-DDTHH:MM:SS)
-                        df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], format='%Y-%m-%dT%H:%M:%S', errors='coerce')
-                    except:
-                        try:
-                            # 尝试日期格式 (YYYY-MM-DD)
-                            df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], format='%Y-%m-%d', errors='coerce')
-                        except:
-                            # 尝试其他常见格式
-                            df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], errors='coerce')
+                    # 强制将'datetime'列转换为datetime类型
+                    if col == 'datetime':
+                        # 尝试所有可能的格式，确保datetime列被正确转换
+                        formats = [
+                            '%Y-%m-%dT%H:%M:%S',  # ISO格式
+                            '%Y-%m-%dT%H:%M:%S.%f',  # ISO格式带微秒
+                            '%Y-%m-%d %H:%M:%S',  # 标准格式
+                            '%Y-%m-%d',           # 日期格式
+                            '%m/%d/%Y %H:%M:%S',  # 美国格式
+                            '%m/%d/%Y',           # 美国日期格式
+                            '%Y-%m-%d %H:%M'      # 没有秒的格式
+                        ]
+                        
+                        success = False
+                        for fmt in formats:
+                            try:
+                                converted = pd.to_datetime(df.loc[mask, col], format=fmt, errors='coerce')
+                                if not converted.isna().all():
+                                    df[col] = converted
+                                    success = True
+                                    break
+                            except:
+                                continue
+                        
+                        # 如果所有格式都失败，使用通用转换
+                        if not success:
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                    else:
+                        # 对于其他datetime列，使用普通转换逻辑
+                        # 尝试多种常见格式，提高兼容性
+                        formats = [
+                            '%Y-%m-%dT%H:%M:%S',  # ISO格式
+                            '%Y-%m-%dT%H:%M:%S.%f',  # ISO格式带微秒
+                            '%Y-%m-%d %H:%M:%S',  # 标准格式
+                            '%Y-%m-%d',           # 日期格式
+                            '%m/%d/%Y %H:%M:%S',  # 美国格式
+                            '%m/%d/%Y'            # 美国日期格式
+                        ]
+                        
+                        # 尝试所有格式，直到成功
+                        success = False
+                        for fmt in formats:
+                            try:
+                                converted = pd.to_datetime(df.loc[mask, col], format=fmt, errors='coerce')
+                                # 检查是否成功转换了至少一个值
+                                if not converted.isna().all():
+                                    df.loc[mask, col] = converted
+                                    success = True
+                                    break
+                            except:
+                                continue
+                        
+                        # 如果所有格式都失败，使用通用转换
+                        if not success:
+                            try:
+                                df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], errors='coerce')
+                            except:
+                                # 如果转换失败，保持原数据类型
+                                pass
             except Exception:
                 # 如果转换失败，保持原数据类型
                 continue
@@ -703,32 +801,18 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
                     df[col] = df[col].replace({ '': np.nan, None: np.nan })
                     # 然后转换为数值类型
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-                    # 价格字段应该有实际数值，避免0值被错误处理
-                    # 如果有全0值，可能是数据问题，但我们不做特殊处理
                 else:
                     # 其他数值列正常处理
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-            except Exception as e:
-                # 添加日志以便调试
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"转换列 {col} 为数值类型时出错: {e}")
+            except Exception:
                 # 如果转换失败，保持原数据类型
                 continue
     
     # 确保所有列中的None值被正确处理，不会变成"NaT"
     for col in df.columns:
-        # 替换空字符串为空值（非价格列）
-        if df[col].dtype == 'object' and col not in price_columns:
+        # 替换空字符串为空值（非价格列和非特殊字符串列）
+        if df[col].dtype == 'object' and col not in price_columns and col not in special_string_columns:
             df[col] = df[col].replace('', None)
-        # 确保datetime列中的空值正确处理
-        elif pd.api.types.is_datetime64_any_dtype(df[col].dtype):
-            # 不做特殊处理，因为pandas会自动处理NaT
-            pass
-        # 确保数值列中的空值正确处理
-        elif pd.api.types.is_numeric_dtype(df[col].dtype):
-            # 不做特殊处理，因为pandas会自动处理NaN
-            pass
     
     return df
 
