@@ -32,6 +32,9 @@ REDIS_PORT = int(os.environ.get('REDIS_PORT', _db_config.get('redis', {}).get('p
 REDIS_DB = int(os.environ.get('REDIS_DB', _db_config.get('redis', {}).get('db', 0)))
 REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', _db_config.get('redis', {}).get('password', ''))
 
+# 检查是否为第二套实例
+IS_SECONDARY_INSTANCE = os.environ.get('IS_SECONDARY_INSTANCE', 'false').lower() == 'true'
+
 # 创建Celery应用实例
 # 根据是否有密码构建不同的Redis连接URL
 if REDIS_PASSWORD:
@@ -39,12 +42,24 @@ if REDIS_PASSWORD:
 else:
     redis_url = f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}'
 
-celery_app = Celery(
-    'cfsQuant',
-    broker=redis_url,
-    backend=redis_url,
-    include=['app.services.tuning_service']
-)
+# 根据是否为第二套实例决定包含的服务
+services_to_include = ['app.services.tuning_service']
+if IS_SECONDARY_INSTANCE:
+    # 第二套实例只包含任务处理相关的服务
+    celery_app = Celery(
+        'cfsQuant_secondary',  # 不同的应用名称，避免冲突
+        broker=redis_url,
+        backend=redis_url,
+        include=services_to_include
+    )
+else:
+    # 主实例包含所有服务
+    celery_app = Celery(
+        'cfsQuant',
+        broker=redis_url,
+        backend=redis_url,
+        include=services_to_include
+    )
 
 # 配置Celery应用
 celery_app.conf.update(
