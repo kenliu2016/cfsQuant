@@ -9,6 +9,9 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# 定义docker compose命令 - 将在check_docker函数中确定
+DOCKER_COMPOSE_COMMAND=""
+
 # 检查Docker是否已安装
 check_docker() {
     if ! command -v docker &> /dev/null;
@@ -17,29 +20,43 @@ check_docker() {
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null;
+    # 检查docker compose是否可用（支持新版Docker Compose）
+    if docker compose version &> /dev/null;
     then
-        echo -e "${RED}错误: docker-compose未安装。请先安装docker-compose。${NC}"
-        exit 1
+        DOCKER_COMPOSE_COMMAND="docker compose"
+    else
+        # 如果不可用，检查旧版docker-compose
+        if command -v docker-compose &> /dev/null;
+        then
+            DOCKER_COMPOSE_COMMAND="docker-compose"
+        else
+            echo -e "${RED}错误: docker-compose未安装。请先安装docker-compose。${NC}"
+            exit 1
+        fi
     fi
 }
 
 # 检查环境变量
 check_env() {
-    # 检查必要的环境变量是否已设置
-    local required_vars=("PGHOST" "PGPORT" "PGDATABASE" "PGUSER" "PGPASSWORD" "REDIS_HOST" "REDIS_PORT" "REDIS_DB" "REDIS_PASSWORD")
-    
-    for var in "${required_vars[@]}"; do
-        if [ -z "${!var}" ]; then
-            echo -e "${YELLOW}警告: 环境变量 $var 未设置。请在.env文件中设置或直接导出。${NC}"
-        fi
-    done
+    # 检查.env文件是否存在
+    if [ -f ".env" ]; then
+        echo -e "${GREEN}检测到.env文件，Docker Compose将自动从该文件加载环境变量。${NC}"
+    else
+        # 如果.env文件不存在，则检查必要的环境变量是否已设置
+        local required_vars=("PGHOST" "PGPORT" "PGDATABASE" "PGUSER" "PGPASSWORD" "REDIS_HOST" "REDIS_PORT" "REDIS_DB" "REDIS_PASSWORD")
+        
+        for var in "${required_vars[@]}"; do
+            if [ -z "${!var}" ]; then
+                echo -e "${YELLOW}警告: 环境变量 $var 未设置。请在.env文件中设置或直接导出。${NC}"
+            fi
+        done
+    fi
 }
 
 # 启动服务
 start_services() {
     echo -e "${BLUE}正在启动两套backend服务...${NC}"
-    docker-compose -f docker-compose.two_backends.yml up -d --build
+    $DOCKER_COMPOSE_COMMAND -f docker-compose.two_backends.yml up -d --build
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}服务启动成功！${NC}"
@@ -54,7 +71,7 @@ start_services() {
 # 停止服务
 stop_services() {
     echo -e "${BLUE}正在停止两套backend服务...${NC}"
-    docker-compose -f docker-compose.two_backends.yml down
+    $DOCKER_COMPOSE_COMMAND -f docker-compose.two_backends.yml down
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}服务停止成功！${NC}"
@@ -66,9 +83,9 @@ stop_services() {
 # 查看服务状态
 status_services() {
     echo -e "${BLUE}查看服务状态...${NC}"
-    docker-compose -f docker-compose.two_backends.yml ps
+    $DOCKER_COMPOSE_COMMAND -f docker-compose.two_backends.yml ps
     echo -e "\n${BLUE}查看容器日志...${NC}"
-    docker-compose -f docker-compose.two_backends.yml logs --tail=10
+    $DOCKER_COMPOSE_COMMAND -f docker-compose.two_backends.yml logs --tail=10
 }
 
 # 查看参数调优任务日志
