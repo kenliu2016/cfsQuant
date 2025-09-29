@@ -44,7 +44,7 @@ async def log_requests(request: Request, call_next):
     # 记录请求信息
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
-    logger.debug(f"请求开始: {request.method} {request.url} (客户端: {client_ip})")
+    logger.info(f"请求开始: {request.method} {request.url} (客户端: {client_ip})")
     
     # 处理请求
     try:
@@ -54,7 +54,7 @@ async def log_requests(request: Request, call_next):
         process_time = time.time() - start_time
         
         # 记录响应信息
-        logger.debug(f"请求完成: {request.method} {request.url} 状态码: {response.status_code} 耗时: {process_time:.4f}秒")
+        logger.info(f"请求完成: {request.method} {request.url} 状态码: {response.status_code} 耗时: {process_time:.4f}秒")
         
         return response
     except Exception as e:
