@@ -22,7 +22,7 @@ const Reports = () => {
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(20)
-  const [sortField, setSortField] = useState<string>('totalReturn')
+  const [sortField, setSortField] = useState<string>('created_at')
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend')
   const [loading, setLoading] = useState<boolean>(false)
   const [fallbackRuns, setFallbackRuns] = useState<any[]>([])
@@ -216,8 +216,9 @@ const Reports = () => {
       
       // 重置到第一页，因为排序后的数据分布可能完全不同
       setCurrentPage(1);
-      // 重新加载数据
-      loadRuns(1, pageSize);
+      
+      // 移除直接调用loadRuns，由useEffect统一处理数据加载
+      // loadRuns(1, pageSize);
     }
   }
 
@@ -347,7 +348,11 @@ const Reports = () => {
         return record.total_fee ? record.total_fee.toFixed(2) : '0.00';
       }
     },
-    { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime },
+    { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime, sorter: (a: any, b: any) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA; // 降序排列
+    } },
     {
       title: '操作',
       key: 'action',
@@ -377,8 +382,6 @@ const Reports = () => {
 
   // 初始加载数据
   useEffect(() => {
-    if (initialized) return;
-
     const initializeData = async () => {
       try {
         // 加载策略数据
@@ -393,15 +396,20 @@ const Reports = () => {
     };
 
     initializeData();
-  }, [initialized])
+  }, [])
 
-  // 监听排序状态和分页变化，触发数据重新加载
+  // 监听状态变化，触发数据重新加载
+  // 移除了initialized依赖，避免在初始化时重复调用loadRuns
   useEffect(() => {
-    // 防止在组件初始化时重复调用loadRuns
     // 只有在初始化完成后且状态发生实际变化时才重新加载数据
     if (!initialized) return;
     
-    loadRuns(currentPage, pageSize);
+    // 使用setTimeout防抖，避免短时间内多次触发
+    const timer = setTimeout(() => {
+      loadRuns(currentPage, pageSize);
+    }, 100);
+    
+    return () => clearTimeout(timer);
   }, [sortField, sortOrder, currentPage, pageSize, initialized])
 
   return (

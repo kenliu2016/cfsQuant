@@ -78,7 +78,7 @@ async def get_run_trades_endpoint(run_id: str, limit: int = 1000):
 
 # 获取回测K线数据
 @router.get("/runs/{run_id}/klines")
-async def get_run_klines_endpoint(run_id: str, limit: int = 2000):
+async def get_run_klines_endpoint(run_id: str, limit: int = 30000):
     # 调用服务层获取K线数据
     klines_data = get_run_klines(run_id, limit)
     # 确保所有数据都是可JSON序列化的Python原生类型

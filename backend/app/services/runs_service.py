@@ -486,15 +486,6 @@ def get_run_klines(run_id: str, limit: int = 30000):
             end_time = run_data.get('end_time', '')
             
             if code and start_time and end_time:
-                # 先计算时间范围，判断可能的数据量
-                # 解析时间
-                from datetime import datetime
-                start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S') if isinstance(start_time, str) else start_time
-                end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S') if isinstance(end_time, str) else end_time
-                
-                # 根据interval估算数据点数
-                time_diff = end_dt - start_dt
-                seconds_diff = time_diff.total_seconds()
 
                 from .market_service import MarketDataService
                 market_service = MarketDataService()

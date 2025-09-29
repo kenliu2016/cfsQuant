@@ -23,11 +23,23 @@ class BacktestRequest(BaseModel):
         if 'code' not in v and 'excode' not in v:
             raise ValueError(f"Missing required field in params: either 'code' or 'excode' is required")
         
-        # 其他必需字段
-        required_fields = ['start', 'end', 'interval']
-        for field in required_fields:
-            if field not in v:
-                raise ValueError(f"Missing required field in params: {field}")
+        # 检查时间范围字段，支持'start'/'end'和'start_time'/'end_time'
+        has_valid_start = 'start' in v or 'start_time' in v
+        has_valid_end = 'end' in v or 'end_time' in v
+        
+        if not (has_valid_start and has_valid_end):
+            raise ValueError(f"Missing required field in params: either 'start'/'end' or 'start_time'/'end_time' is required")
+        
+        # 检查interval字段
+        if 'interval' not in v:
+            raise ValueError(f"Missing required field in params: interval")
+        
+        # 如果只有start_time/end_time，将其复制到start/end，确保后续代码能正常工作
+        if 'start_time' in v and 'start' not in v:
+            v['start'] = v['start_time']
+        if 'end_time' in v and 'end' not in v:
+            v['end'] = v['end_time']
+            
         return v
 class BacktestSignal(BaseModel):
     datetime: str

@@ -246,12 +246,43 @@ const Dashboard: React.FC = () => {
       }
       
       // 准备调用后端run_backtest函数的参数
-      const backtestParams = cachedQueryParams || {
-        code: symbol,
-        interval: timeframe,
-        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-        end: new Date().toISOString()
-      };
+      let backtestParams;
+      
+      // 优先使用用户通过日历选择器选择的时间区间
+      if (dateRange[0] && dateRange[1]) {
+        backtestParams = {
+          code: symbol,
+          interval: timeframe,
+          // 使用format方法生成不带时区信息的本地时间字符串，解决时区偏差问题
+          start: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
+          end: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
+        };
+      } else {
+        // 如果没有选择时间区间，则使用缓存的参数或默认的7天时间范围
+        backtestParams = cachedQueryParams || {
+          code: symbol,
+          interval: timeframe,
+          // 使用Date对象创建本地时间字符串
+          start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }).replace(/\//g, '-'),
+          end: new Date().toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }).replace(/\//g, '-')
+        };
+      }
       
       const response = await client.post('/api/backtest', {
         params: backtestParams,
@@ -506,10 +537,16 @@ const Dashboard: React.FC = () => {
       // 计算当前时间周期对应的limit值
       const limit = calculateLimit(timeframe);
       
-      // 生成精确到分钟的时间戳
+      // 生成精确到分钟的本地时间字符串，避免时区问题
       const timestampNow = new Date();
-      // 格式化为YYYY-MM-DDTHH:mm（精确到分钟）
-      const timestamp = `${timestampNow.getFullYear()}-${String(timestampNow.getMonth() + 1).padStart(2, '0')}-${String(timestampNow.getDate()).padStart(2, '0')}T${String(timestampNow.getHours()).padStart(2, '0')}:${String(timestampNow.getMinutes()).padStart(2, '0')}`;
+      const timestamp = timestampNow.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).replace(/\//g, '-').replace(' ', 'T');
       
       // 调用批量查询API
       const response = await client.get('/api/market/batch-candles', {
@@ -643,8 +680,25 @@ const Dashboard: React.FC = () => {
       // 检查是否有指定时间范围
       if (startTime && endTime) {
         // 有时间范围时，按时间范围查询，不使用limit参数
-        params.start = startTime.toISOString();
-        params.end = endTime.toISOString();
+        // 使用本地时间格式，解决时区偏差问题
+        params.start = startTime.toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).replace(/\//g, '-');
+        params.end = endTime.toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).replace(/\//g, '-');
       } else {
         // 没有时间范围时，按limit参数查询最近的记录
         // 计算limit值
@@ -743,16 +797,39 @@ const Dashboard: React.FC = () => {
       };
     }
 
-    // 准备数据
+    // 准备数据 - 确保时间显示与后端返回一致，避免时区转换问题
   const dates = candleData.map(item => {
-  const date = new Date(item.datetime);
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-});
+    // 直接使用item.datetime中的时间值，不进行时区转换
+    // 假设后端返回的时间格式为YYYY-MM-DDTHH:mm:ss或类似格式
+    const dateStr = item.datetime;
+    
+    // 处理ISO格式的时间字符串 (YYYY-MM-DDTHH:mm:ss.sssZ)
+    if (dateStr.includes('T')) {
+      // 分割日期和时间部分
+      const [datePart, timePart] = dateStr.split('T');
+      // 移除可能的时区信息
+      const cleanTimePart = timePart.includes('Z') ? timePart.split('Z')[0] : timePart;
+      // 只保留时:分部分
+      const timeDisplay = cleanTimePart.split('.')[0].substring(0, 5);
+      return `${datePart} ${timeDisplay}`;
+    } 
+    // 处理已经是YYYY-MM-DD HH:mm:ss格式的时间字符串
+    else if (dateStr.includes(' ')) {
+      const [datePart, timePart] = dateStr.split(' ');
+      // 只保留时:分部分
+      const timeDisplay = timePart.substring(0, 5);
+      return `${datePart} ${timeDisplay}`;
+    }
+    
+    // 如果格式不匹配，回退到原始解析方式
+    const date = new Date(dateStr);
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  });
 
     const candlestickData = candleData.map(item => [
   item.open,
@@ -776,20 +853,35 @@ const Dashboard: React.FC = () => {
           if (signalsOfType.length > 0) {
             // 查找信号对应的K线数据点索引
               const dataPoints = signalsOfType.map((signal: BacktestSignal) => {
-                const signalDate = new Date(signal.datetime).getTime();
+                // 使用相同的时间解析逻辑，确保与图表显示一致
+                let signalDate: number;
+                let candleDate: number;
+                
+                try {
+                  // 尝试直接使用getTime()获取时间戳，如果失败则使用原始解析方式
+                  signalDate = new Date(signal.datetime).getTime();
+                } catch (error) {
+                  console.error('Failed to parse signal datetime:', signal.datetime, error);
+                  signalDate = 0;
+                }
+                
                 // 找到最接近的K线数据点
                 let closestIndex = -1;
                 let minTimeDiff = Infinity;
                 
                 // 遍历所有K线数据点，找到时间差最小的那个
                 for (let i = 0; i < candleData.length; i++) {
-                  const candleDate = new Date(candleData[i].datetime).getTime();
-                  const timeDiff = Math.abs(candleDate - signalDate);
-                  
-                  // 扩大时间窗口到5分钟，提高匹配成功率
-                  if (timeDiff < 5 * 60 * 1000 && timeDiff < minTimeDiff) {
-                    minTimeDiff = timeDiff;
-                    closestIndex = i;
+                  try {
+                    candleDate = new Date(candleData[i].datetime).getTime();
+                    const timeDiff = Math.abs(candleDate - signalDate);
+                    
+                    // 扩大时间窗口到5分钟，提高匹配成功率
+                    if (timeDiff < 5 * 60 * 1000 && timeDiff < minTimeDiff) {
+                      minTimeDiff = timeDiff;
+                      closestIndex = i;
+                    }
+                  } catch (error) {
+                    console.error('Failed to parse candle datetime:', candleData[i].datetime, error);
                   }
                 }
                 

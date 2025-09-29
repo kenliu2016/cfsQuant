@@ -217,7 +217,7 @@ const ReportDetail: React.FC = () => {
     try {
       setTabLoading(prev => ({ ...prev, '4': true }));
       const res = await client.get('/api/runs/' + runId + '/klines', {
-        params: { limit: 2000 }
+        params: { limit: 30000 }
       });
       setCurrentRunKlineData(res.data || []);
     } catch (error) {

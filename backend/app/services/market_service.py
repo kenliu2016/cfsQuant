@@ -21,7 +21,7 @@ class DateTimeParser:
     @staticmethod
     @lru_cache(maxsize=128)
     def parse_datetime(dt_str: Union[str, datetime, int]) -> datetime:
-        """解析各种格式的日期时间字符串"""
+        """解析各种格式的日期时间字符串，包括带毫秒和时区的ISO格式"""
         if isinstance(dt_str, datetime):
             return dt_str
         
@@ -37,6 +37,7 @@ class DateTimeParser:
         formats = [
             "%Y-%m-%d %H:%M:%S",
             "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%fZ",  # 支持带毫秒和时区的ISO格式
             "%Y-%m-%d"
         ]
         
@@ -45,6 +46,15 @@ class DateTimeParser:
                 return datetime.strptime(dt_str, fmt)
             except ValueError:
                 continue
+                
+        # 尝试直接使用datetime.fromisoformat（Python 3.7+支持）
+        try:
+            # 处理带Z的情况
+            if dt_str.endswith('Z'):
+                dt_str = dt_str[:-1] + '+00:00'
+            return datetime.fromisoformat(dt_str)
+        except ValueError:
+            pass
         
         return datetime.now()
 
