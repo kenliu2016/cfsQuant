@@ -192,7 +192,16 @@ class MarketDataService:
                 return (pd.DataFrame(), query_params) if page is None else (pd.DataFrame(), 0, query_params)
             
             start_dt, end_dt = self._prepare_query_params(start, end)
-            table_name = "day_realtime" if interval in ["1D", "1W", "1M"] else "minute_realtime"
+            # 根据interval后缀确定表名
+            if interval.endswith('m'):
+                table_name = "minute_realtime"
+            elif interval.endswith('h'):
+                table_name = "hour_realtime"
+            elif interval.endswith(('D', 'W', 'M')):
+                table_name = "day_realtime"
+            else:
+                # 默认使用分钟表
+                table_name = "minute_realtime"
             
             # 构建SQL查询
             sql = """
@@ -481,10 +490,15 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
     # 确保limit是有效的正整数
     limit = max(1, int(limit))
     
-    # 根据interval选择表名
-    if interval in ["1D", "1W", "1M"]:
+    # 根据interval后缀确定表名
+    if interval.endswith('m'):
+        table_name = "minute_realtime"
+    elif interval.endswith('h'):
+        table_name = "hour_realtime"
+    elif interval.endswith(('D', 'W', 'M')):
         table_name = "day_realtime"
     else:
+        # 默认使用分钟表
         table_name = "minute_realtime"
     
     sql = """

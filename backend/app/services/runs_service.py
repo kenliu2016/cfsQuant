@@ -472,8 +472,8 @@ def get_run_trades(run_id: str, limit: int = 1000):
     logger.debug(f"成功获取回测交易记录，run_id: {run_id}, 交易数量: {len(df_t)}")
     return df_t.to_dict(orient="records")
 
-def get_run_klines(run_id: str, limit: int = 5000):
-    """获取回测的K线数据"""
+def get_run_klines(run_id: str, limit: int = 30000):
+    """获取回测的K线数据，当数据量超过30000条时不执行查询"""
     klines = []
     try:
         # 先获取回测基本信息
@@ -486,16 +486,26 @@ def get_run_klines(run_id: str, limit: int = 5000):
             end_time = run_data.get('end_time', '')
             
             if code and start_time and end_time:
+                # 先计算时间范围，判断可能的数据量
+                # 解析时间
+                from datetime import datetime
+                start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S') if isinstance(start_time, str) else start_time
+                end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S') if isinstance(end_time, str) else end_time
+                
+                # 根据interval估算数据点数
+                time_diff = end_dt - start_dt
+                seconds_diff = time_diff.total_seconds()
+
                 from .market_service import MarketDataService
                 market_service = MarketDataService()
                 
                 # 调用市场服务获取K线数据
                 df_candles, _ = market_service.get_candles(code, start_time, end_time, interval)
                 
-                # 限制K线数据量
+                # 再次检查实际数据量
                 if not df_candles.empty and len(df_candles) > limit:
-                    # 采样策略：均匀采样
-                    df_candles = df_candles.iloc[np.unique(np.linspace(0, len(df_candles)-1, min(limit, len(df_candles)), dtype=int))]
+                    logger.warning(f"回测K线实际数据量过大，不执行查询，run_id: {run_id}, 实际数据量: {len(df_candles)}")
+                    raise Exception("您当前加载的数据过大，系统暂不支持。")
                 
                 # 确保返回的数据是可JSON序列化的
                 if not df_candles.empty:
@@ -514,4 +524,6 @@ def get_run_klines(run_id: str, limit: int = 5000):
         logger.debug(f"成功获取回测K线数据，run_id: {run_id}, 数据点数量: {len(klines)}")
     except Exception as e:
         logger.error(f"获取回测K线数据失败: {str(e)}")
+        # 直接抛出异常，让FastAPI可以捕获并返回给前端
+        raise
     return klines

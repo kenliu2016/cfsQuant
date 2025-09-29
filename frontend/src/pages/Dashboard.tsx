@@ -386,11 +386,11 @@ const Dashboard: React.FC = () => {
 
   
   // 优化：并行处理市场概览和K线数据请求
-  // 场景1: symbol选择器变更，场景2: timeframe选择变更 - 当symbol或timeframe变化时触发
+  // 场景1: symbol选择器变更，场景2: timeframe选择变更 - 当symbol、timeframe或dateRange变化时触发
   useEffect(() => {
     if (symbols.length > 0 && symbol) {
-      // 创建一个内存缓存键
-      const cacheKey = `${symbol}_${timeframe}`;
+      // 创建一个内存缓存键，包含dateRange信息
+      const cacheKey = `${symbol}_${timeframe}_${dateRange[0]?.valueOf() || '0'}_${dateRange[1]?.valueOf() || '0'}`;
       const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
       const now = Date.now();
       
@@ -404,7 +404,9 @@ const Dashboard: React.FC = () => {
       // 并行发起两个请求
       Promise.all([
         loadMarketOverview(symbols),
-        fetchData()
+        dateRange[0] && dateRange[1] 
+          ? fetchData(dateRange[0].toDate(), dateRange[1].toDate()) 
+          : fetchData()
       ]).catch(error => {
         console.error('数据加载失败:', error);
       });
@@ -412,7 +414,7 @@ const Dashboard: React.FC = () => {
       // 只有股票列表但没有选中股票时，只加载市场概览
       loadMarketOverview(symbols);
     }
-  }, [timeframe, symbol, symbols]);
+  }, [timeframe, symbol, symbols, dateRange]);
 
   // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
   useEffect(() => {
@@ -447,22 +449,38 @@ const Dashboard: React.FC = () => {
         }
       }
       
-      // 根据不同的时间周期设置对应的limit参数
-      const timeframeToLimit = {
-        '1m': 2,
-        '5m': 15,
-        '15m': 45,
-        '30m': 90,
-        '60m': 180,
-        '1h': 180,
-        '4h': 720,
-        '1D': 2,
-        '1W': 21,
-        '1M': 92
+      // 根据时间周期动态计算limit值
+      const calculateLimit = (timeframe: string): number => {
+        // 提取时间周期中的数字部分和原始单位（保留大小写）
+        const match = timeframe.match(/^(\d+)([mhdDWM])$/);
+        if (match) {
+          const number = parseInt(match[1]);
+          const unit = match[2];
+          
+          // 对于以m或h结尾的，limit = 数字 * 3
+          if (unit === 'm' || unit === 'h' || unit === 'H') {
+            return number * 3;
+          }
+          // 对于D结尾的，固定为3
+          else if (unit === 'D') {
+            return 3;
+          }
+          // 对于W结尾的，固定为21
+          else if (unit === 'W') {
+            return 21;
+          }
+          // 对于M结尾的，固定为93
+          else if (unit === 'M') {
+            return 93;
+          }
+        }
+        
+        // 默认值
+        return 3;
       };
       
-      // 获取当前时间周期对应的limit值，如果没有匹配则默认使用2
-      const limit = timeframeToLimit[timeframe as keyof typeof timeframeToLimit] || 2;
+      // 计算当前时间周期对应的limit值
+      const limit = calculateLimit(timeframe);
       
       // 生成精确到分钟的时间戳
       const timestampNow = new Date();
@@ -624,9 +642,26 @@ const Dashboard: React.FC = () => {
       
       const response = await client.get('/api/market/candles', { params });
       // 暂存query_params
-      if (response && response.data && response.data.query_params) {
-        setCachedQueryParams(response.data.query_params);
+      let updatedQueryParams = response?.data?.query_params || {};
+      if (response && response.data && response.data.rows && response.data.rows.length > 0) {
+        // 提取最小和最大时间
+        const sortedRows = [...response.data.rows].sort((a: any, b: any) => 
+          new Date(a.datetime).getTime() - new Date(b.datetime).getTime()
+        );
+        const minTime = sortedRows[0].datetime;
+        const maxTime = sortedRows[sortedRows.length - 1].datetime;
+        
+        // 更新query_params
+        updatedQueryParams = {
+          ...updatedQueryParams,
+          start_time: minTime,
+          end_time: maxTime
+        };
       }
+      
+      // 设置更新后的query_params
+      setCachedQueryParams(updatedQueryParams);
+      
       if (response && response.data && response.data.rows) {
         const processedData = response.data.rows.map((item: any) => ({
           ...item,
@@ -634,9 +669,9 @@ const Dashboard: React.FC = () => {
         }));
         setCandleData(processedData);
         
-        // 保存到内存缓存
+        // 保存到内存缓存，使用更新后的query_params
         sessionStorage.setItem(cacheKey, JSON.stringify({
-          query_params: response.data.query_params,
+          query_params: updatedQueryParams,
           rows: processedData,
           timestamp: Date.now()
         }));

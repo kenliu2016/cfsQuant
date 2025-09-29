@@ -13,7 +13,8 @@ async def backtest(req: BacktestRequest):
     start = req.params['start']
     end = req.params['end']
     interval = req.params['interval']
-    print(f"Backtest request: code={code}, start={start}, end={end}, interval={interval}")
+    # 打印完整的回测请求信息
+    # print(f"Backtest request: code={code}, start={start}, end={end}, interval={interval}, strategy={req.strategy}")
     # 调用get_candles获取K线数据
     candles_result = get_candles(code, start, end, interval)
     

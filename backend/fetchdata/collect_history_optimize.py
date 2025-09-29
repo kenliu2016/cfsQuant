@@ -119,10 +119,10 @@ def main():
     # 支持的交易所
     exchanges = {
       #  "binance": ccxt.binance({"enableRateLimit": True}),
-        "okx": ccxt.okx({"enableRateLimit": True}),
-        "bybit": ccxt.bybit({"enableRateLimit": True}),
+      #  "okx": ccxt.okx({"enableRateLimit": True}),
+      #  "bybit": ccxt.bybit({"enableRateLimit": True}),
         "coinbase": ccxt.coinbase({"enableRateLimit": True}),
-        "upbit": ccxt.upbit({"enableRateLimit": True}),
+      #  "upbit": ccxt.upbit({"enableRateLimit": True}),
     }
 
     # 时间范围：最近三年
@@ -132,10 +132,10 @@ def main():
     # 示例：每个交易所选 5 个 symbol（实际从数据库取 top50）
     sample_symbols = {
       #  "binance": ["BTC/USDT", "ETH/USDT"],
-        "okx": ["BTC/USDT", "ETH/USDT"],
-        "bybit": ["BTC/USDT", "ETH/USDT"],
+      #  "okx": ["BTC/USDT", "ETH/USDT"],
+      #  "bybit": ["BTC/USDT", "ETH/USDT"],
         "coinbase": ["BTC/USDT", "ETH/USDT"],
-        "upbit": ["BTC/USDT", "ETH/USDT"],
+      #  "upbit": ["BTC/USDT", "ETH/USDT"],
     }
 
     for ex_name, ex in exchanges.items():

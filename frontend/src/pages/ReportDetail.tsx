@@ -222,7 +222,7 @@ const ReportDetail: React.FC = () => {
       setCurrentRunKlineData(res.data || []);
     } catch (error) {
       console.error('加载K线数据失败:', error);
-      message.error('加载K线数据失败');
+      message.info('当前K线数据过大，系统暂不支持');
     } finally {
       setTabLoading(prev => ({ ...prev, '4': false }));
     }
