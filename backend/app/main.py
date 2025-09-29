@@ -30,9 +30,14 @@ async def app_lifespan(app: FastAPI):
 
 app = FastAPI(title="Trading API", version="0.1.0", lifespan=app_lifespan)
 
+# 配置CORS - 支持动态IP地址和灵活配置
+cors_origin = os.getenv("CORS_ORIGIN", "*")
+# 如果CORS_ORIGIN包含逗号，则解析为多个源，否则使用单个源
+allow_origins = cors_origin.split(',') if ',' in cors_origin else [cors_origin]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("CORS_ORIGIN", "*")],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
