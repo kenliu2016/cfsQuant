@@ -9,12 +9,10 @@ declare global {
   }
 }
 
-// 从环境变量中获取后端API地址，如果没有则使用默认值
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-// 创建axios实例
+// 使用相对路径作为API基础URL，这样请求会发送到与前端相同的域名和端口
+// 然后通过Nginx反向代理转发到后端服务，避免CORS问题
 const client = axios.create({
-  baseURL: apiBaseUrl,
+  baseURL: '/api',
   timeout: 30000, // 增加超时时间，因为大数据量查询可能需要更长时间
   headers: {
     'Content-Type': 'application/json',
