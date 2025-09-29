@@ -166,6 +166,30 @@ const Dashboard: React.FC = () => {
     };
   }, [showDatePicker, isDatePickerFocused]);
 
+  // 防抖函数，用于限制频繁调用
+  const debounce = (func: Function, delay: number) => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    return (...args: any[]) => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => func.apply(null, args), delay);
+    };
+  };
+
+  // 防抖版本的数据加载函数
+  const debouncedLoadMarketOverview = useCallback(
+    debounce(async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
+      await loadMarketOverview(symbolsData);
+    }, 300),
+    [timeframe]
+  );
+
+  const debouncedFetchData = useCallback(
+    debounce(async (startTime?: Date, endTime?: Date) => {
+      await fetchData(startTime, endTime);
+    }, 300),
+    [symbol, timeframe]
+  );
+
   // 运行策略回测
   const runBacktest = async (strategyId: string, strategyName: string) => {
     try {
@@ -394,27 +418,27 @@ const Dashboard: React.FC = () => {
       const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
       const now = Date.now();
       
-      // 如果距离上次请求不足500毫秒，不重复请求（防止快速切换导致的频繁请求）
-      if (lastRequestTime && now - parseInt(lastRequestTime) < 500) {
+      // 如果距离上次请求不足800毫秒，不重复请求（增加节流时间）
+      if (lastRequestTime && now - parseInt(lastRequestTime) < 800) {
         return;
       }
       
       sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
       
-      // 并行发起两个请求
-      Promise.all([
-        loadMarketOverview(symbols),
-        dateRange[0] && dateRange[1] 
-          ? fetchData(dateRange[0].toDate(), dateRange[1].toDate()) 
-          : fetchData()
-      ]).catch(error => {
-        console.error('数据加载失败:', error);
-      });
+      // 使用防抖版本的函数，避免频繁请求
+      debouncedLoadMarketOverview(symbols);
+      
+      // 并行发起fetchData请求
+      if (dateRange[0] && dateRange[1]) {
+        debouncedFetchData(dateRange[0].toDate(), dateRange[1].toDate());
+      } else {
+        debouncedFetchData();
+      }
     } else if (symbols.length > 0) {
       // 只有股票列表但没有选中股票时，只加载市场概览
-      loadMarketOverview(symbols);
+      debouncedLoadMarketOverview(symbols);
     }
-  }, [timeframe, symbol, symbols, dateRange]);
+  }, [timeframe, symbol, symbols, dateRange, debouncedLoadMarketOverview, debouncedFetchData]);
 
   // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
   useEffect(() => {
@@ -440,8 +464,8 @@ const Dashboard: React.FC = () => {
       const cachedData = sessionStorage.getItem(cacheKey);
       if (cachedData) {
         const parsedData = JSON.parse(cachedData);
-        // 检查缓存是否在5秒内有效
-        if (Date.now() - parsedData.timestamp < 5000) {
+        // 检查缓存是否在15秒内有效（增加缓存时间以减少请求）
+        if (Date.now() - parsedData.timestamp < 15000) {
           setMarketOverview(parsedData.data);
           const lastUpdatedNow = new Date();
           setLastUpdated(lastUpdatedNow.toLocaleTimeString());
