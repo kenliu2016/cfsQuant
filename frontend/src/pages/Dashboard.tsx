@@ -95,7 +95,7 @@ const Dashboard: React.FC = () => {
   // 股票列表
   const [symbols, setSymbols] = useState<any[]>([]);
   // 选中的股票
-  const [symbol, setSymbol] = useState<string>('');
+  const [symbol, setSymbol] = useState<string>('binance-BTC/USDT');
   // 时间周期
   const [timeframe, setTimeframe] = useState<string>('1m');
   // 图表类型 - 修正类型定义，使用candlestick而不是candle

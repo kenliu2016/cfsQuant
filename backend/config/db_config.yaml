@@ -1,9 +1,9 @@
 postgres:
-  host: "localhost"
+  host: "3.0.20.255"
   port: 5432
   dbname: "quant"
   user: "cfs"
-  password: "Aa520@cfs"
+  password: "Cc563479,."
 
 redis:
   host: "localhost"
