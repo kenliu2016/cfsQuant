@@ -814,10 +814,18 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
 
 
 def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
-    """缓存pandas DataFrame结果的装饰器，支持多种返回格式"""
+    """缓存pandas DataFrame结果的装饰器，支持多种返回格式
+    对于包含limit参数的查询，禁止使用Redis缓存，以确保获取最新数据
+    """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # 检查是否包含limit参数，如果有则不使用缓存
+            if 'limit' in kwargs and kwargs['limit'] is not None:
+                logger.debug(f"查询包含limit参数，跳过缓存: {func.__name__}, limit={kwargs['limit']}")
+                # 直接执行原函数并返回结果
+                return func(*args, **kwargs)
+            
             # 生成缓存键，包含所有参数（包括分页参数）
             key = CacheService._generate_key(f"df_{func.__name__}", *args, **kwargs)
             
