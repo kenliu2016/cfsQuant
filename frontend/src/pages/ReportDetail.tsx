@@ -322,12 +322,6 @@ const ReportDetail: React.FC = () => {
       item.low,
       item.high
     ]);
-    // 准备成交量数据
-    const volumeData = mergedData.map((item, index) => {
-      const open = item.open;
-      const close = item.close;
-      return [dates[index], item.volume, close >= open ? 1 : -1];
-    });
 
     // 直接从currentRunTrades中创建信号点
     let enhancedBuySignals: any[] = [];
@@ -520,13 +514,7 @@ const ReportDetail: React.FC = () => {
           left: '3%',  // 减少左边距，扩大显示区域
           right: '3%', // 减少右边距，扩大显示区域
           top: '10%',  // 减少顶部边距
-          height: '62%' // 稍微增加K线区域高度
-        },
-        {
-          left: '3%',  // 与K线区域保持一致的左右边距
-          right: '3%',
-          top: '77%',  // 调整位置以匹配上方K线区域
-          height: '23%' // 稍微增加成交量区域高度
+          height: '85%' // 增加K线区域高度
         }
       ],
       xAxis: [
@@ -548,24 +536,6 @@ const ReportDetail: React.FC = () => {
             show: false
           },
           gridIndex: 0
-        },
-        {
-          type: 'category',
-          data: dates,
-          scale: true,
-          boundaryGap: false,
-          axisLine: {
-            lineStyle: {
-              color: '#4E4E6A' // 轴线颜色
-            }
-          },
-          axisLabel: {
-            show: false
-          },
-          splitLine: {
-            show: false
-          },
-          gridIndex: 1
         }
       ],
       yAxis: [
@@ -591,38 +561,23 @@ const ReportDetail: React.FC = () => {
             }
           },
           gridIndex: 0
-        },
-        {
-          scale: true,
-          axisLine: {
-            lineStyle: {
-              color: '#4E4E6A' // 轴线颜色
-            }
-          },
-          axisLabel: {
-            color: '#8E8EA0', // 标签颜色
-            fontSize: 12
-          },
-          splitLine: {
-            show: false
-          },
-          gridIndex: 1
         }
       ],
       dataZoom: [
         {
           type: 'inside',
-          xAxisIndex: [0, 1],
+          xAxisIndex: 0,
           start: 70,
           end: 100
         },
         {
           show: true,
-          xAxisIndex: [0, 1],
+          xAxisIndex: 0,
           type: 'slider',
           top: 'bottom',
           start: 70,
           end: 100,
+          height: 20, // 降低滑块高度，防止挡住x轴坐标
           borderColor: '#333',
           backgroundColor: '#1F1F3A',
           handleStyle: {
@@ -690,25 +645,6 @@ const ReportDetail: React.FC = () => {
                 }
               };
             })
-          }
-        },
-        {
-          name: '成交量',
-          type: 'bar',
-          data: volumeData,
-          xAxisIndex: 1,
-          yAxisIndex: 1,
-          itemStyle: {
-            color: (params: any) => {
-              return params.value[2] >= 0 ? '#52c41a' : '#f5222d';
-            }
-          },
-          emphasis: {
-            itemStyle: {
-              color: (params: any) => {
-                return params.value[2] >= 0 ? '#73d13d' : '#ff4d4f';
-              }
-            }
           }
         },
         {          
@@ -830,7 +766,7 @@ const ReportDetail: React.FC = () => {
             </TabPane>
 
            {/* 结果指标 */}
-            <Tabs.TabPane tab="结果指标" key="2">
+            <TabPane tab="结果指标" key="2">
               <div style={{padding: 24}}>
                 <h3 style={{marginBottom: 24, fontSize: '16px', fontWeight: 600, color: '#262626'}}>关键指标</h3>
                 <Space direction="vertical" style={{width: '100%'}}>
@@ -898,114 +834,166 @@ const ReportDetail: React.FC = () => {
                   </Space>
                 </Space>
               </div>
-            </Tabs.TabPane>
-
-             {/* K线交易图 */}
-            <TabPane tab="K线交易图" key="4">
-              <div style={{ height: 'calc(100vh - 100px)', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {tabLoading['4'] ? (
-                  <Spin size="large" />
-                ) : getKlineOption ? (
-                  <ReactECharts 
-                    option={getKlineOption} 
-                    style={{ height: '100%', width: '100%' }} 
-                    onEvents={onEvents}
-                  />
-                ) : (
-                  <div style={{ textAlign: 'center', color: '#8c8c8c' }}>
-                    暂无K线数据
-                  </div>
-                )}
-              </div>
             </TabPane>
 
-             {/* 交易记录 */}
-            <Tabs.TabPane tab="交易记录" key="5">
-                <Card style={{borderRadius: '8px', border: '1px solid #f0f0f0', boxShadow: 'none', overflow: 'auto'}}>
-                  <Table 
-                    dataSource={currentRunTrades}
-                    rowKey={(record: any) => record.datetime + '-' + record.side}
-                    pagination={{pageSize: 15, size: 'small' as const}}
-                    scroll={{ x: '1800px', y: 'calc(100% - 140px)' }}
-                    className="transition-all duration-300"
-                    rowClassName={() => 'custom-row'}
-                    columns={[
-                      {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160, ellipsis: false},
-                      {title: '标的', dataIndex: 'code', key: 'code', width: 100},
-                      {title: '方向', dataIndex: 'side', key: 'side', width: 80},
-                      {title: '交易类型', dataIndex: 'trade_type', key: 'trade_type', width: 100},
-                      {title: '交易前均价', dataIndex: 'avg_price', key: 'avg_price', render: (value: number) => formatPrice(value), width: 120},
-                      {title: '交易价格', dataIndex: 'price', key: 'price', render: (value: number) => formatPrice(value), width: 100},
-                      {title: '交易数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value ? value.toString() : '-', width: 100},
-                      {title: '交易金额', dataIndex: 'amount', key: 'amount', render: (value: number) => formatPrice(value), width: 120},
-                      {title: '交易后均价', dataIndex: 'current_avg_price', key: 'current_avg_price', render: (value: number) => formatPrice(value), width: 120},
-                      {title: '持仓数量', dataIndex: 'current_qty', key: 'current_qty', render: (value: number) => value ? value.toString() : '-', width: 120},
-                      {title: '实现盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? (
-                        <span style={{color: value >= 0 ? '#52c41a' : '#f5222d'}}>
-                          {value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))}
-                        </span>
-                      ) : '-', width: 120},
-                      {title: '持有现金', dataIndex: 'current_cash', key: 'current_cash', render: (value: number) => formatPrice(value), width: 120},
-                      {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => formatPrice(value), width: 100}
-                    ]}
-                  >
-                 </Table>
-                 <Button 
-                    type="primary" 
-                    icon={<DownloadOutlined />}
-                    size="small"
-                    onClick={() => {
-                      if (currentRunTrades.length === 0) {
-                        message.warning('没有可导出的交易记录');
-                        return;
+             {/* K线交易图与交易记录合并展示 */}
+            <TabPane tab="K线交易图" key="4">
+              <div style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', padding: '20px' }}>
+                {/* K线图占65%高度 */}
+                <div style={{ height: '65%', marginBottom: '10px' }}>
+                  {tabLoading['4'] ? (
+                    <Spin size="large" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }} />
+                  ) : getKlineOption ? (
+                    <ReactECharts 
+                      option={getKlineOption} 
+                      style={{ height: '100%', width: '100%' }} 
+                      onEvents={onEvents}
+                    />
+                  ) : (
+                    <div style={{ textAlign: 'center', color: '#8c8c8c', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                      暂无K线数据
+                    </div>
+                  )}
+                </div>
+                
+                {/* 交易记录区域 - 使用固定高度确保滚动条可见 */}
+                <div style={{ height: '35%', border: '1px solid #f0f0f0', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}>
+                  {/* 简化滚动样式，使用明确的方式确保滚动条和分页导航可见 */}
+                  <style>
+                    {`
+                      /* 缩小行间距 */
+                      .custom-row td {
+                        padding: 6px 16px !important;
+                        border-bottom: 1px solid #f5f5f5;
+                        white-space: nowrap !important;
                       }
                         
-                      // 准备导出数据
-                      const exportData = currentRunTrades.map(trade => ({
-                        '时间': formatDateTime(trade.datetime),
-                        '标的': trade.code,
-                        '方向': trade.side,
-                        '交易类型': trade.trade_type || 'normal',
-                        '交易前均价': trade.avg_price ? trade.avg_price.toFixed(Math.min(4, trade.avg_price.toString().split('.')[1]?.length || 0)) : '-',
-                        '交易价格': trade.price.toFixed(Math.min(4, trade.price.toString().split('.')[1]?.length || 0)),
-                        '交易数量': trade.qty.toFixed(Math.min(4, trade.qty.toString().split('.')[1]?.length || 0)),
-                        '交易金额': trade.amount.toFixed(Math.min(4, trade.amount.toString().split('.')[1]?.length || 0)),
-                        '手续费': trade.fee.toFixed(Math.min(4, trade.fee.toString().split('.')[1]?.length || 0)),
-                        '交易后均价': trade.current_avg_price ? trade.current_avg_price.toFixed(Math.min(4, trade.current_avg_price.toString().split('.')[1]?.length || 0)) : '-',
-                        '当前价格': trade.close_price ? trade.close_price.toFixed(Math.min(4, trade.close_price.toString().split('.')[1]?.length || 0)) : '-',
-                        '持仓数量': trade.current_qty ? trade.current_qty.toFixed(Math.min(4, trade.current_qty.toString().split('.')[1]?.length || 0)) : '-',
-                        '实现盈亏': trade.realized_pnl ? trade.realized_pnl.toFixed(Math.min(4, trade.realized_pnl.toString().split('.')[1]?.length || 0)) : '-',
-                        '持有现金': trade.current_cash ? trade.current_cash.toFixed(Math.min(4, trade.current_cash.toString().split('.')[1]?.length || 0)) : '-',
-                        '净值': trade.nav ? trade.nav.toFixed(Math.min(4, trade.nav.toString().split('.')[1]?.length || 0)) : '-' 
-                      }));
+                      /* 关键样式：确保表格容器的高度和滚动行为 */
+                      .scrollable-table-wrapper {
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                      }
                         
-                      // 创建工作表
-                      const ws = XLSX.utils.json_to_sheet(exportData);
-                       
-                      // 创建工作簿
-                      const wb = XLSX.utils.book_new();
-                      XLSX.utils.book_append_sheet(wb, ws, '交易记录');
-                       
-                      // 生成文件名，使用保存的回测ID和当前日期
-                      const filename = '交易记录_' + (currentRunId || 'unknown') + '_' + dayjs().format('YYYYMMDD_HHmmss') + '.xlsx';
-                       
-                      // 导出文件
-                      XLSX.writeFile(wb, filename);
-                      message.success('交易记录导出成功');
-                    }}
-                  >
-                    导出Excel
-                 </Button>
-              </Card>
-              <style>{`
-                  .custom-row { height: 32px; line-height: 32px; }
-                  .ant-table-thead > tr > th { height: 36px !important; padding: 0 12px; white-space: nowrap; }
-                  .ant-table-tbody > tr > td { padding: 0 12px !important; border-bottom: 1px solid #f5f5f5; white-space: nowrap; }
-                  .ant-table-row { transition: all 0.3s; }
-                  .ant-table-fixed-left { position: sticky !important; left: 0 !important; z-index: 2 !important; }
-                  .ant-table-pagination { margin-top: 8px; margin-bottom: 8px; }
-                `}</style>
-            </Tabs.TabPane>
+                      /* 强制表格包装器不要充满整个空间 */
+                      .ant-table-wrapper {
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                      }
+                        
+                      /* 确保表格容器和内容区域的高度 */
+                      .ant-table-container {
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
+                      }
+                        
+                      .ant-table-content {
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
+                      }
+                        
+                      /* 强制显示滚动条 - 使用!important确保优先级 */
+                      .ant-table-body {
+                        overflow-y: auto !important;
+                        overflow-x: auto !important;
+                        flex: 1;
+                      }
+                        
+                      /* 确保分页栏可见且不被遮挡 */
+                      .ant-table-pagination {
+                        margin: 10px 0 !important;
+                        flex-shrink: 0;
+                        z-index: 10;
+                      }
+                    `}
+                  </style>
+                    
+                  <div className="scrollable-table-wrapper">
+                    <Table 
+                      dataSource={currentRunTrades}
+                      rowKey={(record: any) => record.datetime + '-' + record.side}
+                      pagination={{pageSize: 15, size: 'small' as const}}
+                      scroll={{ x: 'max-content', y: '200px' }} // 使用固定高度确保表格不会过高
+                      rowClassName={() => 'custom-row'}
+                      className="transition-all duration-300"
+                      columns={[
+                        {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160, ellipsis: false},
+                        {title: '标的', dataIndex: 'code', key: 'code', width: 100},
+                        {title: '方向', dataIndex: 'side', key: 'side', width: 80},
+                        {title: '交易类型', dataIndex: 'trade_type', key: 'trade_type', width: 100},
+                        {title: '交易前均价', dataIndex: 'avg_price', key: 'avg_price', render: (value: number) => formatPrice(value), width: 120},
+                        {title: '交易价格', dataIndex: 'price', key: 'price', render: (value: number) => formatPrice(value), width: 100},
+                        {title: '交易数量', dataIndex: 'qty', key: 'qty', render: (value: number) => value ? value.toString() : '-', width: 100},
+                        {title: '交易金额', dataIndex: 'amount', key: 'amount', render: (value: number) => formatPrice(value), width: 120},
+                        {title: '交易后均价', dataIndex: 'current_avg_price', key: 'current_avg_price', render: (value: number) => formatPrice(value), width: 120},
+                        {title: '持仓数量', dataIndex: 'current_qty', key: 'current_qty', render: (value: number) => value ? value.toString() : '-', width: 120},
+                        {title: '实现盈亏', dataIndex: 'realized_pnl', key: 'realized_pnl', render: (value: number) => value ? (
+                          <span style={{color: value >= 0 ? '#52c41a' : '#f5222d'}}>
+                            {value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0))}
+                          </span>
+                        ) : '-', width: 120},
+                        {title: '持有现金', dataIndex: 'current_cash', key: 'current_cash', render: (value: number) => formatPrice(value), width: 120},
+                        {title: '净值', dataIndex: 'nav', key: 'nav', render: (value: number) => formatPrice(value), width: 100}
+                      ]}
+                    />
+                  </div>
+                  {/* 导出按钮区域 - 确保在容器内正确显示 */}
+                  <div style={{padding: '10px', borderTop: '1px solid #f0f0f0', backgroundColor: '#fafafa'}}>
+                    <Button 
+                      type="primary" 
+                      icon={<DownloadOutlined />}
+                      size="small"
+                      onClick={() => {
+                        if (currentRunTrades.length === 0) {
+                          message.warning('没有可导出的交易记录');
+                          return;
+                        }
+                          
+                        // 准备导出数据
+                        const exportData = currentRunTrades.map(trade => ({
+                          '时间': formatDateTime(trade.datetime),
+                          '标的': trade.code,
+                          '方向': trade.side,
+                          '交易类型': trade.trade_type || 'normal',
+                          '交易前均价': trade.avg_price ? trade.avg_price.toFixed(Math.min(4, trade.avg_price.toString().split('.')[1]?.length || 0)) : '-',
+                          '交易价格': trade.price.toFixed(Math.min(4, trade.price.toString().split('.')[1]?.length || 0)),
+                          '交易数量': trade.qty.toFixed(Math.min(4, trade.qty.toString().split('.')[1]?.length || 0)),
+                          '交易金额': trade.amount.toFixed(Math.min(4, trade.amount.toString().split('.')[1]?.length || 0)),
+                          '手续费': trade.fee.toFixed(Math.min(4, trade.fee.toString().split('.')[1]?.length || 0)),
+                          '交易后均价': trade.current_avg_price ? trade.current_avg_price.toFixed(Math.min(4, trade.current_avg_price.toString().split('.')[1]?.length || 0)) : '-',
+                          '当前价格': trade.close_price ? trade.close_price.toFixed(Math.min(4, trade.close_price.toString().split('.')[1]?.length || 0)) : '-',
+                          '持仓数量': trade.current_qty ? trade.current_qty.toFixed(Math.min(4, trade.current_qty.toString().split('.')[1]?.length || 0)) : '-',
+                          '实现盈亏': trade.realized_pnl ? trade.realized_pnl.toFixed(Math.min(4, trade.realized_pnl.toString().split('.')[1]?.length || 0)) : '-',
+                          '持有现金': trade.current_cash ? trade.current_cash.toFixed(Math.min(4, trade.current_cash.toString().split('.')[1]?.length || 0)) : '-',
+                          '净值': trade.nav ? trade.nav.toFixed(Math.min(4, trade.nav.toString().split('.')[1]?.length || 0)) : '-' 
+                        }));
+                          
+                        // 创建工作表
+                        const ws = XLSX.utils.json_to_sheet(exportData);
+                          
+                        // 创建工作簿
+                        const wb = XLSX.utils.book_new();
+                        XLSX.utils.book_append_sheet(wb, ws, '交易记录');
+                          
+                        // 生成文件名，使用保存的回测ID和当前日期
+                        const filename = '交易记录_' + (currentRunId || 'unknown') + '_' + dayjs().format('YYYYMMDD_HHmmss') + '.xlsx';
+                          
+                        // 导出文件
+                        XLSX.writeFile(wb, filename);
+                        message.success('交易记录导出成功');
+                      }}
+                    >
+                      导出Excel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </TabPane>
           </Tabs>
         ) : (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
