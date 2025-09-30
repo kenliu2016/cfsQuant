@@ -93,7 +93,7 @@ const Dashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(false);
   // 股票列表
-  const [symbols, setSymbols] = useState<any[]>([]);
+  const [, setSymbols] = useState<any[]>([]);
   // 选中的股票
   const [symbol, setSymbol] = useState<string>('binance-BTC/USDT');
   // 时间周期
@@ -106,7 +106,7 @@ const Dashboard: React.FC = () => {
   // 日历选择器是否有光标激活
   const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
   // 使用useCallback优化onSymbolsLoaded回调，避免触发无限循环
-  const handleSymbolsLoaded = useCallback((loadedSymbols: any[]) => {
+  const handleSymbolsLoaded = useCallback((_loadedSymbols: any[]) => {
     // 过滤出watch=true的代码，而不是直接使用所有active=true的代码
     // 这里我们需要从watchlist数据中获取，而不是直接使用loadedSymbols
     // 由于这里无法直接获取watch状态，我们暂时不更新symbols状态
