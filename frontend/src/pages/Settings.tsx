@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, Modal, Form, Input, Checkbox, message, Popconfirm, Select } from 'antd';
-import { PlusOutlined, DeleteOutlined, EditOutlined, SyncOutlined, EyeInvisibleOutlined, EyeOutlined, DatabaseOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, EditOutlined, SyncOutlined, EyeInvisibleOutlined, EyeOutlined, DatabaseOutlined, SearchOutlined, DeleteColumnOutlined } from '@ant-design/icons';
 import client from '../api/client';
 
 // 定义交易对的接口
@@ -25,6 +25,7 @@ const Settings: React.FC = () => {
   const [codeFilter, setCodeFilter] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(15);
+  const [clearingCache, setClearingCache] = useState<boolean>(false);
 
   // 加载交易对数据
   const loadMarketCodes = async () => {
@@ -45,6 +46,20 @@ const Settings: React.FC = () => {
       message.error('加载交易对失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 清除所有K线缓存
+  const handleClearAllCandlesCache = async () => {
+    try {
+      setClearingCache(true);
+      await client.delete('/api/market/candles-cache/all');
+      message.success('K线缓存清除成功');
+    } catch (error) {
+      console.error('清除K线缓存失败:', error);
+      message.error('清除K线缓存失败');
+    } finally {
+      setClearingCache(false);
     }
   };
 
@@ -340,7 +355,7 @@ const Settings: React.FC = () => {
           </Button>
         } style={{ flex: '1', display: 'flex', flexDirection: 'column', marginBottom: '0' }}>
         {/* 过滤条件输入 */}
-        <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+        <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <Select
             placeholder="按交易所过滤"
             value={exchangeFilter || undefined}
@@ -393,6 +408,15 @@ const Settings: React.FC = () => {
             style={{ marginRight: '6px' }}
           >
             刷新
+          </Button>
+          <Button
+            danger
+            icon={<DeleteColumnOutlined />}
+            size="small"
+            onClick={handleClearAllCandlesCache}
+            loading={clearingCache}
+          >
+            清除所有K线缓存
           </Button>
         </div>
 
