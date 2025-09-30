@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Body
 from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service, get_latest_candles
+from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
 from ..db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
@@ -743,3 +744,46 @@ def batch_update_codes(batch_data: dict):
     except Exception as e:
         logger.error(f"批量更新市场代码失败: {str(e)}")
         raise HTTPException(status_code=500, detail="批量更新失败")
+
+
+@router.delete("/candles-cache")
+def delete_candles_cache(code: str = Query(..., description="市场代码，如binance-BTC/USDT"), 
+                         interval: str = Query("1m", description="时间间隔，如1m, 15m, 1h, 1D"),
+                         limit: int = Query(None, ge=1, description="查询的记录条数，如果为None则匹配所有limit值"),
+                         start: str = Query(None, description="开始时间，如果为None则不按时间范围清除"),
+                         end: str = Query(None, description="结束时间，如果为None则不按时间范围清除")):
+    """
+    清除特定K线查询的缓存
+    
+    支持清除基于时间范围的查询缓存或基于limit的查询缓存
+    如果同时提供了时间范围和limit，则优先按时间范围清除
+    """
+    logger.info(f"接收到清除K线缓存请求: code={code}, interval={interval}, limit={limit}, start={start}, end={end}")
+    
+    # 调用清除缓存的服务函数
+    success = clear_candles_cache(code, interval, limit, start, end)
+    
+    if success:
+        logger.info(f"成功清除K线缓存: code={code}, interval={interval}")
+        return {"success": True, "message": "K线缓存清除成功"}
+    else:
+        logger.error(f"清除K线缓存失败: code={code}, interval={interval}")
+        raise HTTPException(status_code=500, detail="清除K线缓存失败")
+
+
+@router.delete("/candles-cache/all")
+def delete_all_candles_cache_endpoint():
+    """
+    清除所有K线相关的缓存
+    """
+    logger.info("接收到清除所有K线缓存的请求")
+    
+    # 调用清除所有缓存的服务函数
+    success = clear_all_candles_cache()
+    
+    if success:
+        logger.info("成功清除所有K线缓存")
+        return {"success": True, "message": "所有K线缓存清除成功"}
+    else:
+        logger.error("清除所有K线缓存失败")
+        raise HTTPException(status_code=500, detail="清除所有K线缓存失败")

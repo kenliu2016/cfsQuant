@@ -107,8 +107,10 @@ const Dashboard: React.FC = () => {
   const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
   // 使用useCallback优化onSymbolsLoaded回调，避免触发无限循环
   const handleSymbolsLoaded = useCallback((loadedSymbols: any[]) => {
-    // 更新symbols状态
-    setSymbols(loadedSymbols);
+    // 过滤出watch=true的代码，而不是直接使用所有active=true的代码
+    // 这里我们需要从watchlist数据中获取，而不是直接使用loadedSymbols
+    // 由于这里无法直接获取watch状态，我们暂时不更新symbols状态
+    // 因为实际使用的watchlist数据是通过fetchWatchListFromAPI获取的
   }, []);
   // 定时器引用，用于5秒后自动收起日历选择器
   const datePickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -443,33 +445,60 @@ const Dashboard: React.FC = () => {
   // 优化：并行处理市场概览和K线数据请求
   // 场景1: symbol选择器变更，场景2: timeframe选择变更 - 当symbol、timeframe或dateRange变化时触发
   useEffect(() => {
-    if (symbols.length > 0 && symbol) {
-      // 创建一个内存缓存键，包含dateRange信息
-      const cacheKey = `${symbol}_${timeframe}_${dateRange[0]?.valueOf() || '0'}_${dateRange[1]?.valueOf() || '0'}`;
-      const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
-      const now = Date.now();
-      
-      // 如果距离上次请求不足800毫秒，不重复请求（增加节流时间）
-      if (lastRequestTime && now - parseInt(lastRequestTime) < 800) {
-        return;
+    // 定义一个本地函数来获取watch=true的代码列表
+    const getWatchListData = async () => {
+      try {
+        const watchlistData = await fetchWatchListFromAPI();
+        if (watchlistData.length > 0) {
+          // 如果当前没有选中的symbol，则选中第一个
+          if (!symbol) {
+            setSymbol(watchlistData[0].code);
+          }
+          return watchlistData;
+        }
+        return [];
+      } catch (error) {
+        console.error('Failed to fetch watch list:', error);
+        return [];
       }
+    };
+
+    // 先获取watch=true的代码列表，然后再处理其他逻辑
+    const processData = async () => {
+      const watchlistData = await getWatchListData();
       
-      sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
-      
-      // 使用防抖版本的函数，避免频繁请求
-      debouncedLoadMarketOverview(symbols);
-      
-      // 并行发起fetchData请求
-      if (dateRange[0] && dateRange[1]) {
-        debouncedFetchData(dateRange[0].toDate(), dateRange[1].toDate());
-      } else {
-        debouncedFetchData();
+      if (watchlistData.length > 0 && symbol) {
+        // 创建一个内存缓存键，包含dateRange信息
+        const cacheKey = `${symbol}_${timeframe}_${dateRange[0]?.valueOf() || '0'}_${dateRange[1]?.valueOf() || '0'}`;
+        const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
+        const now = Date.now();
+        
+        // 如果距离上次请求不足800毫秒，不重复请求（增加节流时间）
+        if (lastRequestTime && now - parseInt(lastRequestTime) < 800) {
+          return;
+        }
+        
+        sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
+        
+        // 使用防抖版本的函数，避免频繁请求
+        // 直接传递watchlistData而不是symbols
+        debouncedLoadMarketOverview(watchlistData);
+        
+        // 并行发起fetchData请求
+        if (dateRange[0] && dateRange[1]) {
+          debouncedFetchData(dateRange[0].toDate(), dateRange[1].toDate());
+        } else {
+          debouncedFetchData();
+        }
+      } else if (watchlistData.length > 0) {
+        // 只有股票列表但没有选中股票时，只加载市场概览
+        debouncedLoadMarketOverview(watchlistData);
       }
-    } else if (symbols.length > 0) {
-      // 只有股票列表但没有选中股票时，只加载市场概览
-      debouncedLoadMarketOverview(symbols);
-    }
-  }, [timeframe, symbol, symbols, dateRange, debouncedLoadMarketOverview, debouncedFetchData]);
+    };
+
+    // 执行处理函数
+    processData();
+  }, [timeframe, symbol, dateRange, debouncedLoadMarketOverview, debouncedFetchData]);
 
   // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
   useEffect(() => {

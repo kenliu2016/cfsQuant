@@ -359,9 +359,7 @@ class CacheService:
                 data, timestamp = client[key]
                 # 检查是否过期
                 if time.time() - timestamp < data.get('_expire_time', float('inf')):
-                    # 更新过期时间
-                    client[key] = (data, time.time())
-                    cache_metrics['ttl_renewed'] += 1
+                    # 已移除热点数据自动延长过期时间的机制
                     return data.get('value')
                 else:
                     # 删除过期数据
@@ -373,9 +371,7 @@ class CacheService:
             data = client.get(key)
             if data:
                 cache_metrics['hits'] += 1
-                # 重新设置TTL，实现热点数据缓存延长
-                client.expire(key, LONG_EXPIRE_TIME)
-                cache_metrics['ttl_renewed'] += 1
+                # 已移除热点数据自动延长过期时间的机制
                 try:
                     return json.loads(data)
                 except json.JSONDecodeError:
