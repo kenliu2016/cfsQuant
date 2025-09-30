@@ -18,15 +18,13 @@ from .backtest_service import run_backtest
 from .market_service import MarketDataService
 from .runs_service import delete_run
 from ..db import fetch_df, to_sql, execute
-from ..celery_config import celery_app
+from ..celery_config import celery_app, IS_SECONDARY_INSTANCE
+import requests
+import os
 
-# 使用Python内置logging模块
-logger.info('tuning_service logger initialized')
+# 明确定义内存优化标志
+enable_memory_optimization = True  # 默认为开启内存优化
 
-# 日志配置已完成
-
-# 全局变量：启用内存优化模式
-enable_memory_optimization = True
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
 def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1):
@@ -48,6 +46,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         Dict: 调优结果
     """
     logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, code={code}")
+    # 记录当前实例类型，确认任务实际在哪里执行
+    logger.info(f"任务{task_id}正在{IS_SECONDARY_INSTANCE and 'secondary' or 'primary'}实例上执行")
     
     # 初始化计数器和结果列表
     completed = 0
@@ -372,10 +372,77 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
     
     # 使用Celery提交异步任务
     try:
-        # 注意：这里传递total作为额外参数，以便在任务中访问
-        run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+        # 检查是否为第二套实例
+        logger.info(f"当前实例类型: {'secondary' if IS_SECONDARY_INSTANCE else 'primary'}")
+        if IS_SECONDARY_INSTANCE:
+            # 在第二套实例上，直接提交任务
+            run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+            logger.info(f"在secondary实例上直接提交调优任务: {task_id}")
+        else:
+            # 在主实例上，需要将任务转发到第二套实例
+            max_retries = 3
+            retry_count = 0
+            forwarded = False
+            
+            while retry_count < max_retries and not forwarded:
+                retry_count += 1
+                try:
+                    # 获取secondary实例的URL（在Docker网络中可以直接使用服务名）
+                    secondary_url = os.environ.get("SECONDARY_BACKEND_URL", "http://backend_secondary:8000/api/tuning/forward")
+                    logger.info(f"尝试转发任务到secondary实例(重试{retry_count}/{max_retries}): {secondary_url}")
+                    
+                    # 构建转发请求的数据
+                    forward_data = {
+                        "task_id": task_id,
+                        "strategy": strategy,
+                        "code": code,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "params_grid": params_grid,
+                        "interval": interval,
+                        "total": total
+                    }
+                    
+                    # 设置超时和重试策略
+                    session = requests.Session()
+                    adapter = requests.adapters.HTTPAdapter(max_retries=3)
+                    session.mount('http://', adapter)
+                    
+                    # 发送请求到secondary实例
+                    response = session.post(secondary_url, json=forward_data, timeout=30)
+                    
+                    # 检查响应状态
+                    if response.status_code == 200:
+                        logger.info(f"成功将调优任务转发到secondary实例: {task_id}")
+                        forwarded = True
+                    else:
+                        logger.error(f"转发调优任务失败，状态码: {response.status_code}")
+                        logger.error(f"响应内容: {response.text}")
+                except requests.ConnectionError as conn_error:
+                    logger.error(f"连接secondary实例失败: {str(conn_error)}")
+                    logger.error(f"错误类型: {type(conn_error).__name__}, 任务ID: {task_id}")
+                    # 连接错误时等待一段时间后重试
+                    if retry_count < max_retries:
+                        time.sleep(1)
+                except requests.Timeout as timeout_error:
+                    logger.error(f"连接secondary实例超时: {str(timeout_error)}")
+                    logger.error(f"错误类型: {type(timeout_error).__name__}, 任务ID: {task_id}")
+                    # 超时错误时等待一段时间后重试
+                    if retry_count < max_retries:
+                        time.sleep(1)
+                except Exception as forward_error:
+                    logger.error(f"转发调优任务到secondary实例失败: {str(forward_error)}")
+                    logger.error(f"错误类型: {type(forward_error).__name__}, 任务ID: {task_id}")
+                    # 其他错误不再重试
+                    break
+            
+            # 如果所有重试都失败，尝试在本地执行任务
+            if not forwarded:
+                logger.warning(f"所有转发尝试都失败，在primary实例上执行调优任务: {task_id}")
+                run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
     except Exception as e:
         # 如果提交失败，更新任务状态为错误
+        logger.error(f"提交调优任务失败: {str(e)}")
         try:
             execute("UPDATE tuning_tasks SET status = :status, error = :error WHERE task_id = :task_id", task_id=task_id, status='error', error=str(e))
         except Exception as db_error:

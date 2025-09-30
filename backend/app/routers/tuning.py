@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, Body, HTTPException
-from ..services.tuning_service import start_tuning_async, get_tuning_status, get_all_tuning_tasks, delete_tuning_task
+from ..services.tuning_service import start_tuning_async, get_tuning_status, get_all_tuning_tasks, delete_tuning_task, run_parameter_tuning
 
 # 创建用于 /api/tuning 前缀的路由器（与前端保持一致）
 router = APIRouter(prefix="/api/tuning", tags=["tuning"])
@@ -30,6 +30,36 @@ async def create_tuning_handler(payload: dict = Body(...)):
     
     task_id = start_tuning_async(strategy, code, params, interval, start, end)
     return {"task_id": task_id}
+
+# 添加任务转发端点，用于primary实例将任务转发到secondary实例
+@router.post("/forward")
+async def forward_tuning_task(payload: dict = Body(...)):
+    """
+    接收来自primary实例的任务转发请求
+    此端点只应由secondary实例处理
+    """
+    # 提取任务参数
+    task_id = payload.get("task_id")
+    strategy = payload.get("strategy")
+    code = payload.get("code")
+    start_time = payload.get("start_time")
+    end_time = payload.get("end_time")
+    params_grid = payload.get("params_grid", {})
+    interval = payload.get("interval", "1m")
+    total = payload.get("total", 1)
+    
+    # 验证必需参数
+    if not all([task_id, strategy, code, start_time, end_time]):
+        raise HTTPException(status_code=400, detail="缺少必需的任务参数")
+    
+    # 直接提交任务到Celery队列
+    try:
+        run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+        logger.info(f"成功接收并提交转发的调优任务: {task_id}")
+        return {"success": True, "task_id": task_id}
+    except Exception as e:
+        logger.error(f"提交转发的调优任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
 
 async def tuning_status_handler(task_id: str):
     st = get_tuning_status(task_id)
