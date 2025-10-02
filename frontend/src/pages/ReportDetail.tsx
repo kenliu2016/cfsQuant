@@ -107,11 +107,6 @@ const ReportDetail: React.FC = () => {
       message.error('查询K线或网格数据失败');
     }
   };
-  
-  // 定义ECharts事件处理器
-  const onEvents = {
-    'click': handleChartClick
-  };
 
   // 处理Tab切换
   const handleTabChange = (activeKey: string) => {
@@ -851,7 +846,6 @@ const ReportDetail: React.FC = () => {
                       <ReactECharts 
                         option={getKlineOption} 
                         style={{ height: '100%', width: '100%' }}
-                        onEvents={onEvents}
                       />
                     ) : (
                       <div style={{ textAlign: 'center', color: '#8c8c8c', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
