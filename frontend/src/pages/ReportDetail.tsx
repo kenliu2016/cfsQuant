@@ -851,6 +851,7 @@ const ReportDetail: React.FC = () => {
                       <ReactECharts 
                         option={getKlineOption} 
                         style={{ height: '100%', width: '100%' }}
+                        onEvents={onEvents}
                       />
                     ) : (
                       <div style={{ textAlign: 'center', color: '#8c8c8c', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
