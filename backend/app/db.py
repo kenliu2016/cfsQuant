@@ -12,6 +12,9 @@ from typing import Dict, Any, Optional, AsyncGenerator
 import yaml
 from .common import LoggerFactory
 
+# 初始化日志记录器
+logger = LoggerFactory.get_logger("app.db")
+
 # 全局变量，用于缓存数据库引擎
 _engine = None
 _async_engine = None
@@ -262,16 +265,31 @@ def fetch_df(query: str, config_path: Optional[str] = None, **kwargs):
         import pandas as pd
         from sqlalchemy import text
     except ImportError:
+        logger.error("未安装必要的包，请先执行: pip install pandas sqlalchemy")
         raise ImportError("未安装必要的包，请先执行: pip install pandas sqlalchemy")
     
-    engine = get_engine(config_path)
-    with engine.connect() as conn:
-        if kwargs:
-            # 使用SQLAlchemy的text对象来支持命名参数
-            df = pd.read_sql(text(query), conn, params=kwargs)
-        else:
-            df = pd.read_sql(query, conn)
-    return df
+    try:
+        engine = get_engine(config_path)
+        with engine.connect() as conn:
+            if kwargs:
+                # 使用SQLAlchemy的text对象来支持命名参数
+                logger.debug(f"执行带参数的SQL查询: {query}")
+                logger.debug(f"SQL参数: {kwargs}")
+                df = pd.read_sql(text(query), conn, params=kwargs)
+            else:
+                logger.debug(f"执行SQL查询: {query}")
+                df = pd.read_sql(query, conn)
+        logger.debug(f"SQL查询成功，返回 {len(df)} 行数据")
+        return df
+    except Exception as e:
+        logger.error(f"执行SQL查询失败: {query}")
+        logger.error(f"SQL参数: {kwargs}")
+        logger.error(f"错误详情: {str(e)}")
+        # 记录完整的异常堆栈信息
+        import traceback
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        # 重新抛出异常，让调用者知道发生了错误
+        raise e
 
 
 async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
@@ -506,25 +524,49 @@ def _create_table_sql_from_df(df, table_name):
     return f"CREATE TABLE {table_name} ({', '.join(columns)})"
 
 
-def execute(query: str, config_path: Optional[str] = None, **kwargs):
-    """执行SQL语句（适合非查询语句，如INSERT、UPDATE、DELETE等）"""
+def execute(query: str, config_path: Optional[str] = None, **kwargs) -> int:
+    """执行SQL语句（适合非查询语句，如INSERT、UPDATE、DELETE等）
+    
+    Returns:
+        int: 受影响的行数，确保返回值始终是一个整数
+    """
     try:
         from sqlalchemy import text
     except ImportError:
+        logger.error("未安装必要的包，请先执行: pip install sqlalchemy")
         raise ImportError("未安装必要的包，请先执行: pip install sqlalchemy")
         
-    engine = get_engine(config_path)
-    with engine.connect() as conn:
-        with conn.begin() as transaction:
-            try:
-                if kwargs:
-                    conn.execute(text(query), kwargs)
-                else:
-                    conn.execute(query)
-                transaction.commit()
-            except Exception as e:
-                transaction.rollback()
-                raise e
+    try:
+        engine = get_engine(config_path)
+        logger.debug(f"开始执行SQL语句: {query}")
+        logger.debug(f"SQL参数: {kwargs}")
+        
+        with engine.connect() as conn:
+            with conn.begin() as transaction:
+                try:
+                    if kwargs:
+                        result = conn.execute(text(query), kwargs)
+                    else:
+                        result = conn.execute(query)
+                    transaction.commit()
+                    # 返回受影响的行数，确保返回值始终是一个整数
+                    affected_rows = result.rowcount if result.rowcount is not None else 0
+                    logger.debug(f"SQL语句执行成功，受影响行数: {affected_rows}")
+                    return affected_rows
+                except Exception as e:
+                    transaction.rollback()
+                    logger.error(f"事务回滚，SQL语句执行失败: {query}")
+                    logger.error(f"SQL参数: {kwargs}")
+                    logger.error(f"错误详情: {str(e)}")
+                    # 记录完整的异常堆栈信息
+                    import traceback
+                    logger.error(f"异常堆栈: {traceback.format_exc()}")
+                    raise e
+    except Exception as e:
+        # 捕获数据库连接等外部异常
+        logger.error(f"数据库操作失败，无法执行SQL语句: {query}")
+        logger.error(f"错误详情: {str(e)}")
+        raise e
 
 
 async def execute_async(query: str, config_path: Optional[str] = None, **kwargs):

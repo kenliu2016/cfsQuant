@@ -11,7 +11,7 @@ DB_CONFIG = {
     "port": 5432,
     "dbname": "quant",
     "user": "cfs",
-    "password": "Aa520@cfs",
+    "password": "Cc563479,.",
 }
 
 # ================== 工具 ==================
@@ -135,7 +135,7 @@ def fetch_ohlcv_paginated(exchange, exchange_name, symbol, timeframe, since, unt
 # ================== 主入口 ==================
 if __name__ == "__main__":
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=365*3)  # 最近三年
+    start_time = end_time - timedelta(days=10)  # 最近三年
 
     with psycopg2.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:

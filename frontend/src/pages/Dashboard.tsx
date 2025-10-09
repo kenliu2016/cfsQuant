@@ -256,8 +256,8 @@ const Dashboard: React.FC = () => {
           code: symbol,
           interval: timeframe,
           // 使用format方法生成不带时区信息的本地时间字符串，解决时区偏差问题
-          start: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
-          end: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
+          start_time: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
+          end_time: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
         };
       } else {
         // 如果没有选择时间区间，则使用缓存的参数或默认的7天时间范围
@@ -265,7 +265,7 @@ const Dashboard: React.FC = () => {
           code: symbol,
           interval: timeframe,
           // 使用Date对象创建本地时间字符串
-          start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleString('zh-CN', {
+          start_time: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleString('zh-CN', {
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -274,7 +274,7 @@ const Dashboard: React.FC = () => {
             second: '2-digit',
             hour12: false
           }).replace(/\//g, '-'),
-          end: new Date().toLocaleString('zh-CN', {
+          end_time: new Date().toLocaleString('zh-CN', {
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -710,7 +710,7 @@ const Dashboard: React.FC = () => {
       if (startTime && endTime) {
         // 有时间范围时，按时间范围查询，不使用limit参数
         // 使用本地时间格式，解决时区偏差问题
-        params.start = startTime.toLocaleString('zh-CN', {
+        params.start_time = startTime.toLocaleString('zh-CN', {
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
@@ -719,7 +719,7 @@ const Dashboard: React.FC = () => {
           second: '2-digit',
           hour12: false
         }).replace(/\//g, '-');
-        params.end = endTime.toLocaleString('zh-CN', {
+        params.end_time = endTime.toLocaleString('zh-CN', {
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',

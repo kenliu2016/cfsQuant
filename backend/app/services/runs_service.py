@@ -288,7 +288,7 @@ def run_detail(run_id: str):
             except (ValueError, TypeError):
                 run_info[key] = 0.0
     
-    # 处理paras字段，确保它是一个字典
+    # 处理paras字段，确保它是一个字典并清理时间参数
     if 'paras' in run_info:
         try:
             if isinstance(run_info['paras'], str):
@@ -297,6 +297,12 @@ def run_detail(run_id: str):
             elif not isinstance(run_info['paras'], dict):
                 # 如果不是字典且不是字符串，转换为空字典
                 run_info['paras'] = {}
+                
+            # 清理时间参数，只保留start_time和end_time
+            if 'start' in run_info['paras']:
+                del run_info['paras']['start']
+            if 'end' in run_info['paras']:
+                del run_info['paras']['end']
         except (json.JSONDecodeError, TypeError):
             # 如果解析失败，设置为空字典
             run_info['paras'] = {}
@@ -333,38 +339,64 @@ def delete_run(run_id: str) -> bool:
     try:
         logger.info(f"开始删除回测记录，run_id: {run_id}")
         
+        # 首先检查记录是否存在
+        check_exists = fetch_df("SELECT COUNT(*) as count FROM runs WHERE run_id = :rid", rid=run_id)
+        if check_exists.iloc[0]['count'] == 0:
+            logger.warning(f"回测记录不存在，run_id: {run_id}")
+            return False
+        
         # 开启事务执行删除操作
         # 首先删除关联的子表数据
         # 删除trades表中的关联数据
-        execute("DELETE FROM trades WHERE run_id = :rid", rid=run_id)
-        logger.debug(f"已删除trades表中关联数据，run_id: {run_id}")
+        logger.debug(f"开始删除trades表中关联数据，run_id: {run_id}")
+        trade_rows_affected = execute("DELETE FROM trades WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除trades表中关联数据，run_id: {run_id}, 受影响行数: {trade_rows_affected}")
         
         # 删除metrics表中的关联数据
-        execute("DELETE FROM metrics WHERE run_id = :rid", rid=run_id)
-        logger.debug(f"已删除metrics表中关联数据，run_id: {run_id}")
+        logger.debug(f"开始删除metrics表中关联数据，run_id: {run_id}")
+        metrics_rows_affected = execute("DELETE FROM metrics WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除metrics表中关联数据，run_id: {run_id}, 受影响行数: {metrics_rows_affected}")
         
         # 删除equity_curve表中的关联数据
-        execute("DELETE FROM equity_curve WHERE run_id = :rid", rid=run_id)
-        logger.debug(f"已删除equity_curve表中关联数据，run_id: {run_id}")
+        logger.debug(f"开始删除equity_curve表中关联数据，run_id: {run_id}")
+        equity_rows_affected = execute("DELETE FROM equity_curve WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除equity_curve表中关联数据，run_id: {run_id}, 受影响行数: {equity_rows_affected}")
         
         # 删除grid_levels表中的关联数据
-        execute("DELETE FROM grid_levels WHERE run_id = :rid", rid=run_id)
-        logger.debug(f"已删除grid_levels表中关联数据，run_id: {run_id}")
+        logger.debug(f"开始删除grid_levels表中关联数据，run_id: {run_id}")
+        grid_rows_affected = execute("DELETE FROM grid_levels WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除grid_levels表中关联数据，run_id: {run_id}, 受影响行数: {grid_rows_affected}")
         
-        # 最后删除positions表中的关联数据
-        execute("DELETE FROM positions WHERE run_id = :rid", rid=run_id)
-        logger.debug(f"已删除positions表中关联数据，run_id: {run_id}")
+        # 删除positions表中的关联数据
+        logger.debug(f"开始删除positions表中关联数据，run_id: {run_id}")
+        positions_rows_affected = execute("DELETE FROM positions WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除positions表中关联数据，run_id: {run_id}, 受影响行数: {positions_rows_affected}")
         
         # 最后删除runs表中的主记录
-        result = execute("DELETE FROM runs WHERE run_id = :rid", rid=run_id)
-        logger.debug(f"已删除runs表中主记录，run_id: {run_id}")
+        logger.debug(f"开始删除runs表中主记录，run_id: {run_id}")
+        runs_rows_affected = execute("DELETE FROM runs WHERE run_id = :rid", rid=run_id)
+        logger.debug(f"已删除runs表中主记录，run_id: {run_id}, 受影响行数: {runs_rows_affected}")
+        
+        # 检查是否有记录被删除
+        if runs_rows_affected == 0:
+            logger.warning(f"未找到要删除的回测记录或删除操作未生效，run_id: {run_id}")
+            return False
+        
+        # 额外检查：通过查询确认记录是否真的被删除
+        check_deleted = fetch_df("SELECT COUNT(*) as count FROM runs WHERE run_id = :rid", rid=run_id)
+        if check_deleted.iloc[0]['count'] > 0:
+            logger.warning(f"删除操作未实际生效，记录仍然存在，run_id: {run_id}")
+            return False
         
         logger.info(f"回测记录删除成功，run_id: {run_id}")
         return True
         
     except Exception as e:
         logger.error(f"删除回测记录失败，run_id: {run_id}, 错误: {str(e)}")
-        raise
+        # 记录完整的异常堆栈信息
+        import traceback
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        return False
 
 def batch_delete_runs(run_ids: list) -> dict:
     """
@@ -384,10 +416,19 @@ def batch_delete_runs(run_ids: list) -> dict:
     
     for run_id in run_ids:
         try:
-            delete_run(run_id)
-            success_count += 1
+            # 执行删除操作并获取结果
+            result = delete_run(run_id)
+            if result:
+                success_count += 1
+                logger.debug(f"批量删除回测记录成功，run_id: {run_id}")
+            else:
+                # 记录删除失败的情况
+                logger.warning(f"批量删除回测记录失败，run_id: {run_id}")
+                failed_count += 1
+                failed_ids.append(run_id)
         except Exception as e:
-            logger.error(f"批量删除回测记录失败，run_id: {run_id}, 错误: {str(e)}")
+            # 记录删除异常的情况
+            logger.error(f"批量删除回测记录异常，run_id: {run_id}, 错误: {str(e)}")
             failed_count += 1
             failed_ids.append(run_id)
     

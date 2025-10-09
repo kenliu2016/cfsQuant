@@ -100,8 +100,10 @@ async def delete_run_endpoint(run_id: str):
         logger.info(f"接收到删除回测请求，run_id: {run_id}")
         success = delete_run(run_id)
         if success:
+            logger.info(f"回测记录 {run_id} 删除成功")
             return {"status": "success", "message": f"回测记录 {run_id} 已成功删除"}
         else:
+            logger.warning(f"回测记录 {run_id} 删除失败")
             raise HTTPException(status_code=500, detail=f"删除回测记录 {run_id} 失败")
     except Exception as e:
         logger.error(f"删除回测记录时发生错误: {str(e)}")
@@ -121,9 +123,27 @@ async def batch_delete_runs_endpoint(request: BatchDeleteRequest):
     try:
         logger.info(f"接收到批量删除回测请求，ids: {request.ids}")
         result = batch_delete_runs(request.ids)
+        
+        # 根据删除结果返回不同的状态
+        if result['failed'] > 0:
+            if result['success'] == 0:
+                # 全部删除失败
+                logger.warning(f"批量删除全部失败，失败数量: {result['failed']}")
+                raise HTTPException(status_code=500, detail=f"批量删除失败: 所有 {result['failed']} 条记录均无法删除")
+            else:
+                # 部分删除失败
+                logger.warning(f"批量删除部分失败，成功: {result['success']} 条，失败: {result['failed']} 条")
+                return {
+                    "status": "partial_success",
+                    "message": f"批量删除完成，但部分记录删除失败，成功: {result['success']} 条，失败: {result['failed']} 条",
+                    "result": result
+                }
+        
+        # 全部删除成功
+        logger.info(f"批量删除全部成功，成功数量: {result['success']}")
         return {
             "status": "success",
-            "message": f"批量删除完成，成功: {result['success']} 条，失败: {result['failed']} 条",
+            "message": f"批量删除完成，成功: {result['success']} 条",
             "result": result
         }
     except Exception as e:

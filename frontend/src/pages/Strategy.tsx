@@ -269,11 +269,10 @@ export default function StrategyPage(){
       // 将code, start, end, interval封装成Dict类型的params
       const params = {
         code: v.code,
-        start: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
-        end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
+        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
         interval: v.interval // 使用用户选择的时间间隔
       }
-      console.log('params1111111111:', params)
       // 最终payload只提交封装后的params和strategy
       const payload = { params, strategy: current!.name }
       const r = await client.post('/api/backtest', payload)

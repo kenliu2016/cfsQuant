@@ -111,14 +111,14 @@ def main():
     conn = psycopg2.connect(
         dbname="quant",
         user="cfs",
-        password="Aa520@cfs",
+        password="Cc563479,.",
         host="localhost",
         port=5432
     )
 
     # 支持的交易所
     exchanges = {
-      #  "binance": ccxt.binance({"enableRateLimit": True}),
+        "binance": ccxt.binance({"enableRateLimit": True}),
       #  "okx": ccxt.okx({"enableRateLimit": True}),
       #  "bybit": ccxt.bybit({"enableRateLimit": True}),
         "coinbase": ccxt.coinbase({"enableRateLimit": True}),
@@ -131,7 +131,7 @@ def main():
 
     # 示例：每个交易所选 5 个 symbol（实际从数据库取 top50）
     sample_symbols = {
-      #  "binance": ["BTC/USDT", "ETH/USDT"],
+        "binance": ["BTC/USDT", "ETH/USDT"],
       #  "okx": ["BTC/USDT", "ETH/USDT"],
       #  "bybit": ["BTC/USDT", "ETH/USDT"],
         "coinbase": ["BTC/USDT", "ETH/USDT"],

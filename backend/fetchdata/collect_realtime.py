@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 DB_CONFIG = {
     "dbname": "quant",
     "user": "cfs",
-    "password": "Aa520@cfs",
+    "password": "Cc563479,.",
     "host": "127.0.0.1",
     "port": 5432
 }
