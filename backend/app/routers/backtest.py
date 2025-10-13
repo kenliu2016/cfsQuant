@@ -2,7 +2,7 @@ from fastapi import APIRouter
 import pandas as pd
 from ..services.backtest_service import run_backtest, get_backtest_result
 from ..services.market_service import get_candles
-from ..schemas import BacktestRequest, BacktestResp
+from common.schemas import BacktestRequest, BacktestResp
 router = APIRouter(prefix="/api", tags=["backtest"])
 @router.post("/backtest", response_model=BacktestResp)
 async def backtest(req: BacktestRequest):

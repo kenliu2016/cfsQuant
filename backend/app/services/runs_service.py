@@ -1,7 +1,7 @@
 
 import pandas as pd
 import numpy as np
-from ...common import LoggerFactory
+from common import LoggerFactory
 import datetime
 import json
 
@@ -10,7 +10,7 @@ logger = LoggerFactory.get_logger('runs_service')
 
 # 避免Pandas future downcasting警告
 pd.set_option('future.no_silent_downcasting', True)
-from ..db import fetch_df, execute
+from common.db import fetch_df, execute
 
 def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None) -> dict:
     """
@@ -175,7 +175,7 @@ def run_detail(run_id: str):
     
     # 获取基本回测信息，包含新增的paras字段和所有指标
     df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit
-                         FROM runs WHERE run_id=:rid""", rid=run_id)
+                         FROM backtest_runs WHERE run_id=:rid""", rid=run_id)
     
     # 日志记录查询结果
     if df_run.empty:
@@ -340,7 +340,7 @@ def delete_run(run_id: str) -> bool:
         logger.info(f"开始删除回测记录，run_id: {run_id}")
         
         # 首先检查记录是否存在
-        check_exists = fetch_df("SELECT COUNT(*) as count FROM runs WHERE run_id = :rid", rid=run_id)
+        check_exists = fetch_df("SELECT COUNT(*) as count FROM backtest_runs WHERE run_id = :rid", rid=run_id)
         if check_exists.iloc[0]['count'] == 0:
             logger.warning(f"回测记录不存在，run_id: {run_id}")
             return False
@@ -372,9 +372,9 @@ def delete_run(run_id: str) -> bool:
         positions_rows_affected = execute("DELETE FROM positions WHERE run_id = :rid", rid=run_id)
         logger.debug(f"已删除positions表中关联数据，run_id: {run_id}, 受影响行数: {positions_rows_affected}")
         
-        # 最后删除runs表中的主记录
+        # 删除runs表中的主记录
         logger.debug(f"开始删除runs表中主记录，run_id: {run_id}")
-        runs_rows_affected = execute("DELETE FROM runs WHERE run_id = :rid", rid=run_id)
+        runs_rows_affected = execute("DELETE FROM backtest_runs WHERE run_id = :rid", rid=run_id)
         logger.debug(f"已删除runs表中主记录，run_id: {run_id}, 受影响行数: {runs_rows_affected}")
         
         # 检查是否有记录被删除
@@ -382,8 +382,8 @@ def delete_run(run_id: str) -> bool:
             logger.warning(f"未找到要删除的回测记录或删除操作未生效，run_id: {run_id}")
             return False
         
-        # 额外检查：通过查询确认记录是否真的被删除
-        check_deleted = fetch_df("SELECT COUNT(*) as count FROM runs WHERE run_id = :rid", rid=run_id)
+        # 额外检查：通过查询确认记录是否真的被删除# 验证删除结果
+        check_deleted = fetch_df("SELECT COUNT(*) as count FROM backtest_runs WHERE run_id = :rid", rid=run_id)
         if check_deleted.iloc[0]['count'] > 0:
             logger.warning(f"删除操作未实际生效，记录仍然存在，run_id: {run_id}")
             return False
@@ -517,8 +517,8 @@ def get_run_klines(run_id: str, limit: int = 30000):
     """获取回测的K线数据，当数据量超过30000条时不执行查询"""
     klines = []
     try:
-        # 先获取回测基本信息
-        df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM runs WHERE run_id=:rid""", rid=run_id)
+        # 获取回测运行的基本信息
+        df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM backtest_runs WHERE run_id=:rid""", rid=run_id)
         if not df_run.empty:
             run_data = df_run.iloc[0]
             code = run_data.get('code', '')

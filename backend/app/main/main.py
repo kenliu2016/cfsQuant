@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .errors import global_exception_handler, validation_exception_handler
 from .middleware import logging_middleware
-from .routers import strategies, market, backtest, health, export, runs, tuning, trades
+from ..routers import strategies, market, backtest, health, export, runs, tuning, trades
 from fastapi.exceptions import RequestValidationError
 
 app = FastAPI(title=settings.APP_TITLE, version=settings.APP_VERSION)

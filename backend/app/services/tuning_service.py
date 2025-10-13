@@ -23,8 +23,8 @@ import sqlalchemy
 from .backtest_service import run_backtest
 from .market_service import MarketDataService
 from .runs_service import delete_run
-from ..db import fetch_df, to_sql, execute
-from ...config.celery_config import celery_app, IS_SECONDARY_INSTANCE
+from common.db import fetch_df, to_sql, execute
+from config.celery_config import celery_app, IS_SECONDARY_INSTANCE
 import requests
 import os
 
@@ -90,7 +90,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                     logger.error(f"更新任务状态失败（方法3）: {str(e3)}")
                     try:
                         # 如果所有方法都失败，使用原始的execute_async函数
-                        from ..db import execute_async
+                        from common.db import execute_async
                         import asyncio
                         asyncio.run(execute_async("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time))
                     except Exception as e4:
@@ -166,10 +166,11 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
             try:
                 p = {k:v for k,v in zip(keys, vals)} if keys else {}
                 # 构建完整的参数对象，包含interval
+                # 使用正确的参数名：start_time和end_time，而不是start和end
                 full_params = {
                     'code': code,
-                    'start': start_time,
-                    'end': end_time,
+                    'start_time': start_time,
+                    'end_time': end_time,
                     'interval': interval,
                     **p
                 }
@@ -199,7 +200,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                 try:
                     # 首先检查run_id是否存在于runs表中
                     # 这个检查是为了避免外键约束错误
-                    run_exists_query = "SELECT 1 FROM runs WHERE run_id = :run_id LIMIT 1"
+                    run_exists_query = "SELECT 1 FROM backtest_runs WHERE run_id = :run_id LIMIT 1"
                     run_exists_result = fetch_df(run_exists_query, **{"run_id": run_id})
                     
                     if not run_exists_result.empty:
@@ -557,7 +558,7 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                                r.trade_count, r.win_rate, r.final_return, 
                                r.sharpe, r.max_drawdown 
                         FROM tuning_results t 
-                        LEFT JOIN runs r ON t.run_id = r.run_id 
+                        LEFT JOIN backtest_runs r ON t.run_id = r.run_id 
                         WHERE t.task_id = :task_id 
                         ORDER BY t.created_at DESC"""
         

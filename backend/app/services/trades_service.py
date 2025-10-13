@@ -1,5 +1,5 @@
 import pandas as pd
-from ..db import fetch_df
+from common.db import fetch_df
 
 def get_trades_by_run_id(run_id: str) -> pd.DataFrame:
     """

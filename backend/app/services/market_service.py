@@ -1,5 +1,5 @@
-from ...common import LoggerFactory
-from ..db import fetch_df
+from common import LoggerFactory
+from common.db import fetch_df
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
@@ -746,7 +746,7 @@ def update_market_data_and_refresh_cache(data, table_name, code=None):
         table_name: 数据库表名
         code: 可选，股票代码，如提供则只刷新该代码的缓存
     """
-    from ..db import to_sql
+    from common.db import to_sql
     import sys
     import os
     

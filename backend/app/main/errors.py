@@ -1,7 +1,7 @@
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from ...common import LoggerFactory
+from common import LoggerFactory
 
 logger = LoggerFactory.get_logger("app.errors")
 

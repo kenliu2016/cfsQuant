@@ -23,9 +23,9 @@ from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
-# 获取项目根目录（当前文件在backend/core/strategies目录下）
+# 获取项目根目录（当前文件在backend/strategies目录下）
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+project_root = os.path.dirname(os.path.dirname(current_dir))
 # 确保项目根目录在Python路径中
 if project_root not in sys.path:
     sys.path.append(project_root)
@@ -250,7 +250,7 @@ class GridSignalGenerator:
             # 生成信号（只在仓位变化时）
             if abs(target_position - current_position) > 1e-6:
                 active_grids_count = sum(1 for state in self.grid_states.values() if state['is_active'])
-                grid_strategy_logger.debug(
+                logger.debug(
                     f"生成信号: 时间={dt}, 当前价格={close:.4f}, "
                     f"目标仓位={target_position:.4f}, 活跃网格数={active_grids_count}"
                 )
@@ -286,7 +286,7 @@ class GridSignalGenerator:
         active_grids = sum(1 for state in self.grid_states.values() if state['is_active'])
         total_weight = sum(state['target_weight'] for state in self.grid_states.values() if state['is_active'])
         target_position = min(total_weight, 1.0)  # 确保不超过100%仓位
-        grid_strategy_logger.debug(
+        logger.debug(
             f"计算目标仓位: 活跃网格数={active_grids}, 总权重={total_weight:.4f}, "
             f"目标仓位={target_position:.4f}"
         )
@@ -344,11 +344,11 @@ def run(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
     网格策略主函数 - 纯信号生成
     """
     # 记录策略运行开始
-    grid_strategy_logger.info(f"开始运行网格策略，参数: {params}")
+    logger.info(f"开始运行网格策略，参数: {params}")
     
     # 数据验证
     if df.empty:
-        grid_strategy_logger.warning("输入数据为空，无法生成信号")
+        logger.warning("输入数据为空，无法生成信号")
         return {
             'signals': [],
             'auxiliary_data': {},
@@ -392,12 +392,12 @@ def run(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
     
     # 计算网格参数
     try:
-        grid_strategy_logger.info(f"计算网格参数: H_price={H_price:.4f}, L_price={L_price:.4f}, N={N}, R={R:.2f}")
+        logger.info(f"计算网格参数: H_price={H_price:.4f}, L_price={L_price:.4f}, N={N}, R={R:.2f}")
         grid_params, param_alerts = GridParameterCalculator.calculate_grid_parameters(
             H_price, L_price, N, R, strategy_params.get('F', 10000.0), per_grid_amount
         )
         alerts.extend(param_alerts)
-        grid_strategy_logger.info(f"网格参数计算完成: 网格间距={grid_params.D:.4f}, 每格金额={grid_params.A:.2f}")
+        logger.info(f"网格参数计算完成: 网格间距={grid_params.D:.4f}, 每格金额={grid_params.A:.2f}")
     except Exception as e:
         alerts.append(f"网格参数计算失败: {str(e)}")
         return {
@@ -409,7 +409,7 @@ def run(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
     
     # 生成信号
     try:
-        grid_strategy_logger.info(f"开始生成信号，数据点数量: {len(df)}")
+        logger.info(f"开始生成信号，数据点数量: {len(df)}")
         signal_generator = GridSignalGenerator(grid_params)
         signals = signal_generator.generate_signals(df)
     except Exception as e:
@@ -454,10 +454,10 @@ def run(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
             'metadata': signal.metadata
         })
     
-    grid_strategy_logger.info(f"策略运行完成，共生成 {len(signals_dict)} 个信号")
-    grid_strategy_logger.info(f"网格参数: {grid_params_dict}")
-    grid_strategy_logger.info(f"网格级别: {grid_levels}")
-    grid_strategy_logger.info(f"警告信息: {alerts}")
+    logger.info(f"策略运行完成，共生成 {len(signals_dict)} 个信号")
+    logger.info(f"网格参数: {grid_params_dict}")
+    logger.info(f"网格级别: {grid_levels}")
+    logger.info(f"警告信息: {alerts}")
 
     return {
         'signals': signals_dict,
@@ -498,13 +498,13 @@ def analyze_strategy(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]
     }
     
     result['strategy_metrics'].update(analysis_metrics)
-    grid_strategy_logger.info(f"策略指标: {result['strategy_metrics']}")
+    logger.info(f"策略指标: {result['strategy_metrics']}")
 
     result['analysis_data'] = {
         'position_timeline': [(s['datetime'], s['target_position']) for s in signals],
         'position_changes': position_changes
     }
-    grid_strategy_logger.info(f"分析数据: {result.get('analysis_data', {})}")
+    logger.info(f"分析数据: {result.get('analysis_data', {})}")
     
     return result
 
@@ -526,6 +526,6 @@ def quick_backtest_preview(df: pd.DataFrame, params: Dict[str, Any]) -> pd.DataF
     df_result = df.copy()
     df_result['datetime'] = pd.to_datetime(df_result['datetime'])
     df_result['target_position'] = df_result['datetime'].map(signals_dict).fillna(method='ffill').fillna(0.0)
-    grid_strategy_logger.info(f"快速回测预览完成，共生成 {len(result['signals'])} 个信号")
+    logger.info(f"快速回测预览完成，共生成 {len(result['signals'])} 个信号")
 
     return df_result

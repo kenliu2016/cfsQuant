@@ -16,14 +16,14 @@ from typing import Dict, Any, List, Optional, Tuple, Protocol
 from dataclasses import dataclass, field
 from pathlib import Path
 import importlib.util
-from ..db import fetch_df, to_sql, get_engine
-from ...common import LoggerFactory
+from common.db import fetch_df, to_sql, get_engine
+from common import LoggerFactory
 
 # 配置回测服务日志记录器
 backtest_service_logger = LoggerFactory.get_logger("backtest_service")
 
 # 常量定义
-STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
+STRATEGY_DIR = Path(__file__).resolve().parents[2] / "strategies"
 
 # 默认回测参数
 DEFAULT_BACKTEST_PARAMS = {
@@ -443,12 +443,22 @@ class DatabaseManager:
     
     def _save_run_record(self, result: BacktestResult, metrics: Dict[str, float]):
         """保存运行记录"""
+        # 确保时间戳字段不为空字符串，避免PostgreSQL timestamp字段格式错误
+        start_time_value = result.start_time if result.start_time and result.start_time.strip() else None
+        end_time_value = result.end_time if result.end_time and result.end_time.strip() else None
+        
+        # 如果时间戳为空，使用当前时间作为默认值
+        if not start_time_value:
+            start_time_value = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if not end_time_value:
+            end_time_value = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
         run_data = pd.DataFrame([{
             'run_id': result.run_id,
             'strategy': result.strategy,
             'code': result.code,
-            'start_time': result.start_time,
-            'end_time': result.end_time,
+            'start_time': start_time_value,
+            'end_time': end_time_value,
             'interval': result.params.get('interval', '1m'),
             'initial_capital': result.params.get('E_initial_capital', 100000),
             'final_capital': metrics.get('final_capital'),
@@ -875,11 +885,22 @@ class BacktestEngine:
             del clean_params['end']
 
         # 创建BacktestResult对象
+        # 确保start_time和end_time有合理的默认值，避免数据库timestamp字段插入空字符串
+        start_time_value = clean_params.get("start_time", "")
+        end_time_value = clean_params.get("end_time", "")
+        
+        # 如果时间戳为空，使用数据的时间范围
+        if not start_time_value and len(data["datetime"]) > 0:
+            start_time_value = data["datetime"][0].strftime('%Y-%m-%d %H:%M:%S')
+        if not end_time_value and len(data["datetime"]) > 0:
+            end_time_value = data["datetime"][-1].strftime('%Y-%m-%d %H:%M:%S')
+        
+        
         result = BacktestResult(
             run_id=backtest_id,
             code=code,
-            start_time=clean_params.get("start_time", ""),
-            end_time=clean_params.get("end_time", ""),
+            start_time=start_time_value,
+            end_time=end_time_value,
             strategy=strategy_name,
             params=clean_params,
             nav=nav_series,

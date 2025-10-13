@@ -11,7 +11,7 @@ logger = LoggerFactory.get_logger("routers.market")
 
 from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service, get_latest_candles
 from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
-from ..db import fetch_df, execute
+from common.db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
 

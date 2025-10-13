@@ -11,13 +11,13 @@ from celery.schedules import crontab
 import yaml
 
 # 加载数据库配置
-def load_db_config(config_path: str = "config/db_config.yaml") -> dict:
+def load_db_config(config_path: str = "db_config.yaml") -> dict:
     """加载数据库配置信息"""
     # 确保配置文件路径是绝对路径
     if not os.path.isabs(config_path):
-        # 获取项目根目录
-        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        # 构建相对于项目根目录的绝对路径
+        # 获取当前文件所在目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 构建相对于当前目录的绝对路径
         config_path = os.path.join(current_dir, config_path)
     
     with open(config_path, "r", encoding="utf-8") as f:

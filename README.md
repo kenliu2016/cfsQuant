@@ -13,7 +13,7 @@ brew services restart postgresql
 
 启动后端：
 cd backend
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main.main:app --reload --port 8000
 
 
 启动前端（若使用我之前更新的前端）：
@@ -22,6 +22,6 @@ npm install
 npm run dev
 
 启动队列
-celery -A app.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
+celery -A config.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
 
 

@@ -1,4 +1,5 @@
 import os
+import sys
 import redis
 import json
 import socket
@@ -6,7 +7,6 @@ from functools import wraps
 from typing import Any, Callable, Optional, Dict, Tuple, List
 import hashlib
 import time
-import os
 import yaml
 import concurrent.futures
 import numpy as np
@@ -1088,7 +1088,7 @@ async def async_clear_market_data_cache(code: str = None) -> None:
 
 async def async_update_market_data_and_refresh_cache(data, table_name, code=None):
     """异步更新市场数据并刷新相关缓存"""
-    from ..db import to_sql_async
+    from common.db import to_sql_async
     
     try:
         # 异步写入数据到数据库
