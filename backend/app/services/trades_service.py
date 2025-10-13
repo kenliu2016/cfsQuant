@@ -1,5 +1,5 @@
 import pandas as pd
-from ..db import fetch_df
+from common.db import fetch_df
 
 def get_trades_by_run_id(run_id: str) -> pd.DataFrame:
     """
@@ -13,7 +13,7 @@ def get_trades_by_run_id(run_id: str) -> pd.DataFrame:
     """
     try:
         query = """SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, realized_pnl, nav, close_price, current_cash
-                    FROM trades
+                    FROM backtest_trades
                     WHERE run_id = :run_id
                     ORDER BY datetime"""
         df = fetch_df(query, run_id=run_id)

@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Body
-from ..services.strategies_service import alist_strategies, load_strategy_code, save_strategy_code, clear_strategies_cache
 from fastapi import APIRouter, Body, HTTPException
+from ..services.strategies_service import alist_strategies, load_strategy_code, save_strategy_code, clear_strategies_cache
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -20,8 +19,6 @@ async def update_strategy_code(strategy_name: str, payload: dict = Body(...)):
     clear_strategies_cache()
     return result
 
-
-from fastapi import Body, HTTPException
 
 @router.post("")
 async def create_strategy(payload: dict = Body(...)):
@@ -43,4 +40,7 @@ async def delete_strategy(strategy_name: str):
         raise HTTPException(status_code=404, detail="not found")
     # 清除缓存以刷新策略列表
     clear_strategies_cache()
+    return res
+    clear_strategies_cache()
+    return res
     return res

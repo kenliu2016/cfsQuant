@@ -1,10 +1,11 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { Card, Form, Select, DatePicker, Tabs, Spin } from 'antd'
+import { Card, Form, DatePicker, Tabs, Spin } from 'antd'
 import client from '../api/client'
 import dayjs from 'dayjs'
 import ReactECharts from 'echarts-for-react'
 import { formatPriceWithUnit } from '../utils/priceFormatter'
+import SymbolSelector from '../components/SymbolSelector'
 
 const { RangePicker } = DatePicker
 
@@ -32,42 +33,10 @@ export default function Market() {
   const [daily, setDaily] = useState<Row[]>([])
   const [intraday, setIntraday] = useState<Row[]>([])
   const [activeTab, setActiveTab] = useState('daily') // 默认选中日线图
-  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([])
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [isDailyLoading, setIsDailyLoading] = useState(false) // 日线图加载状态
   const [isIntradayLoading, setIsIntradayLoading] = useState(false) // 分时图加载状态
 
-  // 解析CSV文件加载标的数据
-  const loadSymbols = async () => {
-    try {
-      const response = await fetch('/src/assets/symbols.csv');
-      const csvText = await response.text();
-      
-      // 解析CSV
-      const lines = csvText.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
-      
-      const symbolData = [];
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
-        const symbolObj = headers.reduce((obj, header, index) => {
-          obj[header] = values[index]?.trim();
-          return obj;
-        }, {} as any);
-        
-        // 将code和name格式化为Select组件需要的格式
-        symbolData.push({
-          value: symbolObj.code,
-          label: `${symbolObj.code} - ${symbolObj.name}`
-        });
-      }
-      
-      setSymbols(symbolData);
-      setFilteredSymbols(symbolData);
-    } catch (error) {
-      console.error('加载标的数据失败:', error);
-    }
-  }
+
 
   // 设置默认时间范围
   const setDefaultTimeRange = (tabType: string) => {
@@ -103,45 +72,27 @@ export default function Market() {
     }, 100)
   }
 
-  useEffect(() => {
-    // 初始化时加载标的数据
-    loadSymbols();
-  }, [])
+
 
   useEffect(() => {
-    // 当标的数据加载完成后设置默认值
-    if (symbols.length > 0) {
-      form.setFieldsValue({
-        code: 'BTCUSDT'
-      })
-      
-      // 设置默认时间范围并加载数据
-      setDefaultTimeRange(activeTab)
-      setTimeout(() => {
-        if (activeTab === 'daily') {
-          fetchDaily()
-        } else if (activeTab === 'rt') {
-          fetchIntraday()
-        }
-      }, 100)
-    }
-  }, [symbols, activeTab])
-
-  // 使用useCallback缓存搜索函数
-  const handleSymbolSearch = useCallback((inputValue: string) => {
-    if (!inputValue) {
-      setFilteredSymbols(symbols);
-      return;
-    }
+    // 设置默认时间范围并加载数据
+    setDefaultTimeRange(activeTab)
     
-    const lowerInput = inputValue.toLowerCase();
-    // 优化：预先转换输入值为小写，避免重复调用toLowerCase
-    const filtered = symbols.filter(symbol => 
-      symbol.value.toLowerCase().includes(lowerInput) ||
-      symbol.label.toLowerCase().includes(lowerInput)
-    );
-    setFilteredSymbols(filtered);
-  }, [symbols])
+    // 设置默认标的代码
+    form.setFieldsValue({
+      code: 'BTCUSDT'
+    })
+    
+    setTimeout(() => {
+      if (activeTab === 'daily') {
+        fetchDaily()
+      } else if (activeTab === 'rt') {
+        fetchIntraday()
+      }
+    }, 100)
+  }, [activeTab])
+
+
 
   const fetchDaily = async () => {
     try {
@@ -149,7 +100,7 @@ export default function Market() {
       const v = await form.validateFields()
       const [start, end] = v.timeRange
       // 日线图不需要额外的时分秒信息
-      const res = await client.get('/market/daily', {
+      const res = await client.get('/api/market/daily', {
         params: {
           code: v.code,
           start: start.format('YYYY-MM-DD HH:mm:ss'),
@@ -174,7 +125,7 @@ export default function Market() {
       start = start.startOf('day')
       end = end.endOf('day')
       
-      const res = await client.get('/market/intraday', {
+      const res = await client.get('/api/market/intraday', {
         params: {
           code: v.code,
           start: start.format('YYYY-MM-DD HH:mm:ss'),
@@ -594,14 +545,7 @@ export default function Market() {
     <Card title="Market 行情">
       <Form form={form} layout="inline" onValuesChange={handleTimeRangeChange}>
         <Form.Item name="code" label="标的" rules={[{required:true}]}>
-          <Select
-            placeholder="请选择或输入标的"
-            style={{width: 220}}
-            showSearch
-            filterOption={false}
-            onSearch={handleSymbolSearch}
-            options={filteredSymbols}
-          />
+          <SymbolSelector style={{width: 220}} />
         </Form.Item>
         <Form.Item name="timeRange" label="时间范围" rules={[{required:true}]}>
           {/* 简化的时间选择器，只选择年月日 */}

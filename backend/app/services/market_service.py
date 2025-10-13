@@ -1,5 +1,5 @@
-from ..common import LoggerFactory
-from ..db import fetch_df
+from common import LoggerFactory
+from common.db import fetch_df
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
@@ -21,7 +21,7 @@ class DateTimeParser:
     @staticmethod
     @lru_cache(maxsize=128)
     def parse_datetime(dt_str: Union[str, datetime, int]) -> datetime:
-        """解析各种格式的日期时间字符串"""
+        """解析各种格式的日期时间字符串，包括带毫秒和时区的ISO格式"""
         if isinstance(dt_str, datetime):
             return dt_str
         
@@ -37,6 +37,7 @@ class DateTimeParser:
         formats = [
             "%Y-%m-%d %H:%M:%S",
             "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%fZ",  # 支持带毫秒和时区的ISO格式
             "%Y-%m-%d"
         ]
         
@@ -45,6 +46,15 @@ class DateTimeParser:
                 return datetime.strptime(dt_str, fmt)
             except ValueError:
                 continue
+                
+        # 尝试直接使用datetime.fromisoformat（Python 3.7+支持）
+        try:
+            # 处理带Z的情况
+            if dt_str.endswith('Z'):
+                dt_str = dt_str[:-1] + '+00:00'
+            return datetime.fromisoformat(dt_str)
+        except ValueError:
+            pass
         
         return datetime.now()
 
@@ -146,11 +156,11 @@ class MarketDataService:
             active: 是否只获取活跃的代码
             
         Returns:
-            市场代码列表的DataFrame，包含code, name, exchange, type等字段
+            市场代码列表的DataFrame，包含code, name, exchange, excode等字段
         """
         try:
             sql = """
-            SELECT code, exchange, active FROM market_codes
+            SELECT code, exchange, active, excode FROM market_codes
             WHERE 1=1
             """
             
@@ -163,14 +173,14 @@ class MarketDataService:
             if active:
                 sql += " AND active = TRUE"
             
-            sql += " ORDER BY code"
+            sql += " ORDER BY excode"
             
             df = fetch_df(sql, **params)
             self.logger.info(f"获取市场代码列表成功，共{len(df)}条记录")
             return df
         except Exception as e:
             self.logger.error(f"获取市场代码列表失败: {e}")
-            return pd.DataFrame(columns=['code', 'exchange', 'active'])
+            return pd.DataFrame(columns=['code', 'exchange', 'active', 'excode'])
         
         
     def _prepare_query_params(self, start: Union[str, datetime], 
@@ -192,7 +202,16 @@ class MarketDataService:
                 return (pd.DataFrame(), query_params) if page is None else (pd.DataFrame(), 0, query_params)
             
             start_dt, end_dt = self._prepare_query_params(start, end)
-            table_name = "day_realtime" if interval in ["1D", "1W", "1M"] else "minute_realtime"
+            # 根据interval后缀确定表名
+            if interval.endswith('m'):
+                table_name = "market_minute_klines"
+            elif interval.endswith('h'):
+                table_name = "market_hour_klines"
+            elif interval.endswith(('D', 'W', 'M')):
+                table_name = "market_day_klines"
+            else:
+                # 默认使用分钟表
+                table_name = "market_minute_klines"
             
             # 构建SQL查询
             sql = """
@@ -256,90 +275,6 @@ class MarketDataService:
             query_params = {"code": code, "start": start, "end": end, "interval": interval}
             return pd.DataFrame(), 0, query_params
 
-@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_predictions(code: str, start: str, end: str, interval: str = None, page: int = None, page_size: int = None):
-    """
-    获取预测数据，使用缓存装饰器优化性能
-    缓存过期时间：24小时（预测数据通常不会频繁变动）
-    
-    Args:
-        code: 股票代码
-        start: 开始时间
-        end: 结束时间
-        page: 页码，从1开始，不提供则返回全部数据
-        page_size: 每页数据量，不提供则返回全部数据
-    
-    Returns:
-        分页数据时返回元组 (数据, 总条数)，否则返回数据
-    """
-    # 转换日期时间参数
-    try:
-        if isinstance(start, str):
-            if ' ' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-            else:
-                start_dt = datetime.strptime(start, "%Y-%m-%d")
-        else:
-            start_dt = start
-    except ValueError:
-        start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    
-    try:
-        if isinstance(end, str):
-            if ' ' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
-            else:
-                end_dt = datetime.strptime(end, "%Y-%m-%d")
-        else:
-            end_dt = end
-    except ValueError:
-        end_dt = datetime.now()
-    
-    sql = """
-    SELECT datetime, code, open, high, low, close, volume
-    FROM minute_prediction
-    WHERE code = :code AND datetime BETWEEN :start AND :end
-    ORDER BY datetime
-    """
-    
-    # 不使用分页时
-    if page is None or page_size is None:
-        try:
-            df = fetch_df(sql, code=code, start=start_dt, end=end_dt)
-            
-            # 直接使用原始interval参数调用聚合函数，interval映射逻辑已移至聚合函数内部
-            if interval:
-                df = aggregate_kline_data(df, interval)
-            
-            return df
-        except Exception as e:
-            # 其他异常处理
-            logger.error(f"获取预测数据失败: {e}")
-            return pd.DataFrame()
-    
-    # 使用分页时
-    offset = (page - 1) * page_size
-    
-    # 获取总条数的SQL
-    count_sql = """
-    SELECT COUNT(*) as count
-    FROM minute_prediction
-    WHERE code = :code AND datetime BETWEEN :start AND :end
-    """
-    
-    # 获取分页数据的SQL
-    paginated_sql = sql + " LIMIT :limit OFFSET :offset"
-    
-    # 执行查询
-    df = fetch_df(paginated_sql, code=code, start=start_dt, end=end_dt, limit=page_size, offset=offset)
-    count_df = fetch_df(count_sql, code=code, start=start_dt, end=end_dt)
-    total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
-    
-    return df, total_count
 
 @cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
 def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", page: int = None, page_size: int = None):
@@ -407,7 +342,7 @@ def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", pag
         low,
         close,
         volume
-    FROM day_realtime
+    FROM market_day_klines
     WHERE code = :code AND datetime BETWEEN :start AND :end
     ORDER BY datetime
     """
@@ -431,7 +366,7 @@ def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", pag
     # 获取总条数的SQL
     count_sql = """
     SELECT COUNT(*) as count
-    FROM day_realtime
+    FROM market_day_klines
     WHERE code = :code AND datetime BETWEEN :start AND :end
     """
     
@@ -481,11 +416,16 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
     # 确保limit是有效的正整数
     limit = max(1, int(limit))
     
-    # 根据interval选择表名
-    if interval in ["1D", "1W", "1M"]:
-        table_name = "day_realtime"
+    # 根据interval后缀确定表名
+    if interval.endswith('m'):
+        table_name = "market_minute_klines"
+    elif interval.endswith('h'):
+        table_name = "market_hour_klines"
+    elif interval.endswith(('D', 'W', 'M')):
+        table_name = "market_day_klines"
     else:
-        table_name = "minute_realtime"
+        # 默认使用分钟表
+        table_name = "market_minute_klines"
     
     sql = """
     WITH ranked_data AS (
@@ -517,75 +457,262 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
         logger.error(f"批量获取K线数据失败: {e}")
         return pd.DataFrame()
 
-def _handle_special_intervals(df: pd.DataFrame, interval: str, codes: list) -> pd.DataFrame:
+@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
+def get_latest_candles(code: str, interval: str = "1m", limit: int = 2) -> Tuple[pd.DataFrame, Dict]:
+    """获取单个股票代码的最新K线数据"""
+    # 验证参数
+    if not code:
+        query_params = {"code": code, "interval": interval, "limit": limit}
+        return pd.DataFrame(), query_params
+    
+    # 确保limit是有效的正整数
+    limit = max(1, min(int(limit), 70000))  # 限制最大返回10000条记录
+    
+    # 根据interval后缀确定表名
+    if interval.endswith('m'):
+        table_name = "market_minute_klines"
+    elif interval.endswith('h'):
+        table_name = "market_hour_klines"
+    elif interval.endswith(('D', 'W', 'M')):
+        table_name = "market_day_klines"
+    else:
+        # 默认使用分钟表
+        table_name = "market_minute_klines"
+    
+    # SQL查询，获取按时间倒序排列的最近N条记录
+    sql = """
+    SELECT datetime, code, open, high, low, close, volume
+    FROM """ + table_name + """
+    WHERE code = :code
+    ORDER BY datetime DESC
+    LIMIT :limit
+    """
+
+    try:
+        df = fetch_df(sql, code=code, limit=limit)
+        
+        # 检查数据是否为空
+        if df.empty:
+            query_params = {"code": code, "interval": interval, "limit": limit}
+            return pd.DataFrame(), query_params
+        
+        # 对数据进行聚合处理
+        if interval in ["1W", "1M"]:
+            # 特殊处理周线和月线，使用专用的处理函数
+            df = _handle_special_intervals(df, interval, [code], limit)
+            # 周/月线数据已经在处理函数中排序并限制了结果数量
+            # 添加调试信息，检查_handle_special_intervals返回的数据类型
+            logger.debug(f"_handle_special_intervals返回后的数据类型:\n{df.dtypes}")
+            logger.debug(f"_handle_special_intervals返回后的数据样例:\n{df.head()}")
+        else:
+            # 其他时间间隔使用通用聚合函数
+            df = aggregate_kline_data(df, interval)
+        
+        # 按时间升序排列，符合前端展示习惯
+        if not df.empty:
+            # 确保datetime列存在且不为NaN，然后再排序
+            if 'datetime' in df.columns and not df['datetime'].isna().all():
+                df = df.sort_values('datetime')
+            # 检查code列是否存在，不存在则添加
+            if 'code' not in df.columns:
+                df['code'] = code
+            _log_query_results(df)
+        
+        # 创建查询参数dict
+        query_params = {"code": code, "interval": interval, "limit": limit}
+        
+        # 修复周/月线数据中datetime和code列的问题
+        if not df.empty:
+            # 确保datetime列是datetime64[ns]类型
+            if 'datetime' in df.columns:
+                # 尝试将datetime列转换为datetime64[ns]类型
+                try:
+                    # 如果是字符串类型，需要先转换
+                    if pd.api.types.is_object_dtype(df['datetime']):
+                        # 使用pd.to_datetime并设置errors='coerce'处理无效值
+                        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+                except Exception as e:
+                    logger.error(f"转换datetime列失败: {e}")
+            
+            # 确保code列有正确的值
+            if 'code' in df.columns:
+                # 检查是否存在NaT或None值
+                if df['code'].isna().any() or (df['code'].dtype == 'object' and all(pd.isna(x) or x == 'NaT' for x in df['code'])):
+                    # 用传入的code值填充
+                    df['code'] = code
+            
+            # 即使code列不存在，也添加它
+            elif 'code' not in df.columns:
+                df['code'] = code
+        
+        return df, query_params
+    except Exception as e:
+        logger.error(f"获取最新K线数据失败: {e}", exc_info=True)
+        query_params = {"code": code, "interval": interval, "limit": limit}
+        return pd.DataFrame(), query_params
+
+def _handle_special_intervals(df: pd.DataFrame, interval: str, codes: list, limit: int = 1) -> pd.DataFrame:
     """处理周线和月线的特殊聚合"""
     if interval == "1W":
-        return _handle_weekly_data(codes)
+        result = _handle_weekly_data_with_df(df.copy(), limit)
+        return result
     elif interval == "1M":
-        return _handle_monthly_data(codes)
+        result = _handle_monthly_data_with_df(df.copy(), limit)
+        return result
     return df
 
-def _handle_weekly_data(codes: list) -> pd.DataFrame:
-    """处理周线数据"""
-    all_weekly_data = []
-    for code in codes:
-        weekly_sql = """
-        SELECT 
-            MIN(datetime) as datetime,
-            code,
-            MIN(open) FILTER (WHERE datetime = (
-                SELECT MIN(datetime) FROM day_realtime 
-                WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW')
-            )) as open,
-            MAX(high) as high,
-            MIN(low) as low,
-            MAX(close) FILTER (WHERE datetime = (
-                SELECT MAX(datetime) FROM day_realtime 
-                WHERE code = :code AND TO_CHAR(datetime, 'IYYY-IW') = TO_CHAR(dr.datetime, 'IYYY-IW')
-            )) as close,
-            SUM(volume) as volume
-        FROM day_realtime dr
-        WHERE code = :code
-        GROUP BY code, TO_CHAR(datetime, 'IYYY-IW')
-        ORDER BY datetime DESC
-        LIMIT 1
-        """
-        weekly_df = fetch_df(weekly_sql, code=code)
-        if not weekly_df.empty:
-            all_weekly_data.append(weekly_df)
+def _handle_weekly_data_with_df(df: pd.DataFrame, limit: int) -> pd.DataFrame:
+    """使用传入的日线数据处理周线聚合"""
+    if df.empty:
+        return pd.DataFrame()
     
-    return pd.concat(all_weekly_data, ignore_index=True) if all_weekly_data else pd.DataFrame()
+    # 打印前几行数据进行调试
+    logger.debug(f"周线聚合前数据样例:\n{df.head()}")
+    logger.debug(f"周线聚合前数据类型:\n{df.dtypes}")
+    
+    # 确保datetime列是datetime类型
+    if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
+        try:
+            # 先检查是否是字符串类型
+            if pd.api.types.is_object_dtype(df['datetime']):
+                # 尝试多种格式解析
+                formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y/%m/%d %H:%M:%S', '%Y/%m/%d']
+                for fmt in formats:
+                    try:
+                        df['datetime'] = pd.to_datetime(df['datetime'], format=fmt, errors='coerce')
+                        if not df['datetime'].isna().all():
+                            logger.info(f"成功将datetime列转换为datetime类型，使用格式: {fmt}")
+                            break
+                    except:
+                        continue
+            else:
+                # 如果不是字符串，尝试直接转换
+                df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+                logger.info(f"成功将datetime列转换为datetime类型")
+        except Exception as e:
+            logger.error(f"转换datetime列失败: {e}")
+    
+    # 保存code值
+    code_value = df['code'].iloc[0] if not df['code'].empty else None
+    logger.debug(f"保存的code值: {code_value}")
+    
+    # 创建ISO周列
+    try:
+        df['iso_week'] = df['datetime'].dt.strftime('%G-%V')
+        logger.debug(f"ISO周列创建成功")
+    except Exception as e:
+        logger.error(f"创建ISO周列失败: {e}")
+        # 如果失败，使用一个默认值
+        df['iso_week'] = '2025-01'
+    
+    # 按周分组并聚合
+    try:
+        weekly_df = df.groupby('iso_week').agg({
+            'datetime': 'max',  # 使用每周最后一天作为周线的时间戳
+            'open': 'first',    # 每周第一个开盘价
+            'high': 'max',      # 每周最高价
+            'low': 'min',       # 每周最低价
+            'close': 'last',    # 每周最后收盘价
+            'volume': 'sum'     # 每周总成交量
+        }).reset_index()
+        
+        # 添加code列
+        weekly_df['code'] = code_value
+        
+        # 按时间倒序排序并限制结果数量
+        weekly_df = weekly_df.sort_values('datetime', ascending=False).head(limit)
+        
+        # 重置索引
+        weekly_df = weekly_df.reset_index(drop=True)
+        
+        logger.info(f"周线聚合成功，结果行数: {len(weekly_df)}")
+        logger.debug(f"周线聚合结果样例:\n{weekly_df.head()}")
+    except Exception as e:
+        logger.error(f"周线聚合失败: {e}")
+        weekly_df = pd.DataFrame()
+    
+    # 记录查询结果
+    if not weekly_df.empty:
+        _log_query_results(weekly_df)
+    
+    return weekly_df
 
-def _handle_monthly_data(codes: list) -> pd.DataFrame:
-    """处理月线数据"""
-    all_monthly_data = []
-    for code in codes:
-        monthly_sql = """
-        SELECT 
-            MIN(datetime) as datetime,
-            code,
-            MIN(open) FILTER (WHERE datetime = (
-                SELECT MIN(datetime) FROM day_realtime 
-                WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM')
-            )) as open,
-            MAX(high) as high,
-            MIN(low) as low,
-            MAX(close) FILTER (WHERE datetime = (
-                SELECT MAX(datetime) FROM day_realtime 
-                WHERE code = :code AND TO_CHAR(datetime, 'YYYY-MM') = TO_CHAR(dr.datetime, 'YYYY-MM')
-            )) as close,
-            SUM(volume) as volume
-        FROM day_realtime dr
-        WHERE code = :code
-        GROUP BY code, TO_CHAR(datetime, 'YYYY-MM')
-        ORDER BY datetime DESC
-        LIMIT 1
-        """
-        monthly_df = fetch_df(monthly_sql, code=code)
-        if not monthly_df.empty:
-            all_monthly_data.append(monthly_df)
+def _handle_monthly_data_with_df(df: pd.DataFrame, limit: int) -> pd.DataFrame:
+    """使用传入的日线数据处理月线聚合"""
+    if df.empty:
+        logger.info("输入数据为空，返回空DataFrame")
+        return pd.DataFrame()
     
-    return pd.concat(all_monthly_data, ignore_index=True) if all_monthly_data else pd.DataFrame()
+    # 打印前几行数据进行调试
+    logger.debug(f"月线聚合前数据样例:\n{df.head()}")
+    logger.debug(f"月线聚合前数据类型:\n{df.dtypes}")
+    
+    # 确保datetime列是datetime类型
+    if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
+        try:
+            # 先检查是否是字符串类型
+            if pd.api.types.is_object_dtype(df['datetime']):
+                # 尝试多种格式解析
+                formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y/%m/%d %H:%M:%S', '%Y/%m/%d']
+                for fmt in formats:
+                    try:
+                        df['datetime'] = pd.to_datetime(df['datetime'], format=fmt, errors='coerce')
+                        if not df['datetime'].isna().all():
+                            logger.info(f"成功将datetime列转换为datetime类型，使用格式: {fmt}")
+                            break
+                    except:
+                        continue
+            else:
+                # 如果不是字符串，尝试直接转换
+                df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+                logger.info(f"成功将datetime列转换为datetime类型")
+        except Exception as e:
+            logger.error(f"转换datetime列失败: {e}")
+    
+    # 保存code值
+    code_value = df['code'].iloc[0] if not df['code'].empty else None
+    logger.debug(f"保存的code值: {code_value}")
+    
+    # 创建年月列
+    try:
+        df['year_month'] = df['datetime'].dt.strftime('%Y-%m')
+        logger.debug(f"年月列创建成功")
+    except Exception as e:
+        logger.error(f"创建年月列失败: {e}")
+        # 如果失败，使用一个默认值
+        df['year_month'] = '2025-01'
+    
+    # 按月分组并聚合
+    try:
+        monthly_df = df.groupby('year_month').agg({
+            'datetime': 'max',  # 使用每月最后一天作为月线的时间戳
+            'open': 'first',    # 每月第一个开盘价
+            'high': 'max',      # 每月最高价
+            'low': 'min',       # 每月最低价
+            'close': 'last',    # 每月最后收盘价
+            'volume': 'sum'     # 每月总成交量
+        }).reset_index()
+        
+        # 添加code列
+        monthly_df['code'] = code_value
+        
+        # 按时间倒序排序并限制结果数量
+        monthly_df = monthly_df.sort_values('datetime', ascending=False).head(limit)
+        
+        # 重置索引
+        monthly_df = monthly_df.reset_index(drop=True)
+        
+        logger.info(f"月线聚合成功，结果行数: {len(monthly_df)}")
+        logger.debug(f"月线聚合结果样例:\n{monthly_df.head()}")
+    except Exception as e:
+        logger.error(f"月线聚合失败: {e}")
+        monthly_df = pd.DataFrame()
+    
+    # 记录查询结果
+    if not monthly_df.empty:
+        _log_query_results(monthly_df)
+    
+    return monthly_df
 
 def _log_query_results(df: pd.DataFrame):
     """记录查询结果"""
@@ -619,10 +746,16 @@ def update_market_data_and_refresh_cache(data, table_name, code=None):
         table_name: 数据库表名
         code: 可选，股票代码，如提供则只刷新该代码的缓存
     """
-    from ..db import to_sql
-    import logging
+    from common.db import to_sql
+    import sys
+    import os
     
-    logger = logging.getLogger(__name__)
+    # 添加项目根目录到Python路径，以便能够导入app模块
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    from common.logger import LoggerFactory
+    
+    # 使用项目统一的日志工具
+    logger = LoggerFactory.get_logger("services.market")
     
     try:
         # 写入数据到数据库
@@ -653,13 +786,14 @@ def get_candles(code: str, start: str, end: str,
     return market_data_service.get_candles(code, start, end, interval, page, page_size)
 
 # 添加模块级别的市场代码相关函数
+@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
 def get_market_exchanges(active: bool = True) -> pd.DataFrame:
     """
     模块级别的获取交易所列表函数
     """
     return market_data_service.get_market_exchanges(active)
 
-
+@cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
 def get_market_codes(exchange: str = None, active: bool = True) -> pd.DataFrame:
     """
     模块级别的获取市场代码列表函数

@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
-import client from '../api/client'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { Card, Table, Button, Space, message, Select } from 'antd'
+import { useState, useEffect, useMemo } from 'react'
+import client from '../api/client'
+import SymbolSelector from '../components/SymbolSelector'
 
 // 格式化日期时间函数
 const formatDateTime = (dateString: string) => {
@@ -18,18 +19,71 @@ const Reports = () => {
   const [selected, setSelected] = useState<string[]>([])
   const [searchText, setSearchText] = useState<string>('')
   const [strategySearchText, setStrategySearchText] = useState<string>('')
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([])
   const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(20)
-  const [sortField, setSortField] = useState<string>('totalReturn')
+  const [sortField, setSortField] = useState<string>('created_at')
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend')
   const [loading, setLoading] = useState<boolean>(false)
+  const [fallbackRuns, setFallbackRuns] = useState<any[]>([])
+  const [fallbackDataLoaded, setFallbackDataLoaded] = useState<boolean>(false)
+  const [initialized, setInitialized] = useState<boolean>(false)
+
+  // 共享的加载备选数据函数
+  const loadFallbackData = async () => {
+    try {
+      if (fallbackDataLoaded) return fallbackRuns;
+      
+      const allRunsRes = await client.get('/api/runs', { params: { pageSize: 1000 } });
+      setFallbackRuns(allRunsRes.data.rows || []);
+      setFallbackDataLoaded(true);
+      return allRunsRes.data.rows || [];
+    } catch (error) {
+      console.error('加载备选数据失败:', error);
+      return [];
+    }
+  }
+
+
+
+
+  // 加载策略列表
+  const loadStrategies = async () => {
+    try {
+      const response = await client.get('/api/strategies');
+      const strategyList = response.data.rows || [];
+      
+      const strategyData = strategyList.map((strategy: any) => ({
+        value: strategy.name,
+        label: `${strategy.name}${strategy.description ? ` - ${strategy.description}` : ''}`
+      }));
+      
+      setFilteredStrategies(strategyData);
+    } catch (error) {
+      console.error('加载策略列表失败:', error);
+      // 如果API调用失败，从回测记录中提取策略作为备选
+      try {
+        const fallbackData = await loadFallbackData();
+        if (fallbackData.length > 0) {
+          const strategies: string[] = Array.from(new Set(fallbackData.map((run: any) => run.strategy)));
+          setFilteredStrategies(strategies.map((s) => ({ value: s, label: s })));
+        } else {
+          // 添加mock数据确保placeholder显示
+          setFilteredStrategies([{value: 'mock', label: 'mock strategy'}]);
+        }
+      } catch (fallbackError) {
+        console.error('加载备选策略数据也失败:', fallbackError);
+        // 添加mock数据确保placeholder显示
+        setFilteredStrategies([{value: 'mock', label: 'mock strategy'}]);
+      }
+    }
+  }
 
   // 查看详情处理函数
   const handleViewDetail = (runId: string) => {
     navigate(`/reports/${runId}`)
   }
+
 
   // 单条删除处理函数
   const handleSingleDelete = async (runId: string) => {
@@ -68,7 +122,7 @@ const Reports = () => {
   }
 
   // 加载回测列表
-  const loadRuns = async (page: number = currentPage, size: number = pageSize, refreshFilter: boolean = false) => {
+  const loadRuns = async (page: number = currentPage, size: number = pageSize) => {
     try {
       // 设置loading为true，表示正在加载数据
       setLoading(true)
@@ -88,8 +142,7 @@ const Reports = () => {
         params.sortField = sortField
         params.sortOrder = sortOrder
       }
-      
-
+       
       const res = await client.get('/api/runs', {
         params: params
       })
@@ -97,17 +150,6 @@ const Reports = () => {
       // 直接使用后端返回的排序后数据
       setRuns(res.data.rows || [])
       setTotal(res.data.total || 0)
-      
-      // 仅在初始加载或请求刷新时提取唯一的标的和策略
-      if (refreshFilter || runs.length === 0) {
-        // 获取所有的回测数据来提取唯一的标的和策略
-        const allRunsRes = await client.get('/api/runs', { params: { pageSize: 1000 } })
-        const symbols: string[] = Array.from(new Set(allRunsRes.data.rows.map((run: any) => run.code)))
-        const strategies: string[] = Array.from(new Set(allRunsRes.data.rows.map((run: any) => run.strategy)))
-        
-        setFilteredSymbols(symbols.map((s) => ({ value: s, label: s })))
-        setFilteredStrategies(strategies.map((s) => ({ value: s, label: s })))
-      }
     } catch (error) {
       console.error('加载回测列表失败:', error)
       message.error('加载回测列表失败')
@@ -117,23 +159,39 @@ const Reports = () => {
     }
   }
 
-  // 标的搜索处理
-  const handleSymbolSearch = async (value: string) => {
-    // 这里可以实现异步搜索，现在简单处理
-    const filtered = filteredSymbols.filter(option => 
-      option.label.toLowerCase().includes(value.toLowerCase())
+  // TODO: 以下搜索函数暂时未使用，如有需要可以取消注释
+  /*
+  // 使用useCallback缓存搜索函数
+  const handleSymbolSearch = useCallback((inputValue: string) => {
+    if (!inputValue) {
+      setFilteredSymbols(symbols);
+      return;
+    }
+    
+    const lowerInput = inputValue.toLowerCase();
+    // 优化：预先转换输入值为小写，避免重复调用toLowerCase
+    const filtered = symbols.filter(symbol => 
+      symbol.value.toLowerCase().includes(lowerInput) ||
+      symbol.label.toLowerCase().includes(lowerInput)
     );
     setFilteredSymbols(filtered);
-  }
-
-  // 策略搜索处理
-  const handleStrategySearch = async (value: string) => {
-    // 这里可以实现异步搜索，现在简单处理
-    const filtered = filteredStrategies.filter(option => 
-      option.label.toLowerCase().includes(value.toLowerCase())
+  }, [symbols])
+  
+  // 使用useCallback缓存策略搜索函数
+  const handleStrategySearch = useCallback((inputValue: string) => {
+    if (!inputValue) {
+      setFilteredStrategies(strategies);
+      return;
+    }
+    
+    const lowerInput = inputValue.toLowerCase();
+    const filtered = strategies.filter(strategy => 
+      strategy.value.toLowerCase().includes(lowerInput) ||
+      strategy.label.toLowerCase().includes(lowerInput)
     );
     setFilteredStrategies(filtered);
-  }
+  }, [strategies])
+  */
 
   // 处理分页变化
   const handlePageChange = (page: number, size: number) => {
@@ -158,8 +216,9 @@ const Reports = () => {
       
       // 重置到第一页，因为排序后的数据分布可能完全不同
       setCurrentPage(1);
-      // 重新加载数据
-      loadRuns(1, pageSize);
+      
+      // 移除直接调用loadRuns，由useEffect统一处理数据加载
+      // loadRuns(1, pageSize);
     }
   }
 
@@ -188,6 +247,7 @@ const Reports = () => {
 
   const columns = [
     { title:'策略', dataIndex:'strategy', key:'strategy' },
+    { title:'标的', dataIndex:'code', key:'code' },
     {
       title:'交易次数',
       dataIndex:'trade_count',
@@ -288,7 +348,11 @@ const Reports = () => {
         return record.total_fee ? record.total_fee.toFixed(2) : '0.00';
       }
     },
-    { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime },
+    { title:'完成时间', dataIndex:'created_at', key:'created_at', render: formatDateTime, sorter: (a: any, b: any) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA; // 降序排列
+    } },
     {
       title: '操作',
       key: 'action',
@@ -318,62 +382,65 @@ const Reports = () => {
 
   // 初始加载数据
   useEffect(() => {
-    loadRuns()
+    const initializeData = async () => {
+      try {
+        // 加载策略数据
+        await loadStrategies();
+        // 等待策略数据加载完成后再加载回测列表
+        await loadRuns();
+        // 设置初始化完成标志
+        setInitialized(true);
+      } catch (error) {
+        console.error('初始化数据加载失败:', error);
+      }
+    };
+
+    initializeData();
   }, [])
 
-  // 监听排序状态变化，触发数据重新加载
+  // 监听状态变化，触发数据重新加载
+  // 移除了initialized依赖，避免在初始化时重复调用loadRuns
   useEffect(() => {
-    // 只有当sortField有实际值时才触发重新加载，避免不必要的刷新
-    if (sortField && sortField.trim() !== '') {
-      loadRuns(currentPage, pageSize)
-    }
-  }, [sortField, sortOrder])
-  
-  // 监听排序状态变化，触发数据重新加载
-  useEffect(() => {
-    // 只有当sortField有实际值时才触发重新加载，避免不必要的刷新
-    if (sortField && sortField.trim() !== '') {
+    // 只有在初始化完成后且状态发生实际变化时才重新加载数据
+    if (!initialized) return;
+    
+    // 使用setTimeout防抖，避免短时间内多次触发
+    const timer = setTimeout(() => {
       loadRuns(currentPage, pageSize);
-    }
-  }, [sortField, sortOrder, currentPage, pageSize])
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, [sortField, sortOrder, currentPage, pageSize, initialized])
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Card title='回测报告' className="shadow-lg" style={{ borderRadius: '12px', overflow: 'hidden', flex: 1 }}>
         <Space style={{marginBottom:16, display: 'flex', flexWrap: 'wrap', gap: 16}}>
-          <Select
-            placeholder="请选择或输入标的"
-            style={{ width: 220 }}
-            showSearch
-            filterOption={false}
-            allowClear
-            onSearch={handleSymbolSearch}
-            options={filteredSymbols}
-            value={searchText}
-            onChange={(value) => {
-              setSearchText(value)
-              handleSearchChange()
-            }}
-            className="transition-all duration-300 hover:shadow-md"
-          />
-          <Select
+           <Select
             placeholder="请选择或输入策略"
-            style={{ width: 220 }}
+            style={{ width: 320 }}
             showSearch
-            filterOption={false}
             allowClear
-            onSearch={handleStrategySearch}
             options={filteredStrategies}
-            value={strategySearchText}
+            value={strategySearchText || undefined}
             onChange={(value) => {
               setStrategySearchText(value)
               handleSearchChange()
             }}
-            className="transition-all duration-300 hover:shadow-md"
+          />
+          <SymbolSelector
+            placeholder="请选择或输入标的"
+            style={{ width: 320 }}
+            value={searchText || undefined}
+            onChange={(value) => {
+              setSearchText(value)
+              handleSearchChange()
+            }}
+            allowClear
           />
           <Button 
             icon={<ReloadOutlined />}
-            onClick={() => loadRuns(currentPage, pageSize, true)}
+            onClick={() => loadRuns(currentPage, pageSize)}
             className="transition-all duration-300 hover:shadow-md"
           >
             刷新
@@ -397,7 +464,7 @@ const Reports = () => {
             onChange: (keys)=> setSelected(keys as string[]) 
           }} 
           className="shadow-sm rounded-lg overflow-hidden"
-          scroll={{ x: 1200, y: 600 }}
+          scroll={{ x: 1200, y: 780 }}
           pagination={{
             current: currentPage,
             pageSize: pageSize,

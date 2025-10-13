@@ -5,10 +5,10 @@ import { Routes, Route, useNavigate } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Strategy from './pages/Strategy';
 import Tuning from './pages/Tuning';
-import Monitor from './pages/Monitor';
 import Reports from './pages/Reports';
 import Progress from './pages/Progress';
 import ReportDetail from './pages/ReportDetail';
+import Settings from './pages/Settings';
 import './custom-menu.css';
 
 const { Sider, Content } = Layout;
@@ -47,6 +47,11 @@ const App: React.FC = () => {
       key: 'progress',
       label: 'Progress',
       onClick: () => navigate('/progress'),
+    },
+    {
+      key: 'settings',
+      label: 'Settings',
+      onClick: () => navigate('/settings'),
     },
   ];
 
@@ -99,10 +104,10 @@ const App: React.FC = () => {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/strategy" element={<Strategy />} />
             <Route path="/tuning" element={<Tuning />} />
-            <Route path="/monitor" element={<Monitor />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/reports/:runId" element={<ReportDetail />} />
             <Route path="/progress" element={<Progress />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Dashboard />} />
           </Routes>
         </Content>

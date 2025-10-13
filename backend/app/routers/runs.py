@@ -1,8 +1,16 @@
-from fastapi import APIRouter, HTTPException
 import numpy as np
-import logging
-from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs
-from fastapi import HTTPException
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("routers.runs")
+
+from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs, get_run_equity, get_run_trades, get_run_klines
+from fastapi import HTTPException, APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -10,9 +18,6 @@ router = APIRouter(prefix="/api", tags=["runs"])
 # 定义批量删除请求模型
 class BatchDeleteRequest(BaseModel):
     ids: list[str]
-
-# 配置日志
-logger = logging.getLogger(__name__)
 
 # 辅助函数：递归将NumPy类型转换为Python原生类型
 def convert_numpy_types(data):
@@ -52,10 +57,37 @@ async def get_grid_levels_endpoint(run_id: str):
 
 @router.get("/runs/{run_id}")
 async def runs_detail(run_id: str):
-    # 现在run_detail函数直接返回包含四部分数据的字典
+    # 调用服务层获取回测详情数据（只返回基本信息和指标）
     detail_data = run_detail(run_id)
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(detail_data)
+    return processed_data
+
+# 获取回测equity曲线数据
+@router.get("/runs/{run_id}/equity")
+async def get_run_equity_endpoint(run_id: str, limit: int = 1000):
+    # 调用服务层获取equity数据
+    equity_data = get_run_equity(run_id, limit)
+    # 确保所有数据都是可JSON序列化的Python原生类型
+    processed_data = convert_numpy_types(equity_data)
+    return processed_data
+
+# 获取回测交易记录数据
+@router.get("/runs/{run_id}/trades")
+async def get_run_trades_endpoint(run_id: str, limit: int = 1000):
+    # 调用服务层获取交易记录数据
+    trades_data = get_run_trades(run_id, limit)
+    # 确保所有数据都是可JSON序列化的Python原生类型
+    processed_data = convert_numpy_types(trades_data)
+    return processed_data
+
+# 获取回测K线数据
+@router.get("/runs/{run_id}/klines")
+async def get_run_klines_endpoint(run_id: str, limit: int = 30000):
+    # 调用服务层获取K线数据
+    klines_data = get_run_klines(run_id, limit)
+    # 确保所有数据都是可JSON序列化的Python原生类型
+    processed_data = convert_numpy_types(klines_data)
     return processed_data
 
 @router.delete("/runs/{run_id}")
@@ -73,8 +105,10 @@ async def delete_run_endpoint(run_id: str):
         logger.info(f"接收到删除回测请求，run_id: {run_id}")
         success = delete_run(run_id)
         if success:
+            logger.info(f"回测记录 {run_id} 删除成功")
             return {"status": "success", "message": f"回测记录 {run_id} 已成功删除"}
         else:
+            logger.warning(f"回测记录 {run_id} 删除失败")
             raise HTTPException(status_code=500, detail=f"删除回测记录 {run_id} 失败")
     except Exception as e:
         logger.error(f"删除回测记录时发生错误: {str(e)}")
@@ -94,9 +128,27 @@ async def batch_delete_runs_endpoint(request: BatchDeleteRequest):
     try:
         logger.info(f"接收到批量删除回测请求，ids: {request.ids}")
         result = batch_delete_runs(request.ids)
+        
+        # 根据删除结果返回不同的状态
+        if result['failed'] > 0:
+            if result['success'] == 0:
+                # 全部删除失败
+                logger.warning(f"批量删除全部失败，失败数量: {result['failed']}")
+                raise HTTPException(status_code=500, detail=f"批量删除失败: 所有 {result['failed']} 条记录均无法删除")
+            else:
+                # 部分删除失败
+                logger.warning(f"批量删除部分失败，成功: {result['success']} 条，失败: {result['failed']} 条")
+                return {
+                    "status": "partial_success",
+                    "message": f"批量删除完成，但部分记录删除失败，成功: {result['success']} 条，失败: {result['failed']} 条",
+                    "result": result
+                }
+        
+        # 全部删除成功
+        logger.info(f"批量删除全部成功，成功数量: {result['success']}")
         return {
             "status": "success",
-            "message": f"批量删除完成，成功: {result['success']} 条，失败: {result['failed']} 条",
+            "message": f"批量删除完成，成功: {result['success']} 条",
             "result": result
         }
     except Exception as e:

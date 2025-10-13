@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
+import SymbolSelector from '../components/SymbolSelector';
 
 const { Sider, Content } = Layout
 
@@ -120,7 +121,7 @@ export default function Backtest() {
                   <Input disabled />
                 </Form.Item>
                 <Form.Item name="code" label="标的代码" rules={[{ required: true }]}>
-                  <Input />
+                  <SymbolSelector />
                 </Form.Item>
                 <Form.Item name="start" label="开始时间" rules={[{ required: true }]}>
                   <DatePicker showTime />

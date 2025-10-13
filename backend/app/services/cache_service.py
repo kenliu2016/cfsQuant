@@ -1,4 +1,5 @@
 import os
+import sys
 import redis
 import json
 import socket
@@ -6,15 +7,16 @@ from functools import wraps
 from typing import Any, Callable, Optional, Dict, Tuple, List
 import hashlib
 import time
-import logging
-import os
 import yaml
 import concurrent.futures
 import numpy as np
 
-# 配置日志
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("services.cache")
 
 # 加载数据库配置
 def load_db_config(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -77,19 +79,20 @@ class RedisManager:
                 'decode_responses': True,
                 'socket_timeout': 30,  # 增加超时时间至30秒
                 'socket_keepalive': True,
-                'socket_keepalive_options': {
-                    socket.TCP_KEEPIDLE: 30,  # 减少空闲时间检查频率
-                    socket.TCP_KEEPINTVL: 5,  # 更频繁的保活包
-                    socket.TCP_KEEPCNT: 10,    # 增加重试次数
-                },
                 'retry_on_timeout': True,
                 'health_check_interval': 10,  # 更频繁的健康检查
                 'max_connections': 100,       # 增加连接池大小
-                'socket_connect_timeout': 10, # 增加连接超时时间
-                'retry_strategy': lambda retry_obj: (
-                    min(retry_obj.attempt * 100 + 100, 2000) if retry_obj.total_attempts < 5 else None
-                )  # 指数退避重试策略
+                'socket_connect_timeout': 10  # 增加连接超时时间
             }
+            
+            # 仅在支持TCP_KEEPIDLE等常量的系统上添加这些选项（如Linux）
+            # macOS通常不支持这些常量
+            if hasattr(socket, 'TCP_KEEPIDLE') and hasattr(socket, 'TCP_KEEPINTVL') and hasattr(socket, 'TCP_KEEPCNT'):
+                pool_params['socket_keepalive_options'] = {
+                    socket.TCP_KEEPIDLE: 30,  # 减少空闲时间检查频率
+                    socket.TCP_KEEPINTVL: 5,  # 更频繁的保活包
+                    socket.TCP_KEEPCNT: 10,    # 增加重试次数
+                }
             
             # 如果设置了密码，则添加密码参数
             if REDIS_PASSWORD:
@@ -155,9 +158,9 @@ class RedisManager:
             self.connection_history.pop(0)
     
     def get_client(self):
+        current_time = time.time()  # 将current_time定义移到方法开头，确保所有分支都能访问
         # 如果Redis之前连接失败，在指定间隔后尝试重新连接
         if not self.is_redis_available and isinstance(self.client, dict):
-            current_time = time.time()
             if current_time - self.last_connection_attempt >= self.retry_interval:
                 logger.debug(f"尝试重新连接Redis (间隔{self.retry_interval}秒)")
                 self.connect()
@@ -358,9 +361,7 @@ class CacheService:
                 data, timestamp = client[key]
                 # 检查是否过期
                 if time.time() - timestamp < data.get('_expire_time', float('inf')):
-                    # 更新过期时间
-                    client[key] = (data, time.time())
-                    cache_metrics['ttl_renewed'] += 1
+                    # 已移除热点数据自动延长过期时间的机制
                     return data.get('value')
                 else:
                     # 删除过期数据
@@ -372,9 +373,7 @@ class CacheService:
             data = client.get(key)
             if data:
                 cache_metrics['hits'] += 1
-                # 重新设置TTL，实现热点数据缓存延长
-                client.expire(key, LONG_EXPIRE_TIME)
-                cache_metrics['ttl_renewed'] += 1
+                # 已移除热点数据自动延长过期时间的机制
                 try:
                     return json.loads(data)
                 except json.JSONDecodeError:
@@ -640,23 +639,73 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
     # 预定义价格相关列，确保它们被正确处理
     price_columns = ['open', 'high', 'low', 'close', 'volume']
     
+    # 特殊字符串列，需要保留为字符串类型
+    special_string_columns = ['code', 'iso_week', 'year_month', 'time_frame']
+    
     # 批量检测和转换datetime列，优化性能
     datetime_columns = []
     numeric_columns = []
     
-    # 提前识别可能的datetime列和数值列
+    # 对于特殊字符串列的处理：确保它们不会被错误识别为数值或日期列
+    for col in special_string_columns:
+        if col in df.columns:
+            # 标记为字符串列，避免后续处理将其识别为数值或日期
+            df[col] = df[col].astype(str)
+            # 检查并修复特殊字符串列中的NaT值和空值
+            if col == 'code':
+                if 'NaT' in df[col].values or any(pd.isna(df[col])) or any(df[col] == ''):
+                    # 尝试从数据中提取code值（如果有）
+                    valid_codes = df[col][(df[col] != 'NaT') & (df[col] != '')].dropna()
+                    if not valid_codes.empty:
+                        # 使用第一个有效code值填充空值
+                        first_valid_code = valid_codes.iloc[0]
+                        df[col] = df[col].replace({'NaT': first_valid_code, '': first_valid_code})
+                        df[col] = df[col].fillna(first_valid_code)
+            else:
+                # 其他特殊字符串列，将'NaT'和空值转换为空字符串
+                df[col] = df[col].replace({'NaT': ''})
+                df[col] = df[col].fillna('')
+    
+    # 预定义datetime列名列表，优先处理这些列
+    priority_datetime_columns = ['datetime', 'date', 'time', 'timestamp', 'created_at', 'updated_at']
+    
+    # 优先识别并转换预定义的datetime列
+    for col in priority_datetime_columns:
+        if col in df.columns and col not in special_string_columns:
+            datetime_columns.append(col)
+    
+    # 提前识别可能的其他datetime列和数值列
     for col in df.columns:
+        # 跳过已识别的datetime列和特殊字符串列
+        if col in datetime_columns or col in special_string_columns:
+            continue
+        
         if df[col].dtype == 'object':
             try:
                 # 仅转换非空值，减少不必要的处理
-                mask = pd.notna(df[col])
+                mask = pd.notna(df[col]) & (df[col] != '')
                 if mask.any():
                     # 尝试转换前10个非空值作为测试，避免全量检查
                     sample_size = min(10, mask.sum())
                     sample_values = df.loc[mask, col].iloc[:sample_size]
                     
                     # 检查是否是datetime列
-                    if all(isinstance(val, str) and (('-' in val and ':' in val) or len(val) >= 8) for val in sample_values):
+                    # 基于值格式的判断
+                    # 检查样本值是否具有日期时间特征
+                    date_patterns = [
+                        lambda x: isinstance(x, str) and (('-' in x or '/' in x) and len(x) >= 8),
+                        lambda x: isinstance(x, str) and ('T' in x and ':' in x),
+                        lambda x: isinstance(x, str) and x.isdigit() and len(x) > 8  # 可能是时间戳
+                    ]
+                    
+                    # 计算匹配日期模式的值的比例
+                    match_count = 0
+                    for val in sample_values:
+                        if any(pattern(val) for pattern in date_patterns):
+                            match_count += 1
+                    
+                    # 如果超过50%的值匹配日期模式，则认为是datetime列
+                    if match_count / len(sample_values) > 0.5:
                         datetime_columns.append(col)
                     # 检查是否是数值列
                     elif all(isinstance(val, (int, float)) or (
@@ -675,19 +724,67 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
     if datetime_columns:
         for col in datetime_columns:
             try:
-                mask = pd.notna(df[col])
+                mask = pd.notna(df[col]) & (df[col] != '')
                 if mask.any():
-                    # 指定常见的日期时间格式，避免格式推断警告
-                    try:
-                        # 尝试ISO格式 (YYYY-MM-DDTHH:MM:SS)
-                        df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], format='%Y-%m-%dT%H:%M:%S', errors='coerce')
-                    except:
-                        try:
-                            # 尝试日期格式 (YYYY-MM-DD)
-                            df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], format='%Y-%m-%d', errors='coerce')
-                        except:
-                            # 尝试其他常见格式
-                            df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], errors='coerce')
+                    # 强制将'datetime'列转换为datetime类型
+                    if col == 'datetime':
+                        # 尝试所有可能的格式，确保datetime列被正确转换
+                        formats = [
+                            '%Y-%m-%dT%H:%M:%S',  # ISO格式
+                            '%Y-%m-%dT%H:%M:%S.%f',  # ISO格式带微秒
+                            '%Y-%m-%d %H:%M:%S',  # 标准格式
+                            '%Y-%m-%d',           # 日期格式
+                            '%m/%d/%Y %H:%M:%S',  # 美国格式
+                            '%m/%d/%Y',           # 美国日期格式
+                            '%Y-%m-%d %H:%M'      # 没有秒的格式
+                        ]
+                        
+                        success = False
+                        for fmt in formats:
+                            try:
+                                converted = pd.to_datetime(df.loc[mask, col], format=fmt, errors='coerce')
+                                if not converted.isna().all():
+                                    df[col] = converted
+                                    success = True
+                                    break
+                            except:
+                                continue
+                        
+                        # 如果所有格式都失败，使用通用转换
+                        if not success:
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                    else:
+                        # 对于其他datetime列，使用普通转换逻辑
+                        # 尝试多种常见格式，提高兼容性
+                        formats = [
+                            '%Y-%m-%dT%H:%M:%S',  # ISO格式
+                            '%Y-%m-%dT%H:%M:%S.%f',  # ISO格式带微秒
+                            '%Y-%m-%d %H:%M:%S',  # 标准格式
+                            '%Y-%m-%d',           # 日期格式
+                            '%m/%d/%Y %H:%M:%S',  # 美国格式
+                            '%m/%d/%Y'            # 美国日期格式
+                        ]
+                        
+                        # 尝试所有格式，直到成功
+                        success = False
+                        for fmt in formats:
+                            try:
+                                converted = pd.to_datetime(df.loc[mask, col], format=fmt, errors='coerce')
+                                # 检查是否成功转换了至少一个值
+                                if not converted.isna().all():
+                                    df.loc[mask, col] = converted
+                                    success = True
+                                    break
+                            except:
+                                continue
+                        
+                        # 如果所有格式都失败，使用通用转换
+                        if not success:
+                            try:
+                                df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], errors='coerce')
+                            except:
+                                # 如果转换失败，保持原数据类型
+                                pass
             except Exception:
                 # 如果转换失败，保持原数据类型
                 continue
@@ -702,41 +799,35 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
                     df[col] = df[col].replace({ '': np.nan, None: np.nan })
                     # 然后转换为数值类型
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-                    # 价格字段应该有实际数值，避免0值被错误处理
-                    # 如果有全0值，可能是数据问题，但我们不做特殊处理
                 else:
                     # 其他数值列正常处理
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-            except Exception as e:
-                # 添加日志以便调试
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"转换列 {col} 为数值类型时出错: {e}")
+            except Exception:
                 # 如果转换失败，保持原数据类型
                 continue
     
     # 确保所有列中的None值被正确处理，不会变成"NaT"
     for col in df.columns:
-        # 替换空字符串为空值（非价格列）
-        if df[col].dtype == 'object' and col not in price_columns:
+        # 替换空字符串为空值（非价格列和非特殊字符串列）
+        if df[col].dtype == 'object' and col not in price_columns and col not in special_string_columns:
             df[col] = df[col].replace('', None)
-        # 确保datetime列中的空值正确处理
-        elif pd.api.types.is_datetime64_any_dtype(df[col].dtype):
-            # 不做特殊处理，因为pandas会自动处理NaT
-            pass
-        # 确保数值列中的空值正确处理
-        elif pd.api.types.is_numeric_dtype(df[col].dtype):
-            # 不做特殊处理，因为pandas会自动处理NaN
-            pass
     
     return df
 
 
 def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
-    """缓存pandas DataFrame结果的装饰器，支持多种返回格式"""
+    """缓存pandas DataFrame结果的装饰器，支持多种返回格式
+    对于包含limit参数的查询，禁止使用Redis缓存，以确保获取最新数据
+    """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # 检查是否包含limit参数，如果有则不使用缓存
+            if 'limit' in kwargs and kwargs['limit'] is not None:
+                logger.debug(f"查询包含limit参数，跳过缓存: {func.__name__}, limit={kwargs['limit']}")
+                # 直接执行原函数并返回结果
+                return func(*args, **kwargs)
+            
             # 生成缓存键，包含所有参数（包括分页参数）
             key = CacheService._generate_key(f"df_{func.__name__}", *args, **kwargs)
             
@@ -997,10 +1088,7 @@ async def async_clear_market_data_cache(code: str = None) -> None:
 
 async def async_update_market_data_and_refresh_cache(data, table_name, code=None):
     """异步更新市场数据并刷新相关缓存"""
-    from ..db import to_sql_async
-    import logging
-    
-    logger = logging.getLogger(__name__)
+    from common.db import to_sql_async
     
     try:
         # 异步写入数据到数据库

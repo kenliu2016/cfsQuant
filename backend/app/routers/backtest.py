@@ -2,17 +2,19 @@ from fastapi import APIRouter
 import pandas as pd
 from ..services.backtest_service import run_backtest, get_backtest_result
 from ..services.market_service import get_candles
-from ..schemas import BacktestRequest, BacktestResp
+from common.schemas import BacktestRequest, BacktestResp
 router = APIRouter(prefix="/api", tags=["backtest"])
 @router.post("/backtest", response_model=BacktestResp)
 async def backtest(req: BacktestRequest):
     
     # 从params中获取所有需要的字段
-    code = req.params['code']
+    # 支持code或excode字段
+    code = req.params.get('code')
     start = req.params['start']
     end = req.params['end']
     interval = req.params['interval']
-    
+    # 打印完整的回测请求信息
+    # print(f"Backtest request: code={code}, start={start}, end={end}, interval={interval}, strategy={req.strategy}")
     # 调用get_candles获取K线数据
     candles_result = get_candles(code, start, end, interval)
     

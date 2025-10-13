@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Query, HTTPException
-from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service
+from fastapi import APIRouter, HTTPException, Query, Body
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("routers.market")
+
+from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service, get_latest_candles
+from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
+from common.db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
-import logging
 
-# 配置日志记录器
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/market", tags=["market"])
+router = APIRouter(prefix="/api/market", tags=["market"])
 
 # 定义通用的数据处理函数
 def process_market_data(df, context=""):
@@ -134,7 +141,7 @@ def process_market_data(df, context=""):
 # 定义通用的日期时间解析函数
 def parse_datetime(dt_str, default=None):
     """
-    尝试多种格式解析日期时间字符串
+    尝试多种格式解析日期时间字符串，确保不会抛出无法序列化的异常
     """
     if dt_str is None:
         return default
@@ -148,7 +155,6 @@ def parse_datetime(dt_str, default=None):
         "%d-%m-%Y %H:%M:%S",
         "%d-%m-%Y",
     ]
-    
     for fmt in formats:
         try:
             return datetime.strptime(dt_str, fmt)
@@ -169,64 +175,26 @@ def parse_datetime(dt_str, default=None):
     except (ValueError, TypeError):
         pass
     
+    # 始终返回默认值，而不是抛出ValueError异常
     if default is not None:
+        logger.warning(f"无法解析日期时间: {dt_str}，使用默认值: {default}")
         return default
     
-    raise ValueError(f"无法解析日期时间: {dt_str}")
+    # 如果没有提供默认值，返回当前时间
+    logger.error(f"无法解析日期时间: {dt_str}，也没有提供默认值，返回当前时间")
+    return datetime.now()
 
 @router.get("/candles")
 def candles(code: str = Query(...), start: str = Query(None), end: str = Query(None), interval: str = Query("1m"), 
                  page: int = Query(None, ge=1, description="页码，从1开始"), 
-                 page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    logger.info(f"接收到candles请求: code={code}, start={start}, end={end}, interval={interval}, page={page}, page_size={page_size}")
+                 page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条"),
+                 limit: int = Query(None, ge=1, le=70000, description="查询最近的记录条数，最大70000条")):
+    logger.info(f"接收到candles请求: code={code}, start={start}, end={end}, interval={interval}, page={page}, page_size={page_size}, limit={limit}")
     
-    # 根据interval参数设置默认的查询时间范围
-    now_raw = datetime.now()
-    today = datetime(now_raw.year, now_raw.month, now_raw.day)
-
-    if not start and not end:
-        logger.info(f"未提供start和end参数，使用默认时间范围")
-        if interval == "1m":
-            # 1m: 默认查询当天的数据
-            start_dt = today
-            end_dt = now_raw
-        elif interval == "5m":
-            # 5m: 默认查询最近5天的数据
-            start_dt = today - timedelta(days=4)
-            end_dt = now_raw
-        elif interval == "15m":
-            # 15m: 默认查询最近15天的数据
-            start_dt = today - timedelta(days=14)
-            end_dt = now_raw
-        elif interval == "30m":
-            # 30m: 默认查询最近30天的数据
-            start_dt = today - timedelta(days=29)
-            end_dt = now_raw
-        elif interval == "1h" or interval == "60m":
-            # 1h或60m: 默认查询最近60天的数据
-            start_dt = today - timedelta(days=59)
-            end_dt = now_raw
-        elif interval == "4h":
-            # 4h: 默认查询最近90天的数据
-            start_dt = today - timedelta(days=89)
-            end_dt = now_raw
-        elif interval == "1D":
-            # 1D: 默认查询最近2个月的数据
-            start_dt = today - timedelta(days=60)
-            end_dt = now_raw
-        elif interval == "1W":
-            # 1W: 默认查询最近8个月的数据
-            start_dt = today - timedelta(days=240)
-            end_dt = now_raw
-        elif interval == "1M":
-            # 1M: 默认查询最近3年的数据
-            start_dt = today - timedelta(days=1095)
-            end_dt = now_raw
-        else:
-            # 默认查询最近1个月的数据
-            start_dt = today - timedelta(days=30)
-            end_dt = now_raw
-    else:
+    # 处理查询逻辑：有时间范围按时间范围查询，没有时间范围按limit查询最近记录
+    if start and end:
+        # 有时间范围时，按时间范围查询
+        logger.info(f"有时间范围参数，按时间范围查询")
         # 将字符串类型的日期时间转换为datetime对象
         try:
             start_dt = parse_datetime(start)
@@ -234,9 +202,14 @@ def candles(code: str = Query(...), start: str = Query(None), end: str = Query(N
         except ValueError:
             logger.error(f"日期时间格式错误: start={start}, end={end}")
             raise HTTPException(status_code=400, detail="日期时间格式错误，请使用YYYY-MM-DD HH:MM:SS或YYYY-MM-DDTHH:MM:SS格式")
+        result = get_candles(code, start_dt, end_dt, interval, page, page_size)
+    else:
+        # 没有时间范围时，按limit参数查询最近的记录
+        logger.info(f"没有时间范围参数，按limit查询最近的记录")
+        # 调用新的方法查询最近的K线数据
+        result = get_latest_candles(code, interval, limit)
 
-    logger.info(f"查询参数: code={code}, start_dt={start_dt}, end_dt={end_dt}, interval={interval}")
-    result = get_candles(code, start_dt, end_dt, interval, page, page_size)
+    logger.info(f"查询参数: code={code}, interval={interval}")
 
     # 处理返回结果
     if isinstance(result, tuple):
@@ -307,7 +280,7 @@ def daily(code: str = Query(...), start: str = Query(None), end: str = Query(Non
             start_dt = today - timedelta(days=60)
             end_dt = now
         elif interval == "1W":
-            # 1W: 默认查询最近8个月的数据
+            # 1W: 默认查询最近8个月的的数据
             start_dt = today - timedelta(days=240)
             end_dt = now
         elif interval == "1M":
@@ -486,25 +459,55 @@ def get_exchanges(active: bool = Query(True, description="是否只获取活跃�
 
 @router.get("/market_codes")
 def get_codes(exchange: str = Query(None, description="交易所代码，不提供则获取所有"), 
-                active: bool = Query(True, description="是否只获取活跃的代码")):
+                code: str = Query(None, description="交易对代码，不提供则获取所有"),
+                active: bool = Query(None, description="是否只获取活跃的代码"),
+                watch: bool = Query(None, description="是否只获取关注的代码")):
     """
-    获取市场代码列表，可以按交易所过滤
+    获取市场代码列表，可以按交易所、交易对、活跃状态和关注状态过滤
     
     Args:
         exchange: 交易所代码，不提供则获取所有
-        active: 是否只获取活跃的代码
+        code: 交易对代码，不提供则获取所有
+        active: 是否只获取活跃的代码，为None时获取所有
+        watch: 是否只获取关注的代码，为None时获取所有
         
     Returns:
         市场代码列表
     """
-    logger.info(f"接收到获取市场代码列表请求: exchange={exchange}, active={active}")
+    logger.info(f"接收到获取市场代码列表请求: exchange={exchange}, code={code}, active={active}, watch={watch}")
     
     try:
         # 直接调用底层服务函数，不经过缓存
-        df = market_data_service.get_market_codes(exchange, active)
-        logger.info(f"直接从服务获取数据，形状={df.shape}")
+        # 注意：需要修改服务函数以支持active为None的情况
+        sql = """
+        SELECT code, exchange, active, excode, watch FROM market_codes
+        WHERE 1=1
+        """
+        
+        params = {}
+        
+        if exchange:
+            sql += " AND exchange = :exchange"
+            params['exchange'] = exchange
+        
+        if code:
+            sql += " AND code ILIKE :code"
+            params['code'] = f"%{code}%"
+        
+        if active is not None:
+            sql += " AND active = :active"
+            params['active'] = active
+            
+        if watch is not None:
+            sql += " AND watch = :watch"
+            params['watch'] = watch
+        
+        sql += " ORDER BY excode"
+        
+        df = fetch_df(sql, **params)
+        logger.info(f"直接从数据库获取数据，形状={df.shape}")
         if not df.empty:
-            logger.info(f"直接从服务获取的数据预览: {df.head(2).to_dict('records')}")
+            logger.info(f"直接从数据库获取的数据预览: {df.head(2).to_dict('records')}")
         
         # 处理结果
         context = f"market_codes - exchange={exchange}, active={active}"
@@ -526,3 +529,266 @@ def get_codes(exchange: str = Query(None, description="交易所代码，不提�
     except Exception as e:
         logger.error(f"获取市场代码列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail="获取市场代码列表失败")
+
+
+@router.post("/market_codes")
+def add_code(code_data: dict):
+    """
+    添加市场代码
+    
+    Args:
+        code_data: 包含市场代码信息的字典
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到添加市场代码请求: {code_data}")
+    
+    try:
+        # 检查必要字段
+        required_fields = ['exchange', 'code', 'excode']
+        for field in required_fields:
+            if field not in code_data:
+                raise HTTPException(status_code=400, detail=f"缺少必要字段: {field}")
+        
+        # 检查是否已存在
+        check_sql = """
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        check_params = {'exchange': code_data['exchange'], 'code': code_data['code']}
+        check_df = fetch_df(check_sql, **check_params)
+        
+        if len(check_df) > 0:
+            raise HTTPException(status_code=400, detail=f"市场代码已存在: {code_data['exchange']}:{code_data['code']}")
+        
+        # 插入新记录
+        insert_sql = """
+        INSERT INTO market_codes (exchange, code, excode, active, watch)
+        VALUES (:exchange, :code, :excode, :active, :watch)
+        """
+        
+        # 设置默认值
+        insert_params = {
+            'exchange': code_data['exchange'],
+            'code': code_data['code'],
+            'excode': code_data['excode'],
+            'active': code_data.get('active', True),
+            'watch': code_data.get('watch', False)
+        }
+        
+        fetch_df(insert_sql, **insert_params)
+        logger.info(f"添加市场代码成功: {code_data['exchange']}:{code_data['code']}")
+        
+        return {"success": True, "message": "添加成功"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"添加市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="添加失败")
+
+
+@router.put("/market_codes")
+def update_code(exchange: str = Query(...), code: str = Query(...), update_data: dict = Body(...)):
+    """
+    更新市场代码
+    
+    Args:
+        exchange: 交易所代码（通过查询参数传递）
+        code: 市场代码（通过查询参数传递）
+        update_data: 要更新的字段
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到更新市场代码请求: {exchange}:{code}, 更新数据: {update_data}")
+    
+    try:
+        # 检查记录是否存在
+        check_sql = """
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        check_params = {'exchange': exchange, 'code': code}
+        check_df = fetch_df(check_sql, **check_params)
+        
+        if len(check_df) == 0:
+            raise HTTPException(status_code=404, detail=f"市场代码不存在: {exchange}:{code}")
+        
+        # 构建更新语句
+        # 只能更新watch和active字段
+        allowed_fields = ['watch', 'active']
+        update_fields = {k: v for k, v in update_data.items() if k in allowed_fields}
+        
+        if not update_fields:
+            return {"success": True, "message": "没有需要更新的字段"}
+        
+        update_sql = """
+        UPDATE market_codes SET
+        """
+        
+        # 添加更新字段
+        set_clauses = []
+        params = {'exchange': exchange, 'code': code}
+        
+        for field, value in update_fields.items():
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+        
+        update_sql += ", ".join(set_clauses)
+        update_sql += " WHERE exchange = :exchange AND code = :code"
+        
+        # 使用execute函数执行UPDATE操作，而不是fetch_df
+        execute(update_sql, **params)
+        logger.info(f"更新市场代码成功: {exchange}:{code}")
+        
+        return {"success": True, "message": "更新成功"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"更新市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="更新失败")
+
+
+@router.delete("/market_codes")
+def delete_code(exchange: str = Query(...), code: str = Query(...)):
+    """
+    删除市场代码
+    
+    Args:
+        exchange: 交易所代码（通过查询参数传递）
+        code: 市场代码（通过查询参数传递）
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到删除市场代码请求: {exchange}:{code}")
+    
+    try:
+        # 检查记录是否存在
+        check_sql = """
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        check_params = {'exchange': exchange, 'code': code}
+        check_df = fetch_df(check_sql, **check_params)
+        
+        if len(check_df) == 0:
+            raise HTTPException(status_code=404, detail=f"市场代码不存在: {exchange}:{code}")
+        
+        # 执行删除
+        delete_sql = """
+        DELETE FROM market_codes WHERE exchange = :exchange AND code = :code
+        """
+        delete_params = {'exchange': exchange, 'code': code}
+        
+        # 使用execute函数执行DELETE操作，而不是fetch_df
+        execute(delete_sql, **delete_params)
+        logger.info(f"删除市场代码成功: {exchange}:{code}")
+        
+        return {"success": True, "message": "删除成功"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"删除市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="删除失败")
+
+
+@router.post("/market_codes/batch_update")
+def batch_update_codes(batch_data: dict):
+    """
+    批量更新市场代码
+    
+    Args:
+        batch_data: 包含keys(要更新的记录键列表)和updates(要更新的字段)的字典
+    
+    Returns:
+        成功信息
+    """
+    logger.info(f"接收到批量更新市场代码请求: {batch_data}")
+    
+    try:
+        # 检查必要字段
+        if 'keys' not in batch_data or 'updates' not in batch_data:
+            raise HTTPException(status_code=400, detail="缺少必要字段: keys 或 updates")
+        
+        keys = batch_data['keys']
+        updates = batch_data['updates']
+        
+        if not keys or not isinstance(keys, list):
+            raise HTTPException(status_code=400, detail="keys必须是非空的列表")
+        
+        # 只能更新watch和active字段
+        allowed_fields = ['watch', 'active']
+        update_fields = {k: v for k, v in updates.items() if k in allowed_fields}
+        
+        if not update_fields:
+            return {"success": True, "message": "没有需要更新的字段"}
+        
+        # 构建更新语句
+        update_sql = """
+        UPDATE market_codes SET
+        """
+        
+        # 添加更新字段
+        set_clauses = []
+        params = {}
+        
+        for field, value in update_fields.items():
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+        
+        update_sql += ", ".join(set_clauses)
+        update_sql += " WHERE CONCAT(exchange, ':', code) = ANY(:keys)"
+        params['keys'] = keys
+        
+        # 使用execute函数而非fetch_df，因为更新操作不返回数据
+        execute(update_sql, **params)
+        logger.info(f"批量更新市场代码成功，共更新 {len(keys)} 条记录")
+        
+        return {"success": True, "message": f"批量更新成功，共更新 {len(keys)} 条记录"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"批量更新市场代码失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="批量更新失败")
+
+
+@router.delete("/candles-cache")
+def delete_candles_cache(code: str = Query(..., description="市场代码，如binance-BTC/USDT"), 
+                         interval: str = Query("1m", description="时间间隔，如1m, 15m, 1h, 1D"),
+                         limit: int = Query(None, ge=1, description="查询的记录条数，如果为None则匹配所有limit值"),
+                         start: str = Query(None, description="开始时间，如果为None则不按时间范围清除"),
+                         end: str = Query(None, description="结束时间，如果为None则不按时间范围清除")):
+    """
+    清除特定K线查询的缓存
+    
+    支持清除基于时间范围的查询缓存或基于limit的查询缓存
+    如果同时提供了时间范围和limit，则优先按时间范围清除
+    """
+    logger.info(f"接收到清除K线缓存请求: code={code}, interval={interval}, limit={limit}, start={start}, end={end}")
+    
+    # 调用清除缓存的服务函数
+    success = clear_candles_cache(code, interval, limit, start, end)
+    
+    if success:
+        logger.info(f"成功清除K线缓存: code={code}, interval={interval}")
+        return {"success": True, "message": "K线缓存清除成功"}
+    else:
+        logger.error(f"清除K线缓存失败: code={code}, interval={interval}")
+        raise HTTPException(status_code=500, detail="清除K线缓存失败")
+
+
+@router.delete("/candles-cache/all")
+def delete_all_candles_cache_endpoint():
+    """
+    清除所有K线相关的缓存
+    """
+    logger.info("接收到清除所有K线缓存的请求")
+    
+    # 调用清除所有缓存的服务函数
+    success = clear_all_candles_cache()
+    
+    if success:
+        logger.info("成功清除所有K线缓存")
+        return {"success": True, "message": "所有K线缓存清除成功"}
+    else:
+        logger.error("清除所有K线缓存失败")
+        raise HTTPException(status_code=500, detail="清除所有K线缓存失败")

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
+import SymbolSelector from '../components/SymbolSelector'
 
 const { Content } = Layout
 
@@ -176,14 +177,14 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
       <Form 
         form={form} 
         layout="vertical" 
-        initialValues={{ code: 'BTCUSDT', range: [dayjs().add(-7,'day'), dayjs()] }}
+        initialValues={{ code: 'binance-BTC/USDT', range: [dayjs().add(-7,'day'), dayjs()] }}
         style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <Row gutter={[8, 0]}>
             <Col span={12}>
               <Form.Item label="标的" name="code" rules={[{required:true}]} labelCol={{span:24}}>
-                <Input style={{width: '100%'}}/>
+                <SymbolSelector style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -234,6 +235,9 @@ export default function StrategyPage(){
     setRefreshTrigger(prev => prev + 1)
   }
 
+
+
+
   const onSelect = async (strategy:any) => {
     if (!strategy) return
     setCurrent(strategy)
@@ -265,8 +269,8 @@ export default function StrategyPage(){
       // 将code, start, end, interval封装成Dict类型的params
       const params = {
         code: v.code,
-        start: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
-        end: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
+        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
         interval: v.interval // 使用用户选择的时间间隔
       }
       // 最终payload只提交封装后的params和strategy
@@ -286,7 +290,7 @@ export default function StrategyPage(){
   const onNew = async () => {
     if (!newName) return message.warning('请输入策略名')
     try {
-      const r = await client.post('/strategies', { name: newName, description: newDescription })
+      const r = await client.post('/api/strategies', { name: newName, description: newDescription })
       if (r.data && r.data.status === 'ok') {
         message.success('已创建策略文件')
         setShowNew(false)
@@ -303,7 +307,7 @@ export default function StrategyPage(){
         // 获取新策略的代码（默认为空）
         setCodeLoading(true)
         try {
-          const codeRes = await client.get(`/strategies/${newName}/code`)
+          const codeRes = await client.get(`/api/strategies/${newName}/code`)
           setCode(codeRes.data?.code || '')
         } catch (error) {
           console.error('获取策略代码失败:', error)
@@ -335,7 +339,7 @@ export default function StrategyPage(){
       title: '确认删除策略',
       content: `将删除策略 ${current.name} 的文件及其数据库记录。`,
       onOk: async ()=>{
-        await client.delete(`/strategies/${current.name}`)
+        await client.delete(`/api/strategies/${current.name}`)
         message.success('已删除')
         setCurrent(null)
         setCode('')
@@ -344,6 +348,8 @@ export default function StrategyPage(){
       }
     })
   }
+
+
 
   return (
     <Layout style={{ background:'#fff', height: '100vh', overflow: 'hidden' }}>
@@ -358,7 +364,12 @@ export default function StrategyPage(){
             </div>
             {/* 左下：执行参数和按钮 */}
             <div style={{ height: '36%' }}>
-              <UserOperationPanel form={form} current={current} onRun={onRun} isBacktesting={isBacktesting} />
+              <UserOperationPanel 
+                form={form} 
+                current={current} 
+                onRun={onRun} 
+                isBacktesting={isBacktesting}
+              />
             </div>
           </Col>
           {/* 右侧：代码编辑区 */}

@@ -3,13 +3,19 @@ import uuid
 import itertools
 import time
 import json
-import logging
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("services.tuning")
+
 from datetime import datetime
 import traceback  # 添加traceback导入
 
-# 创建logger实例
-logger = logging.getLogger('tuning_service')
-logger.setLevel(logging.INFO)
 import inspect
 from typing import Dict, Any, Optional, List
 import pandas as pd
@@ -17,16 +23,14 @@ import sqlalchemy
 from .backtest_service import run_backtest
 from .market_service import MarketDataService
 from .runs_service import delete_run
-from ..db import fetch_df, to_sql, execute
-from ..celery_config import celery_app
+from common.db import fetch_df, to_sql, execute
+from config.celery_config import celery_app, IS_SECONDARY_INSTANCE
+import requests
+import os
 
-# 使用Python内置logging模块
-logger.info('tuning_service logger initialized')
+# 明确定义内存优化标志
+enable_memory_optimization = True  # 默认为开启内存优化
 
-# 日志配置已完成
-
-# 全局变量：启用内存优化模式
-enable_memory_optimization = True
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
 def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1):
@@ -48,6 +52,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         Dict: 调优结果
     """
     logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, code={code}")
+    # 记录当前实例类型，确认任务实际在哪里执行
+    logger.info(f"任务{task_id}正在{IS_SECONDARY_INSTANCE and 'secondary' or 'primary'}实例上执行")
     
     # 初始化计数器和结果列表
     completed = 0
@@ -84,7 +90,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                     logger.error(f"更新任务状态失败（方法3）: {str(e3)}")
                     try:
                         # 如果所有方法都失败，使用原始的execute_async函数
-                        from ..db import execute_async
+                        from common.db import execute_async
                         import asyncio
                         asyncio.run(execute_async("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time))
                     except Exception as e4:
@@ -160,10 +166,11 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
             try:
                 p = {k:v for k,v in zip(keys, vals)} if keys else {}
                 # 构建完整的参数对象，包含interval
+                # 使用正确的参数名：start_time和end_time，而不是start和end
                 full_params = {
                     'code': code,
-                    'start': start_time,
-                    'end': end_time,
+                    'start_time': start_time,
+                    'end_time': end_time,
                     'interval': interval,
                     **p
                 }
@@ -193,7 +200,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                 try:
                     # 首先检查run_id是否存在于runs表中
                     # 这个检查是为了避免外键约束错误
-                    run_exists_query = "SELECT 1 FROM runs WHERE run_id = :run_id LIMIT 1"
+                    run_exists_query = "SELECT 1 FROM backtest_runs WHERE run_id = :run_id LIMIT 1"
                     run_exists_result = fetch_df(run_exists_query, **{"run_id": run_id})
                     
                     if not run_exists_result.empty:
@@ -301,7 +308,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
     
     Args:
         strategy: 策略名称
-        code: 交易对代码
+        code: 交易对代码（注意：这里实际上接收的是前端传入的excode值）
         params_grid: 参数网格
         interval: K线周期
         start: 开始时间（旧参数名，向后兼容）
@@ -358,7 +365,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
             'total': total,
             'finished': 0,
             'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-            # 新增字段
+            # 注意：这里存储的是前端传入的excode值
             'code': code,
             'interval': interval,
             'start_time': start_time,  # 保存开始时间
@@ -372,10 +379,77 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
     
     # 使用Celery提交异步任务
     try:
-        # 注意：这里传递total作为额外参数，以便在任务中访问
-        run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+        # 检查是否为第二套实例
+        logger.info(f"当前实例类型: {'secondary' if IS_SECONDARY_INSTANCE else 'primary'}")
+        if IS_SECONDARY_INSTANCE:
+            # 在第二套实例上，直接提交任务
+            run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+            logger.info(f"在secondary实例上直接提交调优任务: {task_id}")
+        else:
+            # 在主实例上，需要将任务转发到第二套实例
+            max_retries = 3
+            retry_count = 0
+            forwarded = False
+            
+            while retry_count < max_retries and not forwarded:
+                retry_count += 1
+                try:
+                    # 获取secondary实例的URL（在Docker网络中可以直接使用服务名）
+                    secondary_url = os.environ.get("SECONDARY_BACKEND_URL", "http://backend_secondary:8000/api/tuning/forward")
+                    logger.info(f"尝试转发任务到secondary实例(重试{retry_count}/{max_retries}): {secondary_url}")
+                    
+                    # 构建转发请求的数据
+                    forward_data = {
+                        "task_id": task_id,
+                        "strategy": strategy,
+                        "code": code,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "params_grid": params_grid,
+                        "interval": interval,
+                        "total": total
+                    }
+                    
+                    # 设置超时和重试策略
+                    session = requests.Session()
+                    adapter = requests.adapters.HTTPAdapter(max_retries=3)
+                    session.mount('http://', adapter)
+                    
+                    # 发送请求到secondary实例
+                    response = session.post(secondary_url, json=forward_data, timeout=30)
+                    
+                    # 检查响应状态
+                    if response.status_code == 200:
+                        logger.info(f"成功将调优任务转发到secondary实例: {task_id}")
+                        forwarded = True
+                    else:
+                        logger.error(f"转发调优任务失败，状态码: {response.status_code}")
+                        logger.error(f"响应内容: {response.text}")
+                except requests.ConnectionError as conn_error:
+                    logger.error(f"连接secondary实例失败: {str(conn_error)}")
+                    logger.error(f"错误类型: {type(conn_error).__name__}, 任务ID: {task_id}")
+                    # 连接错误时等待一段时间后重试
+                    if retry_count < max_retries:
+                        time.sleep(1)
+                except requests.Timeout as timeout_error:
+                    logger.error(f"连接secondary实例超时: {str(timeout_error)}")
+                    logger.error(f"错误类型: {type(timeout_error).__name__}, 任务ID: {task_id}")
+                    # 超时错误时等待一段时间后重试
+                    if retry_count < max_retries:
+                        time.sleep(1)
+                except Exception as forward_error:
+                    logger.error(f"转发调优任务到secondary实例失败: {str(forward_error)}")
+                    logger.error(f"错误类型: {type(forward_error).__name__}, 任务ID: {task_id}")
+                    # 其他错误不再重试
+                    break
+            
+            # 如果所有重试都失败，尝试在本地执行任务
+            if not forwarded:
+                logger.warning(f"所有转发尝试都失败，在primary实例上执行调优任务: {task_id}")
+                run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
     except Exception as e:
         # 如果提交失败，更新任务状态为错误
+        logger.error(f"提交调优任务失败: {str(e)}")
         try:
             execute("UPDATE tuning_tasks SET status = :status, error = :error WHERE task_id = :task_id", task_id=task_id, status='error', error=str(e))
         except Exception as db_error:
@@ -409,8 +483,9 @@ def get_all_tuning_tasks() -> List[Dict[str, Any]]:
                 'start_time': str(row['start_time']) if pd.notna(row['start_time']) else None,
                 'created_at': str(row['created_at']),
                 'error': row['error'] if pd.notna(row['error']) else None,
-                # 新增字段
-                'code': row['code'] if pd.notna(row['code']) else '',  # 标的代码
+                # 注意：在数据库中存储的code字段实际上是前端传入的excode值
+                'code': row['code'] if pd.notna(row['code']) else '',  # 数据库中存储的是excode值
+                'excode': row['code'] if pd.notna(row['code']) else '',  # 保持与前端一致的excode值
                 'params': row['params'] if pd.notna(row['params']) else '{}'  # 参数网格JSON字符串
             }
             tasks.append(task_info)
@@ -450,8 +525,6 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
         if result.empty:
             # 添加任务ID频率检查，避免频繁警告
             import time
-            import logging
-            logger = logging.getLogger(__name__)
             if not hasattr(get_tuning_status, 'last_warned'):
                 get_tuning_status.last_warned = {}
             current_time = time.time()
@@ -485,7 +558,7 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                                r.trade_count, r.win_rate, r.final_return, 
                                r.sharpe, r.max_drawdown 
                         FROM tuning_results t 
-                        LEFT JOIN runs r ON t.run_id = r.run_id 
+                        LEFT JOIN backtest_runs r ON t.run_id = r.run_id 
                         WHERE t.task_id = :task_id 
                         ORDER BY t.created_at DESC"""
         
@@ -512,6 +585,11 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                 }
                 runs.append(run_info)
         
+        # 从tuning_tasks表中获取code值
+        code_query = "SELECT code FROM tuning_tasks WHERE task_id = :task_id"
+        code_result = fetch_df(code_query, **{"task_id": task_id})
+        code_value = code_result['code'].iloc[0] if not code_result.empty else ''
+        
         status_info = {
             'task_id': task_id,
             'status': result.iloc[0]['status'],
@@ -523,7 +601,9 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
             'runs': runs,  # 返回实际的已完成组合数据
             'runs_total_count': runs_total_count,
             'page': page,
-            'page_size': page_size
+            'page_size': page_size,
+            'code': code_value,  # 注意：数据库中存储的code字段实际上是前端传入的excode值
+            'excode': code_value  # 保持与前端一致的excode值
         }
         
         # 移除调试日志，避免不必要的日志输出

@@ -15,36 +15,30 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple, Protocol
 from dataclasses import dataclass, field
 from pathlib import Path
-import logging
 import importlib.util
-from ..db import fetch_df, to_sql, get_engine
-from ..common import setup_logger_with_file_handler
+from common.db import fetch_df, to_sql, get_engine
+from common import LoggerFactory
 
 # 配置回测服务日志记录器
-backtest_service_logger = setup_logger_with_file_handler(
-    logger_name="backtest_service",
-    log_filename="backtest_service.log",
-    log_level=logging.INFO,
-    mode='w'
-)
+backtest_service_logger = LoggerFactory.get_logger("backtest_service")
 
 # 常量定义
-STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
+STRATEGY_DIR = Path(__file__).resolve().parents[2] / "strategies"
 
 # 默认回测参数
 DEFAULT_BACKTEST_PARAMS = {
-    "initial_capital": 1000000.0,    # 初始资金
-    "fee_rate": 0.001,               # 手续费率
-    "slippage": 0.0002,              # 滑点
-    "min_trade_amount": 5000.0,      # 最小交易金额
-    "min_trade_qty": 0.01,           # 最小交易数量
-    "min_position_change": 0.05,     # 最小仓位变动阈值
-    "lot_size": 0.0001,              # 最小交易单位
-    "cooldown_bars": 0,              # 交易冷却期（K线数）
-    "stop_loss_pct": 0.25,           # 止损百分比
-    "take_profit_pct": 0.15,         # 止盈百分比
-    "max_position": 1.0,             # 最大仓位比例
-    "logging_enabled": True,         # 日志开关
+    "E_initial_capital": 1000000.0,    # 初始资金
+    "E_fee_rate": 0.001,               # 手续费率
+    "E_slippage": 0.0002,              # 滑点
+    "E_min_trade_amount": 5000.0,      # 最小交易金额
+    "E_min_trade_qty": 0.01,           # 最小交易数量
+    "E_min_position_change": 0.05,     # 最小仓位变动阈值
+    "E_lot_size": 0.0001,              # 最小交易单位
+    "E_cooldown_bars": 0,              # 交易冷却期（K线数）
+    "E_stop_loss_pct": 0.25,           # 止损百分比
+    "E_take_profit_pct": 0.15,         # 止盈百分比
+    "E_max_position": 1.0,             # 最大仓位比例
+    "E_logging_enabled": True,         # 日志开关
 }
 
 @dataclass
@@ -80,8 +74,8 @@ class BacktestResult:
     """回测结果数据类"""
     run_id: str
     code: str
-    start: str
-    end: str
+    start_time: str
+    end_time: str
     strategy: str
     params: Dict[str, Any]
     nav: pd.Series
@@ -116,12 +110,7 @@ class BacktestLogger:
     
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
-        self.logger = setup_logger_with_file_handler(
-            logger_name="backtest_engine",
-            log_filename="backtest_engine_debug.log",
-            log_level=logging.INFO,
-            mode='w'
-        )
+        self.logger = LoggerFactory.get_logger("backtest_engine")
     
     def _safe_format(self, value: Any, format_str: str) -> str:
         """安全格式化数值"""
@@ -277,11 +266,11 @@ class TradingDecisionEngine:
     """交易决策引擎 - 决定是否执行交易"""
     
     def __init__(self, params: Dict[str, Any]):
-        self.min_trade_amount = float(params.get("min_trade_amount", 5000.0))
-        self.min_trade_qty = float(params.get("min_trade_qty", 0.01))
-        self.min_position_change = float(params.get("min_position_change", 0.02))
-        self.lot_size = float(params.get("lot_size", 0.0))
-        self.cooldown_bars = int(params.get("cooldown_bars", 0))
+        self.min_trade_amount = float(params.get("E_min_trade_amount", 5000.0))
+        self.min_trade_qty = float(params.get("E_min_trade_qty", 0.01))
+        self.min_position_change = float(params.get("E_min_position_change", 0.02))
+        self.lot_size = float(params.get("E_lot_size", 0.0))
+        self.cooldown_bars = int(params.get("E_cooldown_bars", 0))
         self.last_trade_bar = -9999
     
     def should_trade(self, signal: StrategySignal, current_position: float, 
@@ -454,14 +443,24 @@ class DatabaseManager:
     
     def _save_run_record(self, result: BacktestResult, metrics: Dict[str, float]):
         """保存运行记录"""
+        # 确保时间戳字段不为空字符串，避免PostgreSQL timestamp字段格式错误
+        start_time_value = result.start_time if result.start_time and result.start_time.strip() else None
+        end_time_value = result.end_time if result.end_time and result.end_time.strip() else None
+        
+        # 如果时间戳为空，使用当前时间作为默认值
+        if not start_time_value:
+            start_time_value = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if not end_time_value:
+            end_time_value = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
         run_data = pd.DataFrame([{
             'run_id': result.run_id,
             'strategy': result.strategy,
             'code': result.code,
-            'start_time': result.start,
-            'end_time': result.end,
+            'start_time': start_time_value,
+            'end_time': end_time_value,
             'interval': result.params.get('interval', '1m'),
-            'initial_capital': result.params.get('initial_capital', 100000),
+            'initial_capital': result.params.get('E_initial_capital', 100000),
             'final_capital': metrics.get('final_capital'),
             'final_return': metrics.get('final_return'),
             'max_drawdown': metrics.get('max_drawdown'),
@@ -473,8 +472,8 @@ class DatabaseManager:
             'paras': json.dumps(result.params)
         }])
         
-        run_data.to_sql("runs", con=self.engine, if_exists="append", index=False)
-        self.logger.info(f"成功写入runs表: {result.run_id}")
+        run_data.to_sql("backtest_runs", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入backtest_runs表: {result.run_id}")
     
     def _save_trades(self, trades: List[TradeRecord]):
         """保存交易记录"""
@@ -499,8 +498,8 @@ class DatabaseManager:
         } for trade in trades]
         
         trades_df = pd.DataFrame(trades_data)
-        trades_df.to_sql("trades", con=self.engine, if_exists="append", index=False)
-        self.logger.info(f"成功写入trades表: {len(trades_df)} 条记录")
+        trades_df.to_sql("backtest_trades", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入backtest_trades表: {len(trades_df)} 条记录")
     
     def _save_equity_curve(self, run_id: str, code: str, nav_list: List[float], 
                           datetime_index: pd.Index):
@@ -512,8 +511,8 @@ class DatabaseManager:
             "drawdown": pd.Series(nav_list).expanding().max().subtract(pd.Series(nav_list)).div(
                 pd.Series(nav_list).expanding().max()).fillna(0)
         })
-        equity_df.to_sql("equity_curve", con=self.engine, if_exists="append", index=False)
-        self.logger.info(f"成功写入equity_curve: {len(equity_df)} 条记录")
+        equity_df.to_sql("backtest_equity_curve", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入backtest_equity_curve: {len(equity_df)} 条记录")
     
     def _save_grid_levels(self, run_id: str, grid_levels: List[Dict[str, Any]]):
         """保存网格级别数据"""
@@ -562,8 +561,8 @@ class DatabaseManager:
             if grid_data:
                 try:
                     grid_df = pd.DataFrame(grid_data)
-                    grid_df.to_sql("grid_levels", con=self.engine, if_exists="append", index=False)
-                    self.logger.info(f"成功写入grid_levels: {len(grid_df)} 条记录")
+                    grid_df.to_sql("backtest_grid_levels", con=self.engine, if_exists="append", index=False)
+                    self.logger.info(f"成功写入backtest_grid_levels: {len(grid_df)} 条记录")
                 except Exception as e:
                     self.logger.error(f"写入grid_levels表失败: {str(e)}")
                     # 这里不抛出异常，避免影响整体回测结果的保存
@@ -629,15 +628,15 @@ class BacktestEngine:
     
     def _initialize_components(self, params: Dict[str, Any]):
         """初始化回测组件"""
-        self.logger = BacktestLogger(params.get("logging_enabled", True))
+        self.logger = BacktestLogger(params.get("E_logging_enabled", True))
         
-        initial_capital = float(params.get("initial_capital", 100000.0))
+        initial_capital = float(params.get("E_initial_capital", 100000.0))
         self.position_manager = PositionManager(initial_capital)
         
         self.risk_manager = RiskManager(
-            float(params.get("stop_loss_pct", 0.15)),
-            float(params.get("take_profit_pct", 0.25)),
-            float(params.get("max_position", 1.0))
+            float(params.get("E_stop_loss_pct", 0.15)),
+            float(params.get("E_take_profit_pct", 0.25)),
+            float(params.get("E_max_position", 1.0))
         )
         
         self.decision_engine = TradingDecisionEngine(params)
@@ -699,9 +698,10 @@ class BacktestEngine:
         backtest_service_logger.info(f"回测ID={backtest_id}: 开始执行回测，数据点数量={len(df)}, 信号数量={len(signals)}")
         
         # 参数
-        fee_rate = float(params.get("fee_rate", 0.001))
-        base_slippage = float(params.get("slippage", 0.0002))
-        code = params.get("code", "")
+        fee_rate = float(params.get("E_fee_rate", 0.001))
+        base_slippage = float(params.get("E_slippage", 0.0002))
+        # 支持code或excode字段
+        code = params.get("code")
         
         # 回测数据
         data = df.reset_index(drop=True)
@@ -877,14 +877,32 @@ class BacktestEngine:
         # 构建结果
         nav_series = pd.Series(nav_list, index=pd.Index(data["datetime"], dtype='datetime64[ns]'))
         
+        # 创建一个新的params字典，确保只包含start_time和end_time，不包含start和end
+        clean_params = params.copy()
+        if 'start' in clean_params:
+            del clean_params['start']
+        if 'end' in clean_params:
+            del clean_params['end']
+
         # 创建BacktestResult对象
+        # 确保start_time和end_time有合理的默认值，避免数据库timestamp字段插入空字符串
+        start_time_value = clean_params.get("start_time", "")
+        end_time_value = clean_params.get("end_time", "")
+        
+        # 如果时间戳为空，使用数据的时间范围
+        if not start_time_value and len(data["datetime"]) > 0:
+            start_time_value = data["datetime"][0].strftime('%Y-%m-%d %H:%M:%S')
+        if not end_time_value and len(data["datetime"]) > 0:
+            end_time_value = data["datetime"][-1].strftime('%Y-%m-%d %H:%M:%S')
+        
+        
         result = BacktestResult(
             run_id=backtest_id,
             code=code,
-            start=params.get("start", ""),
-            end=params.get("end", ""),
+            start_time=start_time_value,
+            end_time=end_time_value,
             strategy=strategy_name,
-            params=params,
+            params=clean_params,
             nav=nav_series,
             metrics=metrics,
             signals=executed_signals,
@@ -917,10 +935,10 @@ class BacktestEngine:
         return {
             "run_id": backtest_id,
             "code": code,
-            "start": result.start,
-            "end": result.end,
+            "start_time": result.start_time,
+            "end_time": result.end_time,
             "strategy": strategy_name,
-            "params": params,
+            "params": clean_params,
             "nav": nav_series,
             "metrics": metrics,
             "signals": formatted_signals,  # 使用格式化后的signals
@@ -938,7 +956,7 @@ def run_backtest(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -
 def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
     """获取回测结果"""
     try:
-        df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=backtest_id)
+        df_m = fetch_df("SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid", rid=backtest_id)
         df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
         
         # 直接获取网格级别数据
@@ -958,7 +976,7 @@ def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
         signals = []
         try:
             # 尝试从trades表获取交易数据作为信号数据
-            df_t = fetch_df("SELECT datetime, side, price, qty FROM trades WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+            df_t = fetch_df("SELECT datetime, side, price, qty FROM backtest_trades WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
             if not df_t.empty:
                 for _, row in df_t.iterrows():
                     signals.append({

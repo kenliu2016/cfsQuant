@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Form, Row, Col, Card, Button, Select, InputNumber, List, Progress, message, Tooltip, Input, DatePicker } from 'antd'
 import { InfoCircleOutlined, SettingOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
+import SymbolSelector from '../components/SymbolSelector'
 
 // 定义参数配置类型
 interface ParamConfig {
@@ -29,45 +30,13 @@ export default function Tuning() {
   const [task, setTask] = useState<string | null>(null);
   const [status] = useState<{status?: string, total?: number, finished?: number, runs?: any[]} | null>(null);
   const [timer, setTimer] = useState<any>(null);
-  const [symbols, setSymbols] = useState<{ value: string; label: string }[]>([]);
-  const [filteredSymbols, setFilteredSymbols] = useState<{ value: string; label: string }[]>([]);
-  const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([]);
-  const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([]);
-  const [strategyParams, setStrategyParams] = useState<{[key: string]: ParamConfig}>({});
-  const [isLoading, setIsLoading] = useState(false);
+  const [strategies, setStrategies] = useState<{ value: string; label: string }[]>([])
+  const [filteredStrategies, setFilteredStrategies] = useState<{ value: string; label: string }[]>([])
+  const [strategyParams, setStrategyParams] = useState<{[key: string]: ParamConfig}>({})
+  const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate();
 
-  // 解析CSV文件加载标的数据
-  const loadSymbols = async () => {
-    try {
-      const response = await fetch('/src/assets/symbols.csv');
-      const csvText = await response.text();
-      
-      // 解析CSV
-      const lines = csvText.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
-      
-      const symbolData = [];
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
-        const symbolObj = headers.reduce((obj, header, index) => {
-          obj[header] = values[index]?.trim();
-          return obj;
-        }, {} as any);
-        
-        // 将code和name格式化为Select组件需要的格式
-        symbolData.push({
-          value: symbolObj.code,
-          label: `${symbolObj.code} - ${symbolObj.name}`
-        });
-      }
-      
-      setSymbols(symbolData);
-      setFilteredSymbols(symbolData);
-    } catch (error) {
-      console.error('加载标的数据失败:', error);
-    }
-  }
+
   
   // 加载策略列表
   const loadStrategies = async () => {
@@ -140,21 +109,7 @@ export default function Tuning() {
     }
   }
 
-  // 使用useCallback缓存搜索函数
-  const handleSymbolSearch = useCallback((inputValue: string) => {
-    if (!inputValue) {
-      setFilteredSymbols(symbols);
-      return;
-    }
-    
-    const lowerInput = inputValue.toLowerCase();
-    // 优化：预先转换输入值为小写，避免重复调用toLowerCase
-    const filtered = symbols.filter(symbol => 
-      symbol.value.toLowerCase().includes(lowerInput) ||
-      symbol.label.toLowerCase().includes(lowerInput)
-    );
-    setFilteredSymbols(filtered);
-  }, [symbols])
+
   
   // 使用useCallback缓存策略搜索函数
   const handleStrategySearch = useCallback((inputValue: string) => {
@@ -181,8 +136,7 @@ export default function Tuning() {
   }
 
   useEffect(()=>{
-    // 初始化时加载标的数据和策略列表
-    loadSymbols();
+    // 初始化时加载策略列表
     loadStrategies();
     return ()=> { if (timer) clearInterval(timer) }
   },[timer])
@@ -225,13 +179,13 @@ export default function Tuning() {
         strategy: v.strategy, 
         params: paramsGrid,
         params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
-        code: v.code, 
-        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
-        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), // 修改参数名与后端一致
+        excode: v.code, // 使用excode字段提交
+        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
+        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), 
         interval: v.interval
       };
       
-      const r = await client.post('/tuning', payload)
+      const r = await client.post('/api/tuning', payload)
       const task_id = r.data.task_id
       setTask(task_id)
       message.success('任务已提交: ' + task_id)
@@ -358,12 +312,17 @@ export default function Tuning() {
     <div className="tuning-page">
       <Card title={<div className="card-title"><SettingOutlined className="title-icon" /> 参数寻优</div>} className="main-card">
         <Form form={form} layout="vertical" initialValues={{ 
-          code: 'BTCUSDT', 
+          code: 'binance-BTC/USDT', 
           range: [dayjs().add(-30, 'day'), dayjs()],
           interval: '1m',
           paramsConfig: {} 
         }}>
           <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Item label="标的" name="code" rules={[{required: true}]}>
+                <SymbolSelector className="form-select" />
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={12} md={6}>
               <Form.Item label="策略" name="strategy" rules={[{required: true}]}>
                 <Select
@@ -373,18 +332,6 @@ export default function Tuning() {
                   onSearch={handleStrategySearch}
                   onChange={handleStrategyChange}
                   options={filteredStrategies}
-                  className="form-select"
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Form.Item label="标的" name="code" rules={[{required: true}]}>
-                <Select
-                  placeholder="请选择或输入标的"
-                  showSearch
-                  filterOption={false}
-                  onSearch={handleSymbolSearch}
-                  options={filteredSymbols}
                   className="form-select"
                 />
               </Form.Item>

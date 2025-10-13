@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Select, Button, Modal, Checkbox, message, DatePicker } from 'antd';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Button, Modal, Checkbox, message, DatePicker } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, BarChartOutlined, LineChartOutlined, CodeOutlined, CloseOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import client from '../api/client';
 import { formatPriceWithUnit } from '../utils/priceFormatter';
+import SymbolSelector from '../components/SymbolSelector';
 
 // 定义回测结果类型
 interface BacktestSignal {
@@ -29,6 +30,51 @@ interface StrategyBacktestState {
   gridLevels?: GridLevel[]; // 网格级别数据（包含名称和价格）
 }
 
+// 定义市场概览项类型
+interface MarketOverviewItem {
+  id: string;
+  code: string;
+  price: string | number;
+  change: number;
+  changePercent: number;
+  trend: 'up' | 'down' | 'neutral';
+}
+
+// 从API获取watch状态为true的market_codes（用于市场动态卡片）
+  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
+  const fetchWatchListFromAPI = async () => {
+    try {
+      const response = await client.get('/api/market/market_codes', {
+        params: {
+          watch: true
+        }
+      });
+      
+      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
+      const marketCodes = response.data.rows || [];
+      // 将数据转换为前端需要的格式
+      return marketCodes.map((item: any) => ({
+        code: item.excode,
+        excode: item.excode, 
+        exchange: item.exchange
+      }));
+    } catch (error) {
+      console.error('Failed to fetch watch list from API:', error);
+      // API调用失败时使用空数组或默认数据
+      return [];
+    }
+  };
+
+// 定义MarketOverviewItem接口
+interface MarketOverviewItem {
+  id: string;
+  code: string;
+  price: number | string;
+  change: number;
+  changePercent: number;
+  trend: 'up' | 'down' | 'neutral';
+}
+
 // 格式化价格显示
 const formatPrice = (value: number) => {
   return formatPriceWithUnit(value);
@@ -36,22 +82,22 @@ const formatPrice = (value: number) => {
 
 const Dashboard: React.FC = () => {
   // 市场概览数据
-  const [marketOverview, setMarketOverview] = useState<any[]>([]);
+  const [marketOverview, setMarketOverview] = useState<MarketOverviewItem[]>([]);
   // 上次刷新时间
   const [lastUpdated, setLastUpdated] = useState<string>('');
   // 当前选中股票的概览数据
-  const [selectedSymbolData, setSelectedSymbolData] = useState<any>(null);
+  const [selectedSymbolData, setSelectedSymbolData] = useState<MarketOverviewItem | null>(null);
   // 图表数据
   const [candleData, setCandleData] = useState<any[]>([]);
   // 加载状态
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(false);
   // 股票列表
-  const [symbols, setSymbols] = useState<any[]>([]);
+  const [, setSymbols] = useState<any[]>([]);
   // 选中的股票
-  const [symbol, setSymbol] = useState<string>('');
+  const [symbol, setSymbol] = useState<string>('binance-BTC/USDT');
   // 时间周期
-  const [timeframe, setTimeframe] = useState<string>('1D');
+  const [timeframe, setTimeframe] = useState<string>('1m');
   // 图表类型 - 修正类型定义，使用candlestick而不是candle
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
   // 日期范围选择状态
@@ -59,40 +105,35 @@ const Dashboard: React.FC = () => {
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
   // 日历选择器是否有光标激活
   const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
+  // 使用useCallback优化onSymbolsLoaded回调，避免触发无限循环
+  const handleSymbolsLoaded = useCallback((_loadedSymbols: any[]) => {
+    // 过滤出watch=true的代码，而不是直接使用所有active=true的代码
+    // 这里我们需要从watchlist数据中获取，而不是直接使用loadedSymbols
+    // 由于这里无法直接获取watch状态，我们暂时不更新symbols状态
+    // 因为实际使用的watchlist数据是通过fetchWatchListFromAPI获取的
+  }, []);
   // 定时器引用，用于5秒后自动收起日历选择器
   const datePickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 存储从API获取的查询参数
   const [cachedQueryParams, setCachedQueryParams] = useState<any>(null);
   // 刷新按钮加载状态
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  // 交易所列表
-  const [exchanges, setExchanges] = useState<{ value: string; label: string }[]>([]);
-  // 选中的交易所
-  const [exchange, setExchange] = useState<string>('');
-  // 加载交易所状态
-  const [isLoadingExchanges, setIsLoadingExchanges] = useState<boolean>(false);
 
 
   // 策略相关状态
   const [showStrategiesModal, setShowStrategiesModal] = useState<boolean>(false);
-  // 未使用的策略选择状态 - 保留结构
-  // const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
   const [floatingStrategies, setFloatingStrategies] = useState<Array<{id: string, name: string, position: {x: number, y: number}}>>([]);
-  // API获取的策略数据 - 添加默认的硬编码策略数据
   const [strategiesData, setStrategiesData] = useState<Array<{id: string, name: string}>>([
     { id: '1', name: 'Hardcoded Strategy 1' },
     { id: '2', name: 'Hardcoded Strategy 2' },
     { id: '3', name: 'Hardcoded Strategy 3' }
   ]);
-  // 策略加载状态 - 暂未使用但保留结构
-  const [_, __] = useState<boolean>(false);
   
   // 回测相关状态
   const [strategyBacktestStates, setStrategyBacktestStates] = useState<Record<string, StrategyBacktestState>>({});
   
   // 从API获取策略数据
   const fetchStrategiesFromAPI = async () => {
-
     try {
       const response = await client.get('/api/strategies');
       // 假设后端返回的数据结构是 { rows: [{ id: string, name: string }] }
@@ -102,62 +143,6 @@ const Dashboard: React.FC = () => {
       console.error('Failed to fetch strategies from API:', error);
       // API调用失败时使用空数组，避免显示mock数据
       setStrategiesData([]);
-    }
-  };
-  
-  // 从API获取交易所列表
-  const fetchExchangesFromAPI = async () => {
-    try {
-      setIsLoadingExchanges(true);
-      const response = await client.get('/market/market_codes/exchanges?active=true');
-      const exchangeList = response.data.rows || response.data || [];
-      setExchanges(exchangeList.map((e: any) => ({
-        value: e.exchange,
-        label: e.exchange
-      })));
-    } catch (error) {
-      console.error('Failed to fetch exchanges from API:', error);
-      // API调用失败时使用默认数据
-      setExchanges([
-        { value: 'NASDAQ', label: 'NASDAQ' },
-        { value: 'NYSE', label: 'NYSE' },
-        { value: 'HKEX', label: 'HKEX' }
-      ]);
-    } finally {
-      setIsLoadingExchanges(false);
-    }
-  };
-  
-  // 根据选中的交易所获取代码列表
-  const fetchSymbolsByExchange = async (selectedExchange: string) => {
-    try {
-      setIsLoadingSymbols(true);
-      const response = await client.get(`/market/market_codes?exchange=${selectedExchange}&active=true`);
-      const symbolList = response.data.rows || response.data || [];
-      setSymbols(symbolList.map((s: any) => ({
-        code: s.code,
-        name: s.name,
-        exchange: s.exchange,
-        type: s.type
-      })));
-      // 如果有数据，设置第一个为默认选中
-      if (symbolList.length > 0) {
-        setSymbol(symbolList[0].code);
-      }
-    } catch (error) {
-      console.error('Failed to fetch symbols by exchange from API:', error);
-      // API调用失败时使用默认数据
-      const defaultSymbols = [
-        { code: 'AAPL', name: '苹果', exchange: selectedExchange, type: 'Stock' },
-        { code: 'MSFT', name: '微软', exchange: selectedExchange, type: 'Stock' },
-        { code: 'AMZN', name: '亚马逊', exchange: selectedExchange, type: 'Stock' },
-      ];
-      setSymbols(defaultSymbols);
-      if (defaultSymbols.length > 0) {
-        setSymbol(defaultSymbols[0].code);
-      }
-    } finally {
-      setIsLoadingSymbols(false);
     }
   };
 
@@ -182,6 +167,30 @@ const Dashboard: React.FC = () => {
       }
     };
   }, [showDatePicker, isDatePickerFocused]);
+
+  // 防抖函数，用于限制频繁调用
+  const debounce = (func: Function, delay: number) => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    return (...args: any[]) => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => func.apply(null, args), delay);
+    };
+  };
+
+  // 防抖版本的数据加载函数
+  const debouncedLoadMarketOverview = useCallback(
+    debounce(async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
+      await loadMarketOverview(symbolsData);
+    }, 300),
+    [timeframe]
+  );
+
+  const debouncedFetchData = useCallback(
+    debounce(async (startTime?: Date, endTime?: Date) => {
+      await fetchData(startTime, endTime);
+    }, 300),
+    [symbol, timeframe]
+  );
 
   // 运行策略回测
   const runBacktest = async (strategyId: string, strategyName: string) => {
@@ -239,12 +248,43 @@ const Dashboard: React.FC = () => {
       }
       
       // 准备调用后端run_backtest函数的参数
-      const backtestParams = cachedQueryParams || {
-        code: symbol,
-        interval: timeframe,
-        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-        end: new Date().toISOString()
-      };
+      let backtestParams;
+      
+      // 优先使用用户通过日历选择器选择的时间区间
+      if (dateRange[0] && dateRange[1]) {
+        backtestParams = {
+          code: symbol,
+          interval: timeframe,
+          // 使用format方法生成不带时区信息的本地时间字符串，解决时区偏差问题
+          start_time: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
+          end_time: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
+        };
+      } else {
+        // 如果没有选择时间区间，则使用缓存的参数或默认的7天时间范围
+        backtestParams = cachedQueryParams || {
+          code: symbol,
+          interval: timeframe,
+          // 使用Date对象创建本地时间字符串
+          start_time: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }).replace(/\//g, '-'),
+          end_time: new Date().toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }).replace(/\//g, '-')
+        };
+      }
       
       const response = await client.post('/api/backtest', {
         params: backtestParams,
@@ -284,7 +324,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // 处理添加策略并自动运行回测
+  // 处理添加策略并自动运行回测 - 场景4: 策略添加后自动回测
   const handleAddStrategy = async (strategyId: string, strategyName: string) => {
     // 检查是否已存在同名策略
     const existingIndex = floatingStrategies.findIndex(s => s.name === strategyName);
@@ -324,7 +364,7 @@ const Dashboard: React.FC = () => {
     
     // 如果选择了股票，则自动运行回测
     if (symbol) {
-      await runBacktest(strategyId, strategyName);
+      await runBacktest(strategyId, strategyName); // 自动触发场景4的API调用
     } else {
       message.warning('请先选择股票再添加策略');
     }
@@ -343,55 +383,122 @@ const Dashboard: React.FC = () => {
   }, [showStrategiesModal]);
 
   // 加载symbol数据和市场概览数据
+  // 场景5: 首页加载时 - 组件首次挂载时触发
   useEffect(() => {
     const loadSymbols = async () => {
-      // 先加载交易所列表
-      await fetchExchangesFromAPI();
-      // 如果没有选中的交易所，默认选择第一个交易所
-      if (exchanges.length > 0 && !exchange) {
-        setExchange(exchanges[0].value);
+      setIsLoadingSymbols(true);
+      try {
+        // 市场动态卡片使用watch=true的数据
+        const watchlistData = await fetchWatchListFromAPI();
+        // 更新symbols状态
+        setSymbols(watchlistData);
+        
+        if (watchlistData.length > 0) {
+          await loadMarketOverview(watchlistData);
+          // 如果当前没有选中的symbol，则选中第一个
+          if (!symbol) {
+            setSymbol(watchlistData[0].code);
+          }
+        } else {
+          console.warn('No watchlist data from API');
+          setMarketOverview([]);
+          setSelectedSymbolData(null);
+        }
+      } catch (error) {
+        console.error('Error loading symbols:', error);
+      } finally {
+        setIsLoadingSymbols(false);
       }
     };
     loadSymbols();
   }, []);
   
-  // 当选中的交易所变化时，加载对应的代码列表
-  useEffect(() => {
-    if (exchange) {
-      fetchSymbolsByExchange(exchange);
+  // 刷新市场概览数据的函数
+  // 场景3: 市场概览刷新 - 点击刷新按钮时触发
+  const refreshMarketOverview = async () => {
+    if (isRefreshing) return;
+    
+    setIsRefreshing(true);
+    try {
+      // 刷新市场动态卡片数据（watch=true）
+      const watchlistData = await fetchWatchListFromAPI();
+      
+      if (watchlistData.length > 0) {
+        // 加载最新的市场概览数据
+        await loadMarketOverview(watchlistData);
+      } else {
+        message.warning('暂无关注列表数据');
+        setMarketOverview([]);
+        setSelectedSymbolData(null);
+      }
+    } catch (error) {
+      console.error('Failed to refresh market overview:', error);
+      message.error('刷新市场概览失败');
+    } finally {
+      setIsRefreshing(false);
     }
-  }, [exchange]);
+  };
 
 
 
   
   // 优化：并行处理市场概览和K线数据请求
+  // 场景1: symbol选择器变更，场景2: timeframe选择变更 - 当symbol、timeframe或dateRange变化时触发
   useEffect(() => {
-    if (symbols.length > 0 && symbol) {
-      // 创建一个内存缓存键
-      const cacheKey = `${symbol}_${timeframe}`;
-      const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
-      const now = Date.now();
-      
-      // 如果距离上次请求不足500毫秒，不重复请求（防止快速切换导致的频繁请求）
-      if (lastRequestTime && now - parseInt(lastRequestTime) < 500) {
-        return;
+    // 定义一个本地函数来获取watch=true的代码列表
+    const getWatchListData = async () => {
+      try {
+        const watchlistData = await fetchWatchListFromAPI();
+        if (watchlistData.length > 0) {
+          // 如果当前没有选中的symbol，则选中第一个
+          if (!symbol) {
+            setSymbol(watchlistData[0].code);
+          }
+          return watchlistData;
+        }
+        return [];
+      } catch (error) {
+        console.error('Failed to fetch watch list:', error);
+        return [];
       }
+    };
+
+    // 先获取watch=true的代码列表，然后再处理其他逻辑
+    const processData = async () => {
+      const watchlistData = await getWatchListData();
       
-      sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
-      
-      // 并行发起两个请求
-      Promise.all([
-        loadMarketOverview(symbols),
-        fetchData()
-      ]).catch(error => {
-        console.error('数据加载失败:', error);
-      });
-    } else if (symbols.length > 0) {
-      // 只有股票列表但没有选中股票时，只加载市场概览
-      loadMarketOverview(symbols);
-    }
-  }, [timeframe, symbol, symbols]);
+      if (watchlistData.length > 0 && symbol) {
+        // 创建一个内存缓存键，包含dateRange信息
+        const cacheKey = `${symbol}_${timeframe}_${dateRange[0]?.valueOf() || '0'}_${dateRange[1]?.valueOf() || '0'}`;
+        const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
+        const now = Date.now();
+        
+        // 如果距离上次请求不足800毫秒，不重复请求（增加节流时间）
+        if (lastRequestTime && now - parseInt(lastRequestTime) < 800) {
+          return;
+        }
+        
+        sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
+        
+        // 使用防抖版本的函数，避免频繁请求
+        // 直接传递watchlistData而不是symbols
+        debouncedLoadMarketOverview(watchlistData);
+        
+        // 并行发起fetchData请求
+        if (dateRange[0] && dateRange[1]) {
+          debouncedFetchData(dateRange[0].toDate(), dateRange[1].toDate());
+        } else {
+          debouncedFetchData();
+        }
+      } else if (watchlistData.length > 0) {
+        // 只有股票列表但没有选中股票时，只加载市场概览
+        debouncedLoadMarketOverview(watchlistData);
+      }
+    };
+
+    // 执行处理函数
+    processData();
+  }, [timeframe, symbol, dateRange, debouncedLoadMarketOverview, debouncedFetchData]);
 
   // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
   useEffect(() => {
@@ -404,48 +511,74 @@ const Dashboard: React.FC = () => {
   }, [marketOverview, symbol]);
 
   // 调用API获取市场概览数据 - 使用批量查询优化性能并添加内存缓存
-  const loadMarketOverview = async (symbolsData: { code: string; name: string; exchange: string; type: string }[]) => {
+  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
+  const loadMarketOverview = async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
     try {
-      // 创建一个包含市场概览卡片symbol和选中symbol的集合，自动去重
-      const uniqueSymbols = new Set<string>();
+      // 只使用API返回的watch=true的symbol，不再添加额外的symbol
+      const codes = symbolsData.map(item => item.code).join(',');
       
-      // 添加市场概览卡片的所有symbol
-      symbolsData.forEach(item => uniqueSymbols.add(item.code));
+      // 创建缓存键
+      const cacheKey = `market_overview_${codes}_${timeframe}`;
       
-      // 添加被选择器选中的symbol（如果存在且不在市场概览卡片中）
-      if (symbol && !symbolsData.find(item => item.code === symbol)) {
-        uniqueSymbols.add(symbol);
+      // 尝试从内存缓存获取数据
+      const cachedData = sessionStorage.getItem(cacheKey);
+      if (cachedData) {
+        const parsedData = JSON.parse(cachedData);
+        // 检查缓存是否在15秒内有效（增加缓存时间以减少请求）
+        if (Date.now() - parsedData.timestamp < 15000) {
+          setMarketOverview(parsedData.data);
+          const lastUpdatedNow = new Date();
+          setLastUpdated(lastUpdatedNow.toLocaleTimeString());
+          return parsedData.data; // 返回缓存数据以支持Promise.all
+        }
       }
       
-      // 转换为数组并连接
-      const codes = Array.from(uniqueSymbols).join(',');
-      
-      // 移除缓存逻辑，始终从API获取最新数据
-      
-      // 根据不同的时间周期设置对应的limit参数
-      const timeframeToLimit = {
-        '1m': 2,
-        '5m': 15,
-        '15m': 45,
-        '30m': 90,
-        '60m': 180,
-        '1h': 180,
-        '4h': 720,
-        '1D': 2,
-        '1W': 21,
-        '1M': 92
+      // 根据时间周期动态计算limit值
+      const calculateLimit = (timeframe: string): number => {
+        // 提取时间周期中的数字部分和原始单位（保留大小写）
+        const match = timeframe.match(/^(\d+)([mhdDWM])$/);
+        if (match) {
+          const number = parseInt(match[1]);
+          const unit = match[2];
+          
+          // 对于以m或h结尾的，limit = 数字 * 3
+          if (unit === 'm' || unit === 'h' || unit === 'H') {
+            return number * 3;
+          }
+          // 对于D结尾的，固定为3
+          else if (unit === 'D') {
+            return 3;
+          }
+          // 对于W结尾的，固定为21
+          else if (unit === 'W') {
+            return 21;
+          }
+          // 对于M结尾的，固定为93
+          else if (unit === 'M') {
+            return 93;
+          }
+        }
+        
+        // 默认值
+        return 3;
       };
       
-      // 获取当前时间周期对应的limit值，如果没有匹配则默认使用2
-      const limit = timeframeToLimit[timeframe as keyof typeof timeframeToLimit] || 2;
+      // 计算当前时间周期对应的limit值
+      const limit = calculateLimit(timeframe);
       
-      // 生成精确到分钟的时间戳
+      // 生成精确到分钟的本地时间字符串，避免时区问题
       const timestampNow = new Date();
-      // 格式化为YYYY-MM-DDTHH:mm（精确到分钟）
-      const timestamp = `${timestampNow.getFullYear()}-${String(timestampNow.getMonth() + 1).padStart(2, '0')}-${String(timestampNow.getDate()).padStart(2, '0')}T${String(timestampNow.getHours()).padStart(2, '0')}:${String(timestampNow.getMinutes()).padStart(2, '0')}`;
+      const timestamp = timestampNow.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).replace(/\//g, '-').replace(' ', 'T');
       
       // 调用批量查询API
-      const response = await client.get('/market/batch-candles', {
+      const response = await client.get('/api/market/batch-candles', {
         params: {
           codes: codes,
           interval: timeframe,
@@ -457,7 +590,7 @@ const Dashboard: React.FC = () => {
       const batchData = response.data;
       
       // 处理批量数据，为每个股票创建概览信息
-      const marketOverviewData = symbolsData.map(item => {
+      const marketOverviewData: MarketOverviewItem[] = symbolsData.map(item => {
         const symbolData = batchData[item.code];
         
         if (symbolData) {
@@ -483,13 +616,12 @@ const Dashboard: React.FC = () => {
               const changePercent = ((latestBar.close - previousBar.close) / previousBar.close * 100).toFixed(2);
               
               return {
-                id: item.code,
-                code: item.code,
-                name: item.name,
+                id: item.excode,
+                code: item.excode,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
-                trend: isUp ? 'up' : 'down'
+                trend: isUp ? 'up' : 'down' as const
               };
             } else if (sortedData.length === 1) {
               // 如果排序后只有一个有效数据，使用开盘价和收盘价计算变化
@@ -499,13 +631,12 @@ const Dashboard: React.FC = () => {
               const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
               
               return {
-                id: item.code,
-                code: item.code,
-                name: item.name,
+                id: item.excode,
+                code: item.excode,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
-                trend: isUp ? 'up' : 'down'
+                trend: isUp ? 'up' : 'down' as const
               };
             }
           } else if (dataArray.length === 1) {
@@ -516,26 +647,24 @@ const Dashboard: React.FC = () => {
             const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
             
             return {
-              id: item.code,
-              code: item.code,
-              name: item.name,
-              price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
-              change: parseFloat(change),
-              changePercent: parseFloat(changePercent),
-              trend: isUp ? 'up' : 'down'
-            };
+                id: item.excode,
+                code: item.excode,
+                price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
+                change: parseFloat(change),
+                changePercent: parseFloat(changePercent),
+                trend: isUp ? 'up' : 'down' as const
+              };
           }
         }
         
         // 如果没有数据或数据无效，返回基本信息
         return {
-          id: item.code,
-          code: item.code,
-          name: item.name,
+          id: item.excode,
+          code: item.excode,
           price: '-',
           change: 0,
           changePercent: 0,
-          trend: 'neutral'
+          trend: 'neutral' as const
         };
       });
       
@@ -544,6 +673,12 @@ const Dashboard: React.FC = () => {
       // 更新最后刷新时间
       const lastUpdatedNow = new Date();
       setLastUpdated(lastUpdatedNow.toLocaleTimeString());
+      
+      // 保存到内存缓存
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        data: marketOverviewData,
+        timestamp: Date.now()
+      }));
       
       return marketOverviewData; // 返回数据以支持Promise.all
     } catch (error) {
@@ -560,20 +695,51 @@ const Dashboard: React.FC = () => {
   // 已移除时间范围选择相关函数
 
   // 获取蜡烛图数据 - 添加内存缓存优化
+  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)中被调用
   const fetchData = async (startTime?: Date, endTime?: Date): Promise<any[]> => {
     if (!symbol) return [];
     
     setIsLoading(true);
-    try {
+    try {  
       const params: any = {
         code: symbol,
         interval: timeframe
       };
       
-      // 如果提供了开始和结束时间，则添加到参数中
+      // 检查是否有指定时间范围
       if (startTime && endTime) {
-        params.start = startTime.toISOString();
-        params.end = endTime.toISOString();
+        // 有时间范围时，按时间范围查询，不使用limit参数
+        // 使用本地时间格式，解决时区偏差问题
+        params.start_time = startTime.toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).replace(/\//g, '-');
+        params.end_time = endTime.toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).replace(/\//g, '-');
+      } else {
+        // 没有时间范围时，按limit参数查询最近的记录
+        // 计算limit值
+        let limit = 2; // 默认值
+        // 提取时间周期中的数字部分和单位
+        const match = timeframe.match(/^(\d+)([mhdDWM])$/i);
+        if (match) {
+          const number = parseInt(match[1]);
+          // 对于所有以m,h,D,W,M结尾的时间周期，limit值等于数字部分乘以1001
+          limit = number * 1001;
+        }
+        params.limit = limit;
       }
       
       // 创建缓存键
@@ -594,11 +760,28 @@ const Dashboard: React.FC = () => {
         }
       }
       
-      const response = await client.get('/market/candles', { params });
+      const response = await client.get('/api/market/candles', { params });
       // 暂存query_params
-      if (response && response.data && response.data.query_params) {
-        setCachedQueryParams(response.data.query_params);
+      let updatedQueryParams = response?.data?.query_params || {};
+      if (response && response.data && response.data.rows && response.data.rows.length > 0) {
+        // 提取最小和最大时间
+        const sortedRows = [...response.data.rows].sort((a: any, b: any) => 
+          new Date(a.datetime).getTime() - new Date(b.datetime).getTime()
+        );
+        const minTime = sortedRows[0].datetime;
+        const maxTime = sortedRows[sortedRows.length - 1].datetime;
+        
+        // 更新query_params
+        updatedQueryParams = {
+          ...updatedQueryParams,
+          start_time: minTime,
+          end_time: maxTime
+        };
       }
+      
+      // 设置更新后的query_params
+      setCachedQueryParams(updatedQueryParams);
+      
       if (response && response.data && response.data.rows) {
         const processedData = response.data.rows.map((item: any) => ({
           ...item,
@@ -606,9 +789,9 @@ const Dashboard: React.FC = () => {
         }));
         setCandleData(processedData);
         
-        // 保存到内存缓存
+        // 保存到内存缓存，使用更新后的query_params
         sessionStorage.setItem(cacheKey, JSON.stringify({
-          query_params: response.data.query_params,
+          query_params: updatedQueryParams,
           rows: processedData,
           timestamp: Date.now()
         }));
@@ -643,16 +826,39 @@ const Dashboard: React.FC = () => {
       };
     }
 
-    // 准备数据
+    // 准备数据 - 确保时间显示与后端返回一致，避免时区转换问题
   const dates = candleData.map(item => {
-  const date = new Date(item.datetime);
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-});
+    // 直接使用item.datetime中的时间值，不进行时区转换
+    // 假设后端返回的时间格式为YYYY-MM-DDTHH:mm:ss或类似格式
+    const dateStr = item.datetime;
+    
+    // 处理ISO格式的时间字符串 (YYYY-MM-DDTHH:mm:ss.sssZ)
+    if (dateStr.includes('T')) {
+      // 分割日期和时间部分
+      const [datePart, timePart] = dateStr.split('T');
+      // 移除可能的时区信息
+      const cleanTimePart = timePart.includes('Z') ? timePart.split('Z')[0] : timePart;
+      // 只保留时:分部分
+      const timeDisplay = cleanTimePart.split('.')[0].substring(0, 5);
+      return `${datePart} ${timeDisplay}`;
+    } 
+    // 处理已经是YYYY-MM-DD HH:mm:ss格式的时间字符串
+    else if (dateStr.includes(' ')) {
+      const [datePart, timePart] = dateStr.split(' ');
+      // 只保留时:分部分
+      const timeDisplay = timePart.substring(0, 5);
+      return `${datePart} ${timeDisplay}`;
+    }
+    
+    // 如果格式不匹配，回退到原始解析方式
+    const date = new Date(dateStr);
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  });
 
     const candlestickData = candleData.map(item => [
   item.open,
@@ -676,20 +882,35 @@ const Dashboard: React.FC = () => {
           if (signalsOfType.length > 0) {
             // 查找信号对应的K线数据点索引
               const dataPoints = signalsOfType.map((signal: BacktestSignal) => {
-                const signalDate = new Date(signal.datetime).getTime();
+                // 使用相同的时间解析逻辑，确保与图表显示一致
+                let signalDate: number;
+                let candleDate: number;
+                
+                try {
+                  // 尝试直接使用getTime()获取时间戳，如果失败则使用原始解析方式
+                  signalDate = new Date(signal.datetime).getTime();
+                } catch (error) {
+                  console.error('Failed to parse signal datetime:', signal.datetime, error);
+                  signalDate = 0;
+                }
+                
                 // 找到最接近的K线数据点
                 let closestIndex = -1;
                 let minTimeDiff = Infinity;
                 
                 // 遍历所有K线数据点，找到时间差最小的那个
                 for (let i = 0; i < candleData.length; i++) {
-                  const candleDate = new Date(candleData[i].datetime).getTime();
-                  const timeDiff = Math.abs(candleDate - signalDate);
-                  
-                  // 扩大时间窗口到5分钟，提高匹配成功率
-                  if (timeDiff < 5 * 60 * 1000 && timeDiff < minTimeDiff) {
-                    minTimeDiff = timeDiff;
-                    closestIndex = i;
+                  try {
+                    candleDate = new Date(candleData[i].datetime).getTime();
+                    const timeDiff = Math.abs(candleDate - signalDate);
+                    
+                    // 扩大时间窗口到5分钟，提高匹配成功率
+                    if (timeDiff < 5 * 60 * 1000 && timeDiff < minTimeDiff) {
+                      minTimeDiff = timeDiff;
+                      closestIndex = i;
+                    }
+                  } catch (error) {
+                    console.error('Failed to parse candle datetime:', candleData[i].datetime, error);
                   }
                 }
                 
@@ -1157,19 +1378,7 @@ const Dashboard: React.FC = () => {
                 type="text" 
                 size="small" 
                 style={{ color: '#8E8EA0', fontSize: '12px', marginLeft: '8px' }}
-                onClick={async () => {
-                  if (symbols.length > 0 && !isRefreshing) {
-                    setIsRefreshing(true);
-                    try {
-                      await loadMarketOverview(symbols);
-                      message.success('数据已刷新');
-                    } catch (error) {
-                      message.error('刷新失败');
-                    } finally {
-                      setIsRefreshing(false);
-                    }
-                  }
-                }}
+                onClick={refreshMarketOverview}
                 loading={isRefreshing}
               >
                 {isRefreshing ? '刷新中...' : '刷新'}
@@ -1247,40 +1456,14 @@ const Dashboard: React.FC = () => {
         {/* 顶部工具栏 */}
         <div style={{ padding: '12px 16px', backgroundColor: '#1E1E2E', borderBottom: '1px solid #3E3E5A' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
-            {/* 交易所选择器 */}
-            <div style={{ marginRight: '16px' }}>
-              <Select
-                value={exchange}
-                onChange={setExchange}
-                style={{ width: '120px', backgroundColor: '#FFFFFF', borderColor: '#4E4E6A', color: '#000' }}
-                options={exchanges}
-                loading={isLoadingExchanges}
-                placeholder="选择交易所"
-                size="small"
-                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } } }}
-              />
-            </div>
-            
-            {/* 股票选择器 */}
-            <div style={{ marginRight: '16px' }}>
-              <Select
-                value={symbol}
-                onChange={setSymbol}
-                style={{ width: '120px', backgroundColor: '#FFFFFF', borderColor: '#4E4E6A', color: '#000' }}
-                options={symbols.map(s => ({ label: s.code, value: s.code }))}
-                loading={isLoadingSymbols}
-                placeholder="选择代码"
-                size="small"
-                disabled={!exchange}
-                styles={{ popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } } }}
-                optionFilterProp="label"
-                filterOption={(input, option) => {
-                  if (!option) return false;
-                  return ((option.label as string).toLowerCase().includes(input.toLowerCase())) ||
-                    (symbols.find(s => s.code === option.value)?.name.toLowerCase().includes(input.toLowerCase()) || false);
-                }}
-              />
-            </div>
+            {/* 交易对选择器 */}
+              <div style={{ marginRight: '16px' }}>
+                <SymbolSelector 
+                  value={symbol}
+                  onChange={setSymbol}
+                  onSymbolsLoaded={handleSymbolsLoaded}
+                />
+              </div>
 
             {/* 股票价格和变动信息 */}
             {selectedSymbolData && (

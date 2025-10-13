@@ -1,10 +1,10 @@
 import time
-from ..common import LoggerFactory
+from common import LoggerFactory
 import threading
 import time
 from datetime import datetime, timedelta
-from ..db import fetch_df, execute
-from ..celery_config import celery_app
+from common.db import fetch_df, execute
+from ...config.celery_config import celery_app
 from .tuning_service import run_parameter_tuning
 
 # 配置日志
