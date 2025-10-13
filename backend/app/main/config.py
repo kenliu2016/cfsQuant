@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     # 多租户配置
     DEFAULT_TENANT_ID: str = "public"
+    # 安全配置
+    JWT_SECRET_KEY: str = "changeme"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     
     class Config:
         env_file = ".env"

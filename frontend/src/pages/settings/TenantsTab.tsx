@@ -32,6 +32,10 @@ const TenantsTab: React.FC = () => {
   };
 
   const handleToggleActive = async (record: TenantRecord, value: boolean) => {
+    if (record.tenant_id === 'public') {
+      message.warning('默认租户无法停用');
+      return;
+    }
     try {
       setLoading(true);
       await client.patch(`/api/tenants/${record.tenant_id}`, { is_active: value });
@@ -74,6 +78,7 @@ const TenantsTab: React.FC = () => {
         <Space>
           <Switch
             checked={record.is_active !== false}
+            disabled={record.tenant_id === 'public'}
             onChange={(value) => handleToggleActive(record, value)}
           />
           {record.tenant_id === tenantId && <Tag color="blue">当前</Tag>}

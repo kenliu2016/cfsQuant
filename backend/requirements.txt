@@ -15,3 +15,5 @@ numpy
 scipy
 matplotlib
 requests
+passlib[bcrypt]
+python-jose[cryptography]

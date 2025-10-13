@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request, Depends
 from typing import Any, Dict, Optional
 
 from ..services.live_trading_service import LiveTradingService
 from ..main.config import settings
+from ..main.dependencies import require_user
 
-router = APIRouter(prefix="/api/live-trading", tags=["live-trading"])
+router = APIRouter(prefix="/api/live-trading", tags=["live-trading"], dependencies=[Depends(require_user)])
 
 
 def _service_from_request(request: Request) -> LiveTradingService:

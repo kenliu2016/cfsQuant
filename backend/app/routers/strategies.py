@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request, Depends
 
 from ..services.strategies_service import (
     alist_strategies,
@@ -8,8 +8,9 @@ from ..services.strategies_service import (
     create_strategy as create_strategy_service,
     delete_strategy as delete_strategy_service,
 )
+from ..main.dependencies import require_user
 
-router = APIRouter(prefix="/api/strategies", tags=["strategies"])
+router = APIRouter(prefix="/api/strategies", tags=["strategies"], dependencies=[Depends(require_user)])
 
 @router.get("")
 async def strategies(request: Request):

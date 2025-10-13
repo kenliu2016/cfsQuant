@@ -6,6 +6,7 @@ import pandas as pd
 
 from common.db import fetch_df, execute
 from common import LoggerFactory
+from .auth_service import create_user
 
 logger = LoggerFactory.get_logger("tenant_service")
 
@@ -50,7 +51,9 @@ def get_tenant(tenant_id: str) -> Optional[Dict[str, Any]]:
     return record
 
 
-def create_tenant(tenant_id: str, name: str, description: str = "", settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def create_tenant(tenant_id: str, name: str, description: str = "", settings: Optional[Dict[str, Any]] = None,
+                  admin_email: Optional[str] = None, admin_password: Optional[str] = None,
+                  admin_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Create a tenant row.
     """
@@ -72,7 +75,17 @@ def create_tenant(tenant_id: str, name: str, description: str = "", settings: Op
         created_at=now,
         updated_at=now,
     )
-    return get_tenant(tenant_id) or {}
+    tenant = get_tenant(tenant_id) or {}
+
+    if admin_email and admin_password:
+        try:
+            create_user(tenant_id, admin_email, admin_password, admin_name, is_admin=True)
+        except Exception as exc:
+            logger.error("Failed to create tenant admin: %s", exc)
+            execute("DELETE FROM tenants WHERE tenant_id = :tenant_id", tenant_id=tenant_id)
+            raise
+
+    return tenant
 
 
 def update_tenant(

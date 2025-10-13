@@ -21,6 +21,9 @@ async def tenant_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
     finally:
+        extra_token = getattr(request.state, "_tenant_token", None)
+        if extra_token is not None:
+            reset_tenant(extra_token)
         reset_tenant(token)
     return response
 

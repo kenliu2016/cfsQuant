@@ -8,11 +8,12 @@ from common.logger import LoggerFactory
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("routers.tuning")
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request, Depends
 from ..services.tuning_service import start_tuning_async, get_tuning_status, get_all_tuning_tasks, delete_tuning_task, run_parameter_tuning
+from ..main.dependencies import require_user
 
 # 创建用于 /api/tuning 前缀的路由器（与前端保持一致）
-router = APIRouter(prefix="/api/tuning", tags=["tuning"])
+router = APIRouter(prefix="/api/tuning", tags=["tuning"], dependencies=[Depends(require_user)])
 # 定义共享的端点处理函数
 async def create_tuning_handler(payload: dict = Body(...), request: Request = None):
     strategy = payload.get("strategy")

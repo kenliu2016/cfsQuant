@@ -27,6 +27,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
 
   const fetchTenants = useCallback(async () => {
+    const token = window.localStorage.getItem(`cfsToken_${tenantId}`);
+    if (!token) {
+      setTenants([]);
+      return;
+    }
     try {
       const response = await client.get('/api/tenants', {
         params: { active: null },
@@ -43,6 +48,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     } catch (error) {
       console.error('Failed to load tenants', error);
+      setTenants([
+        {
+          tenant_id,
+          name: tenant_id,
+          is_active: true,
+        },
+      ]);
     }
   }, [tenantId]);
 

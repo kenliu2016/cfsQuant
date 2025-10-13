@@ -20,15 +20,33 @@ const client = axios.create({
 })
 
 client.interceptors.request.use((config) => {
+  const tenantId = typeof window !== 'undefined' ? window.localStorage.getItem('cfsTenantId') || 'public' : 'public';
   if (typeof window !== 'undefined') {
-    const tenantId = window.localStorage.getItem('cfsTenantId') || 'public';
     if (tenantId) {
       config.headers = config.headers ?? {};
       config.headers['X-Tenant-ID'] = tenantId;
     }
+    const token = window.localStorage.getItem(`cfsToken_${tenantId}`);
+    if (token) {
+      config.headers = config.headers ?? {};
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
   return config;
 })
+
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (typeof window !== 'undefined' && error?.response?.status === 401) {
+      const tenantId = window.localStorage.getItem('cfsTenantId') || 'public';
+      window.localStorage.removeItem(`cfsToken_${tenantId}`);
+      window.localStorage.removeItem(`cfsUser_${tenantId}`);
+      window.dispatchEvent(new CustomEvent('auth:logout', { detail: { tenantId } }));
+    }
+    return Promise.reject(error);
+  },
+)
 
 export default client
 

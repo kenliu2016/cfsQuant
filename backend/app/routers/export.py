@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 import io, pandas as pd, sqlalchemy as sa
 from common.db import engine
 from ..main.config import settings
-router = APIRouter(prefix="/api", tags=["export"])
+from ..main.dependencies import require_user
+router = APIRouter(prefix="/api", tags=["export"], dependencies=[Depends(require_user)])
 @router.get("/runs/{run_id}/export/csv")
 async def export_csv(run_id: str, kind: str = "equity", request: Request = None):
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID

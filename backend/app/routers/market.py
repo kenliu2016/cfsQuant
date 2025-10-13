@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Body, Request
+from fastapi import APIRouter, HTTPException, Query, Body, Request, Depends
 import sys
 import os
 
@@ -15,8 +15,9 @@ from common.db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
 from ..main.config import settings
+from ..main.dependencies import require_user
 
-router = APIRouter(prefix="/api/market", tags=["market"])
+router = APIRouter(prefix="/api/market", tags=["market"], dependencies=[Depends(require_user)])
 
 # 定义通用的数据处理函数
 def process_market_data(df, context=""):

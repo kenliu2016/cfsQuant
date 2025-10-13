@@ -6,11 +6,18 @@ import { useTenant } from '../context/TenantContext';
 const TenantSelector: React.FC = () => {
   const { tenantId, tenants, setTenantId, refreshTenants } = useTenant();
 
-  const options = tenants.map((tenant) => ({
-    label: tenant.name || tenant.tenant_id,
-    value: tenant.tenant_id,
-    disabled: tenant.is_active === false,
-  }));
+  const options = tenants.length
+    ? tenants.map((tenant) => ({
+        label: tenant.name || tenant.tenant_id,
+        value: tenant.tenant_id,
+        disabled: tenant.is_active === false,
+      }))
+    : [
+        {
+          label: tenantId,
+          value: tenantId,
+        },
+      ];
 
   return (
     <Space>

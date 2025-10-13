@@ -10,11 +10,12 @@ from common.logger import LoggerFactory
 logger = LoggerFactory.get_logger("routers.runs")
 
 from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs, get_run_equity, get_run_trades, get_run_klines
-from fastapi import HTTPException, APIRouter, Request
+from fastapi import HTTPException, APIRouter, Request, Depends
 from ..main.config import settings
+from ..main.dependencies import require_user
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api", tags=["runs"])
+router = APIRouter(prefix="/api", tags=["runs"], dependencies=[Depends(require_user)])
 
 # 定义批量删除请求模型
 class BatchDeleteRequest(BaseModel):

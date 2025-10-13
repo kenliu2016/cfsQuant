@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 import pandas as pd
 from ..services.backtest_service import run_backtest, get_backtest_result
 from ..services.market_service import get_candles
 from common.schemas import BacktestRequest, BacktestResp
-router = APIRouter(prefix="/api", tags=["backtest"])
+from ..main.dependencies import require_user
+router = APIRouter(prefix="/api", tags=["backtest"], dependencies=[Depends(require_user)])
 @router.post("/backtest", response_model=BacktestResp)
 async def backtest(req: BacktestRequest, request: Request):
     

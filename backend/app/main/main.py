@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .errors import global_exception_handler, validation_exception_handler
 from .middleware import logging_middleware, tenant_middleware
-from ..routers import strategies, market, backtest, health, export, runs, tuning, trades, tenants, live_trading
+from ..routers import strategies, market, backtest, health, export, runs, tuning, trades, tenants, live_trading, auth
 from fastapi.exceptions import RequestValidationError
 
 app = FastAPI(title=settings.APP_TITLE, version=settings.APP_VERSION)
@@ -37,3 +37,4 @@ app.include_router(tuning.router)
 app.include_router(trades.router)
 app.include_router(tenants.router)
 app.include_router(live_trading.router)
+app.include_router(auth.router)

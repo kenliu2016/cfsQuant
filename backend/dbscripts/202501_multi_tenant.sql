@@ -58,6 +58,33 @@ CREATE TABLE IF NOT EXISTS public.tenant_exchange_accounts (
     updated_at timestamp DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.tenant_users (
+    id uuid PRIMARY KEY,
+    tenant_id varchar NOT NULL REFERENCES public.tenants(tenant_id) ON DELETE CASCADE,
+    email varchar NOT NULL,
+    hashed_password varchar NOT NULL,
+    full_name varchar,
+    is_admin boolean DEFAULT FALSE,
+    is_active boolean DEFAULT TRUE,
+    created_at timestamp DEFAULT now(),
+    updated_at timestamp DEFAULT now(),
+    UNIQUE(tenant_id, email)
+);
+
+INSERT INTO public.tenant_users (id, tenant_id, email, hashed_password, full_name, is_admin, is_active, created_at, updated_at)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    'public',
+    'admin@local',
+    '$2b$12$DfJXwyMRaQlWcVjmSY3F5eQlf96hosAQ/14IZQMi18RnBvRU6YYD.',
+    'System Admin',
+    TRUE,
+    TRUE,
+    NOW(),
+    NOW()
+)
+ON CONFLICT (tenant_id, email) DO NOTHING;
+
 -- Adjust constraints for tenant scope
 ALTER TABLE public.sys_strategies
     DROP CONSTRAINT IF EXISTS sys_strategies_name_key;
@@ -119,5 +146,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_exchange_accounts_unique
 
 CREATE INDEX IF NOT EXISTS idx_tenant_exchange_accounts_active
     ON public.tenant_exchange_accounts (tenant_id, is_active);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_users_active
+    ON public.tenant_users (tenant_id, is_active);
 
 COMMIT;

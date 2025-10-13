@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Layout, Menu, Button } from 'antd';
-import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Layout, Menu, Button, Space } from 'antd';
+import { MenuFoldOutlined, MenuUnfoldOutlined, LogoutOutlined } from '@ant-design/icons';
+import { Routes, Route, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Strategy from './pages/Strategy';
 import Tuning from './pages/Tuning';
@@ -11,12 +11,15 @@ import ReportDetail from './pages/ReportDetail';
 import Settings from './pages/Settings';
 import './custom-menu.css';
 import TenantSelector from './components/TenantSelector';
+import Login from './pages/Login';
+import { useAuth } from './context/AuthContext';
 
 const { Sider, Content, Header } = Layout;
 
-const App: React.FC = () => {
+const AppLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(true);
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   const toggleCollapsed = () => {
     setCollapsed(!collapsed);
@@ -34,7 +37,7 @@ const App: React.FC = () => {
       label: 'Strategy',
       onClick: () => navigate('/strategy'),
     },
-        {
+    {
       key: 'reports',
       label: 'Reports',
       onClick: () => navigate('/reports'),
@@ -104,12 +107,18 @@ const App: React.FC = () => {
           style={{
             background: '#0A0A15',
             display: 'flex',
-            justifyContent: 'flex-end',
+            justifyContent: 'space-between',
             alignItems: 'center',
             padding: '0 24px',
           }}
         >
-          <TenantSelector />
+          <div style={{ color: '#fff', fontWeight: 600 }}>SaaS Quant Dashboard</div>
+          <Space>
+            <TenantSelector />
+            <Button icon={<LogoutOutlined />} onClick={logout}>
+              退出
+            </Button>
+          </Space>
         </Header>
         <Content style={{ padding: 0, minHeight: 'calc(100vh - 64px)', background: '#0A0A15' }}>
           <Routes>
@@ -125,6 +134,24 @@ const App: React.FC = () => {
         </Content>
       </Layout>
     </Layout>
+  );
+};
+
+const PrivateRoute: React.FC = () => {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  return <AppLayout />;
+};
+
+const App: React.FC = () => {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/*" element={<PrivateRoute />} />
+    </Routes>
   );
 };
 

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from ..services.trades_service import get_trades_by_run_id
+from ..main.dependencies import require_user
 
-router = APIRouter(prefix="/api", tags=["trades"])
+router = APIRouter(prefix="/api", tags=["trades"], dependencies=[Depends(require_user)])
 
 @router.get("/trades/{run_id}")
 async def get_trades(run_id: str, request: Request):
