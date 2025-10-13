@@ -16,7 +16,7 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 # 添加项目根目录到Python路径，以便能够导入app模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app.common.logger import LoggerFactory  # 修改为绝对导入
+from common.logger import LoggerFactory  # 修改为绝对导入
 
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("dbscripts.export_ddl")

@@ -4,7 +4,7 @@ from sqlalchemy import text
 import json
 import time
 from pathlib import Path
-from ..common import LoggerFactory
+from ...common import LoggerFactory
 
 # 使用LoggerFactory替换原有logger
 logger = LoggerFactory.get_logger('strategies_service')

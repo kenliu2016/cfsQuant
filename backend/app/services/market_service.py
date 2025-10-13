@@ -1,4 +1,4 @@
-from ..common import LoggerFactory
+from ...common import LoggerFactory
 from ..db import fetch_df
 from datetime import datetime, timedelta
 import pandas as pd
@@ -752,7 +752,7 @@ def update_market_data_and_refresh_cache(data, table_name, code=None):
     
     # 添加项目根目录到Python路径，以便能够导入app模块
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-    from app.common.logger import LoggerFactory
+    from common.logger import LoggerFactory
     
     # 使用项目统一的日志工具
     logger = LoggerFactory.get_logger("services.market")

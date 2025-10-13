@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import importlib.util
 from ..db import fetch_df, to_sql, get_engine
-from ..common import LoggerFactory
+from ...common import LoggerFactory
 
 # 配置回测服务日志记录器
 backtest_service_logger = LoggerFactory.get_logger("backtest_service")

@@ -1,6 +1,6 @@
 import time
 from fastapi import Request
-from ..common import LoggerFactory
+from ...common import LoggerFactory
 
 logger = LoggerFactory.get_logger("app.middleware")
 

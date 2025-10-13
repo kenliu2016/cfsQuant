@@ -16,7 +16,7 @@ def load_db_config(config_path: str = "config/db_config.yaml") -> dict:
     # 确保配置文件路径是绝对路径
     if not os.path.isabs(config_path):
         # 获取项目根目录
-        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         # 构建相对于项目根目录的绝对路径
         config_path = os.path.join(current_dir, config_path)
     

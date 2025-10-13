@@ -1,7 +1,7 @@
 
 import pandas as pd
 import numpy as np
-from ..common import LoggerFactory
+from ...common import LoggerFactory
 import datetime
 import json
 

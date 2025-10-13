@@ -8,7 +8,7 @@ import os
 
 # 添加项目根目录到Python路径，以便能够导入app模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from app.common.logger import LoggerFactory
+from common.logger import LoggerFactory
 
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("services.tuning")
@@ -24,7 +24,7 @@ from .backtest_service import run_backtest
 from .market_service import MarketDataService
 from .runs_service import delete_run
 from ..db import fetch_df, to_sql, execute
-from ..celery_config import celery_app, IS_SECONDARY_INSTANCE
+from ...config.celery_config import celery_app, IS_SECONDARY_INSTANCE
 import requests
 import os
 
