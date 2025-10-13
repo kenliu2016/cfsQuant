@@ -24,8 +24,8 @@ def setup_logger_with_file_handler(
     返回:
         配置好的日志记录器实例
     """
-    # 直接使用绝对路径设置项目根目录，确保日志文件位置正确
-    project_root = '/Users/aaronkliu/Documents/project/cfsQuant'
+    # 使用相对路径计算项目根目录（从当前文件所在目录向上两级）
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     # 创建日志目录（如果不存在）
     logs_directory = os.path.join(project_root, log_dir)

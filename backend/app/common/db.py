@@ -10,7 +10,7 @@ import os
 import asyncio
 from typing import Dict, Any, Optional, AsyncGenerator
 import yaml
-from .common import LoggerFactory
+from .logger import LoggerFactory  # 修复导入路径
 
 # 初始化日志记录器
 logger = LoggerFactory.get_logger("app.db")
@@ -56,17 +56,17 @@ def load_db_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         # 获取项目根目录
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         
-        # 如果路径以'config/'开头，需要先添加'backend/'前缀
+        # 如果路径以'config/'开头，直接构建相对于项目根目录的绝对路径
         if path.startswith('config/'):
-            path = os.path.join('backend', path)
-            
-        # 构建相对于项目根目录的绝对路径
-        path = os.path.join(project_root, path)
+            path = os.path.join(project_root, path)
+        else:
+            # 构建相对于项目根目录的绝对路径
+            path = os.path.join(project_root, path)
     
     # 如果路径不存在，尝试使用backend/config/db_config.yaml作为备选路径
     if not os.path.exists(path):
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        alternative_path = os.path.join(project_root, 'backend', 'config', 'db_config.yaml')
+        alternative_path = os.path.join(project_root, 'config', 'db_config.yaml')
         if os.path.exists(alternative_path):
             path = alternative_path
         else:
@@ -572,7 +572,7 @@ def execute(query: str, config_path: Optional[str] = None, **kwargs) -> int:
 async def execute_async(query: str, config_path: Optional[str] = None, **kwargs):
     """异步执行SQL语句（适合非查询语句，如INSERT、UPDATE、DELETE等）"""
     if not HAS_ASYNC:
-        # 如果没有异 asynchronous support, downgrade to synchronous operation
+        # 如果没有异步支持，降级为同步操作
         execute(query, config_path)
         return
     

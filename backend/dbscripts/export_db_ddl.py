@@ -3,34 +3,35 @@
 """
 数据库DDL导出工具
 功能：导出PostgreSQL数据库中所有表、视图、索引等的DDL（数据定义语言）
-作者：Auto-Generated
 日期：2023-11-14
 """
 
 import os
 import sys
 import yaml
-import logging
 from datetime import datetime
 from typing import List, Dict, Any
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('../logs/export_ddl.log', 'w', 'utf-8')
-    ]
-)
-logger = logging.getLogger(__name__)
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.common.logger import LoggerFactory  # 修改为绝对导入
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("dbscripts.export_ddl")
 
 class DDLExporter:
     def __init__(self, config_path: str = None):
         """初始化DDL导出器"""
-        self.config_path = config_path or os.environ.get("DB_CONFIG", "config/db_config.yaml")
+        # 使用绝对路径，计算config目录的位置
+        if not config_path:
+            # 从当前文件位置(dbscripts)向上两级到项目根目录，然后进入backend/config
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            self.config_path = os.environ.get("DB_CONFIG", os.path.join(base_dir, "backend", "config", "db_config.yaml"))
+        else:
+            self.config_path = config_path
+        
         self.db_config = self.load_db_config()
         self.conn = None
         self.output_file = None
@@ -44,21 +45,6 @@ class DDLExporter:
         # 兼容 dbname / database 两种命名
         dbname = pg.get("dbname") or pg.get("database")
         pg["dbname"] = dbname
-        
-        # 环境变量覆盖
-        if os.environ.get("PGHOST"):
-            pg["host"] = os.environ["PGHOST"]
-        if os.environ.get("PGPORT"):
-            try:
-                pg["port"] = int(os.environ["PGPORT"])
-            except ValueError:
-                pg["port"] = os.environ["PGPORT"]
-        if os.environ.get("PGDATABASE"):
-            pg["dbname"] = os.environ["PGDATABASE"]
-        if os.environ.get("PGUSER"):
-            pg["user"] = os.environ["PGUSER"]
-        if os.environ.get("PGPASSWORD"):
-            pg["password"] = os.environ["PGPASSWORD"]
         
         # 默认端口
         pg.setdefault("port", 5432)
