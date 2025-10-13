@@ -19,6 +19,17 @@ const client = axios.create({
   },
 })
 
+client.interceptors.request.use((config) => {
+  if (typeof window !== 'undefined') {
+    const tenantId = window.localStorage.getItem('cfsTenantId') || 'public';
+    if (tenantId) {
+      config.headers = config.headers ?? {};
+      config.headers['X-Tenant-ID'] = tenantId;
+    }
+  }
+  return config;
+})
+
 export default client
 
 // 为了支持查询参数，确保类型声明与axios库保持一致

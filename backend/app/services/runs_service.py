@@ -1,6 +1,7 @@
 
 import pandas as pd
 import numpy as np
+from typing import Optional, Dict, Any
 from common import LoggerFactory
 import datetime
 import json
@@ -11,8 +12,9 @@ logger = LoggerFactory.get_logger('runs_service')
 # 避免Pandas future downcasting警告
 pd.set_option('future.no_silent_downcasting', True)
 from common.db import fetch_df, execute
+from ..main.tenant_context import get_current_tenant
 
-def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None) -> dict:
+def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, tenant_id: Optional[str] = None) -> dict:
     """
     获取回测运行记录，支持分页、过滤和排序，包含最大回撤和夏普率指标
     
@@ -55,7 +57,9 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     
     # 构建过滤条件
     filters = []
-    params = {'limit': limit, 'offset': offset}
+    tenant = tenant_id or get_current_tenant()
+    params = {'limit': limit, 'offset': offset, 'tenant_id': tenant}
+    filters.append("r.tenant_id = :tenant_id")
     
     if code:
         filters.append("r.code = :code")
@@ -100,7 +104,8 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     
     # 查询总数
     count_sql = f"SELECT COUNT(*) as total FROM backtest_runs r {where_clause}"
-    count_df = fetch_df(count_sql, **{k: v for k, v in params.items() if k not in ['limit', 'offset']})
+    count_params = {k: v for k, v in params.items() if k not in ['limit', 'offset']}
+    count_df = fetch_df(count_sql, **count_params)
     total = count_df.iloc[0]['total'] if not count_df.empty else 0
     
     # 处理数据确保可JSON序列化
@@ -133,7 +138,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         'total': total
     }
 
-def get_grid_levels(run_id: str) -> list:
+def get_grid_levels(run_id: str, tenant_id: Optional[str] = None) -> list:
     """
     获取特定回测ID的网格级别数据
     
@@ -144,12 +149,13 @@ def get_grid_levels(run_id: str) -> list:
         网格级别数据列表
     """
     # 查询grid_levels表获取指定run_id的网格级别数据
+    tenant = tenant_id or get_current_tenant()
     df_grid = fetch_df("""
         SELECT run_id, level, price, name 
         FROM backtest_grid_levels 
-        WHERE run_id = :rid
+        WHERE run_id = :rid AND tenant_id = :tenant_id
         ORDER BY level
-    """, rid=run_id)
+    """, rid=run_id, tenant_id=tenant)
     
     # 处理查询结果
     if df_grid.empty:
@@ -171,11 +177,12 @@ def get_grid_levels(run_id: str) -> list:
     logger.debug(f"成功获取网格级别数据，run_id: {run_id}, 级别数量: {len(grid_levels)}")
     return grid_levels
 
-def run_detail(run_id: str):
+def run_detail(run_id: str, tenant_id: Optional[str] = None):
     
     # 获取基本回测信息，包含新增的paras字段和所有指标
+    tenant = tenant_id or get_current_tenant()
     df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit
-                         FROM backtest_runs WHERE run_id=:rid""", rid=run_id)
+                         FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
     
     # 日志记录查询结果
     if df_run.empty:
@@ -200,7 +207,11 @@ def run_detail(run_id: str):
         }
     
     # 获取指标数据
-    df_m = fetch_df("""SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid""", rid=run_id)
+    df_m = fetch_df(
+        """SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid AND tenant_id = :tenant_id""",
+        rid=run_id,
+        tenant_id=tenant,
+    )
 
     # 从runs表获取主要指标并添加到metrics列表中（如果metrics表中不存在）
     if not df_run.empty:
@@ -326,7 +337,7 @@ def run_detail(run_id: str):
         "metrics": df_m.to_dict(orient="records")
     }
 
-def delete_run(run_id: str) -> bool:
+def delete_run(run_id: str, tenant_id: Optional[str] = None) -> bool:
     """
     删除指定的run记录及其关联数据
     
@@ -337,10 +348,15 @@ def delete_run(run_id: str) -> bool:
         bool: 是否删除成功
     """
     try:
-        logger.info(f"开始删除回测记录，run_id: {run_id}")
+        tenant = tenant_id or get_current_tenant()
+        logger.info(f"开始删除回测记录，run_id: {run_id}, tenant: {tenant}")
         
         # 首先检查记录是否存在
-        check_exists = fetch_df("SELECT COUNT(*) as count FROM backtest_runs WHERE run_id = :rid", rid=run_id)
+        check_exists = fetch_df(
+            "SELECT COUNT(*) as count FROM backtest_runs WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         if check_exists.iloc[0]['count'] == 0:
             logger.warning(f"回测记录不存在，run_id: {run_id}")
             return False
@@ -349,32 +365,56 @@ def delete_run(run_id: str) -> bool:
         # 首先删除关联的子表数据
         # 删除trades表中的关联数据
         logger.debug(f"开始删除trades表中关联数据，run_id: {run_id}")
-        trade_rows_affected = execute("DELETE FROM backtest_trades WHERE run_id = :rid", rid=run_id)
+        trade_rows_affected = execute(
+            "DELETE FROM backtest_trades WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         logger.debug(f"已删除trades表中关联数据，run_id: {run_id}, 受影响行数: {trade_rows_affected}")
         
         # 删除metrics表中的关联数据
         logger.debug(f"开始删除metrics表中关联数据，run_id: {run_id}")
-        metrics_rows_affected = execute("DELETE FROM backtest_metrics WHERE run_id = :rid", rid=run_id)
+        metrics_rows_affected = execute(
+            "DELETE FROM backtest_metrics WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         logger.debug(f"已删除metrics表中关联数据，run_id: {run_id}, 受影响行数: {metrics_rows_affected}")
         
         # 删除equity_curve表中的关联数据
         logger.debug(f"开始删除equity_curve表中关联数据，run_id: {run_id}")
-        equity_rows_affected = execute("DELETE FROM equity_curve WHERE run_id = :rid", rid=run_id)
+        equity_rows_affected = execute(
+            "DELETE FROM backtest_equity_curve WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         logger.debug(f"已删除equity_curve表中关联数据，run_id: {run_id}, 受影响行数: {equity_rows_affected}")
         
         # 删除grid_levels表中的关联数据
         logger.debug(f"开始删除grid_levels表中关联数据，run_id: {run_id}")
-        grid_rows_affected = execute("DELETE FROM grid_levels WHERE run_id = :rid", rid=run_id)
+        grid_rows_affected = execute(
+            "DELETE FROM backtest_grid_levels WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         logger.debug(f"已删除grid_levels表中关联数据，run_id: {run_id}, 受影响行数: {grid_rows_affected}")
         
         # 删除positions表中的关联数据
         logger.debug(f"开始删除positions表中关联数据，run_id: {run_id}")
-        positions_rows_affected = execute("DELETE FROM positions WHERE run_id = :rid", rid=run_id)
+        positions_rows_affected = execute(
+            "DELETE FROM backtest_positions WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         logger.debug(f"已删除positions表中关联数据，run_id: {run_id}, 受影响行数: {positions_rows_affected}")
         
         # 删除runs表中的主记录
         logger.debug(f"开始删除runs表中主记录，run_id: {run_id}")
-        runs_rows_affected = execute("DELETE FROM backtest_runs WHERE run_id = :rid", rid=run_id)
+        runs_rows_affected = execute(
+            "DELETE FROM backtest_runs WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         logger.debug(f"已删除runs表中主记录，run_id: {run_id}, 受影响行数: {runs_rows_affected}")
         
         # 检查是否有记录被删除
@@ -383,7 +423,11 @@ def delete_run(run_id: str) -> bool:
             return False
         
         # 额外检查：通过查询确认记录是否真的被删除# 验证删除结果
-        check_deleted = fetch_df("SELECT COUNT(*) as count FROM backtest_runs WHERE run_id = :rid", rid=run_id)
+        check_deleted = fetch_df(
+            "SELECT COUNT(*) as count FROM backtest_runs WHERE run_id = :rid AND tenant_id = :tenant_id",
+            rid=run_id,
+            tenant_id=tenant,
+        )
         if check_deleted.iloc[0]['count'] > 0:
             logger.warning(f"删除操作未实际生效，记录仍然存在，run_id: {run_id}")
             return False
@@ -398,7 +442,7 @@ def delete_run(run_id: str) -> bool:
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         return False
 
-def batch_delete_runs(run_ids: list) -> dict:
+def batch_delete_runs(run_ids: list, tenant_id: Optional[str] = None) -> dict:
     """
     批量删除多个回测记录及其关联数据
     
@@ -412,12 +456,13 @@ def batch_delete_runs(run_ids: list) -> dict:
     failed_count = 0
     failed_ids = []
     
-    logger.info(f"开始批量删除回测记录，共 {len(run_ids)} 条")
+    tenant = tenant_id or get_current_tenant()
+    logger.info(f"开始批量删除回测记录，共 {len(run_ids)} 条，tenant: {tenant}")
     
     for run_id in run_ids:
         try:
             # 执行删除操作并获取结果
-            result = delete_run(run_id)
+            result = delete_run(run_id, tenant_id=tenant)
             if result:
                 success_count += 1
                 logger.debug(f"批量删除回测记录成功，run_id: {run_id}")
@@ -441,15 +486,16 @@ def batch_delete_runs(run_ids: list) -> dict:
     }
 
 # 新增独立查询函数
-def get_run_equity(run_id: str, limit: int = 1000):
+def get_run_equity(run_id: str, limit: int = 1000, tenant_id: Optional[str] = None):
     """获取回测的equity曲线数据"""
     # 从trades表中读取equity相关数据
+    tenant = tenant_id or get_current_tenant()
     df_e = fetch_df("""
         SELECT datetime, nav, drawdown 
         FROM backtest_trades 
-        WHERE run_id=:rid 
+        WHERE run_id=:rid AND tenant_id = :tenant_id
         ORDER BY datetime
-    """, rid=run_id)
+    """, rid=run_id, tenant_id=tenant)
     
     # 如果trades表中没有equity数据（比如没有交易的情况），处理边缘情况
     if df_e.empty:
@@ -482,17 +528,18 @@ def get_run_equity(run_id: str, limit: int = 1000):
     logger.debug(f"成功获取回测equity数据，run_id: {run_id}, 数据点数量: {len(df_e)}")
     return df_e.to_dict(orient="records")
 
-def get_run_trades(run_id: str, limit: int = 1000):
+def get_run_trades(run_id: str, limit: int = 1000, tenant_id: Optional[str] = None):
     """获取回测的交易记录数据"""
     # 获取交易记录数据，添加limit限制
+    tenant = tenant_id or get_current_tenant()
     df_t = fetch_df("""
         SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
                realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
         FROM backtest_trades
-        WHERE run_id = :rid
+        WHERE run_id = :rid AND tenant_id = :tenant_id
         ORDER BY datetime
         LIMIT :limit
-    """, rid=run_id, limit=limit)
+    """, rid=run_id, tenant_id=tenant, limit=limit)
     
     # 处理datetime类型和特殊浮点值
     if not df_t.empty:
@@ -513,12 +560,13 @@ def get_run_trades(run_id: str, limit: int = 1000):
     logger.debug(f"成功获取回测交易记录，run_id: {run_id}, 交易数量: {len(df_t)}")
     return df_t.to_dict(orient="records")
 
-def get_run_klines(run_id: str, limit: int = 30000):
+def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = None):
     """获取回测的K线数据，当数据量超过30000条时不执行查询"""
     klines = []
     try:
         # 获取回测运行的基本信息
-        df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM backtest_runs WHERE run_id=:rid""", rid=run_id)
+        tenant = tenant_id or get_current_tenant()
+        df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
         if not df_run.empty:
             run_data = df_run.iloc[0]
             code = run_data.get('code', '')

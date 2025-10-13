@@ -8,13 +8,13 @@ from common.logger import LoggerFactory
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("routers.tuning")
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from ..services.tuning_service import start_tuning_async, get_tuning_status, get_all_tuning_tasks, delete_tuning_task, run_parameter_tuning
 
 # 创建用于 /api/tuning 前缀的路由器（与前端保持一致）
 router = APIRouter(prefix="/api/tuning", tags=["tuning"])
 # 定义共享的端点处理函数
-async def create_tuning_handler(payload: dict = Body(...)):
+async def create_tuning_handler(payload: dict = Body(...), request: Request = None):
     strategy = payload.get("strategy")
     # 同时支持code和excode字段，优先使用excode
     code = payload.get("excode") or payload.get("code")
@@ -34,7 +34,8 @@ async def create_tuning_handler(payload: dict = Body(...)):
     if not end:
         raise HTTPException(status_code=400, detail="结束时间（end/end_time）不能为空")
     
-    task_id = start_tuning_async(strategy, code, params, interval, start, end)
+    tenant_id = getattr(request.state, "tenant_id", None) if request else None
+    task_id = start_tuning_async(strategy, code, params, interval, start, end, tenant_id=tenant_id)
     return {"task_id": task_id}
 
 # 添加任务转发端点，用于primary实例将任务转发到secondary实例
@@ -53,6 +54,7 @@ async def forward_tuning_task(payload: dict = Body(...)):
     params_grid = payload.get("params_grid", {})
     interval = payload.get("interval", "1m")
     total = payload.get("total", 1)
+    tenant_id = payload.get("tenant_id")
     
     # 验证必需参数
     if not all([task_id, strategy, code, start_time, end_time]):
@@ -60,27 +62,30 @@ async def forward_tuning_task(payload: dict = Body(...)):
     
     # 直接提交任务到Celery队列
     try:
-        run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+        run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total, tenant_id)
         logger.info(f"成功接收并提交转发的调优任务: {task_id}")
         return {"success": True, "task_id": task_id}
     except Exception as e:
         logger.error(f"提交转发的调优任务失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
 
-async def tuning_status_handler(task_id: str):
-    st = get_tuning_status(task_id)
+async def tuning_status_handler(task_id: str, request: Request = None):
+    tenant_id = getattr(request.state, "tenant_id", None) if request else None
+    st = get_tuning_status(task_id, tenant_id=tenant_id)
     if not st:
         # 返回JSON格式的错误信息，而不是抛出异常
         # 这样前端可以正确解析错误信息而不会触发404页面
         return {"error": "not_found", "detail": "任务不存在或已被删除"}
     return st
 
-async def all_tuning_tasks_handler():
-    tasks = get_all_tuning_tasks()
+async def all_tuning_tasks_handler(request: Request = None):
+    tenant_id = getattr(request.state, "tenant_id", None) if request else None
+    tasks = get_all_tuning_tasks(tenant_id=tenant_id)
     return {"tasks": tasks}
 
-async def delete_tuning_task_handler(task_id: str):
-    result = delete_tuning_task(task_id)
+async def delete_tuning_task_handler(task_id: str, request: Request = None):
+    tenant_id = getattr(request.state, "tenant_id", None) if request else None
+    result = delete_tuning_task(task_id, tenant_id=tenant_id)
     if not result:
         return {"error": "not_found", "detail": "任务不存在或已被删除"}
     return {"success": True, "message": "任务已成功删除"}

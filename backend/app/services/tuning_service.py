@@ -23,6 +23,7 @@ import sqlalchemy
 from .backtest_service import run_backtest
 from .market_service import MarketDataService
 from .runs_service import delete_run
+from ..main.tenant_context import get_current_tenant
 from common.db import fetch_df, to_sql, execute
 from config.celery_config import celery_app, IS_SECONDARY_INSTANCE
 import requests
@@ -33,7 +34,7 @@ enable_memory_optimization = True  # 默认为开启内存优化
 
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
-def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1):
+def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1, tenant_id: str = 'public'):
     """
     运行参数调优任务
     
@@ -51,7 +52,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
     Returns:
         Dict: 调优结果
     """
-    logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, code={code}")
+    tenant = tenant_id or get_current_tenant()
+    logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, code={code}, tenant={tenant}")
     # 记录当前实例类型，确认任务实际在哪里执行
     logger.info(f"任务{task_id}正在{IS_SECONDARY_INSTANCE and 'secondary' or 'primary'}实例上执行")
     
@@ -70,20 +72,21 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         # 尝试使用不同的调用方式
         try:
             # 方法1: 原始调用方式
-            execute("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time)
+            execute("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id AND tenant_id = :tenant_id", task_id=task_id, status='running', start_time=current_time, tenant_id=tenant)
             logger.info(f"任务{task_id}状态已更新为running")
         except Exception as e:
             logger.warning(f"更新任务状态失败（方法1）: {str(e)}")
             try:
                 # 方法2: 使用字典传递参数
                 params = {"task_id": task_id, "status": "running", "start_time": current_time}
-                execute("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", **params)
+                params.update({'tenant_id': tenant})
+                execute("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id AND tenant_id = :tenant_id", **params)
                 logger.info(f"任务{task_id}状态已更新为running（方法2）")
             except Exception as e2:
                 logger.warning(f"更新任务状态失败（方法2）: {str(e2)}")
                 try:
                     # 方法3: 直接使用SQL字符串，不使用参数绑定
-                    sql = f"UPDATE tuning_tasks SET status = 'running', start_time = '{current_time}', timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = '{task_id}'"
+                    sql = f"UPDATE tuning_tasks SET status = 'running', start_time = '{current_time}', timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = '{task_id}' AND tenant_id = '{tenant}'"
                     execute(sql)
                     logger.info(f"任务{task_id}状态已更新为running（方法3）")
                 except Exception as e3:
@@ -92,7 +95,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                         # 如果所有方法都失败，使用原始的execute_async函数
                         from common.db import execute_async
                         import asyncio
-                        asyncio.run(execute_async("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id", task_id=task_id, status='running', start_time=current_time))
+                        asyncio.run(execute_async("UPDATE tuning_tasks SET status = :status, start_time = :start_time, timeout = (NOW() + INTERVAL '12 hours') WHERE task_id = :task_id AND tenant_id = :tenant_id", task_id=task_id, status='running', start_time=current_time, tenant_id=tenant))
                     except Exception as e4:
                         logger.error(f"使用execute_async更新状态失败: {str(e4)}")
         
@@ -200,8 +203,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                 try:
                     # 首先检查run_id是否存在于runs表中
                     # 这个检查是为了避免外键约束错误
-                    run_exists_query = "SELECT 1 FROM backtest_runs WHERE run_id = :run_id LIMIT 1"
-                    run_exists_result = fetch_df(run_exists_query, **{"run_id": run_id})
+                    run_exists_query = "SELECT 1 FROM backtest_runs WHERE run_id = :run_id AND tenant_id = :tenant_id LIMIT 1"
+                    run_exists_result = fetch_df(run_exists_query, run_id=run_id, tenant_id=tenant)
                     
                     if not run_exists_result.empty:
                         # 确保所有数据都是Python原生类型且可JSON序列化
@@ -229,6 +232,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                             params_json = '{}'  # 使用空JSON作为后备
                         
                         result_data = {
+                            'tenant_id': tenant,
                             'task_id': task_id,
                             'run_id': run_id,
                             'params': params_json,  # 存储为JSON字符串
@@ -238,7 +242,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                         # 使用更高效的方式插入数据
                         try:
                             execute(
-                                "INSERT INTO tuning_results (task_id, run_id, params, created_at) VALUES (:task_id, :run_id, :params, :created_at)",
+                                "INSERT INTO tuning_results (tenant_id, task_id, run_id, params, created_at) VALUES (:tenant_id, :task_id, :run_id, :params, :created_at)",
                                 **result_data
                             )
                         except Exception as sql_error:
@@ -254,7 +258,12 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                 
                 # 更新tuning_tasks表中的进度
                 try:
-                    execute("UPDATE tuning_tasks SET finished = :finished WHERE task_id = :task_id", task_id=task_id, finished=finished)
+                    execute(
+                        "UPDATE tuning_tasks SET finished = :finished WHERE task_id = :task_id AND tenant_id = :tenant_id",
+                        task_id=task_id,
+                        finished=finished,
+                        tenant_id=tenant,
+                    )
                 except Exception as e:
                     pass
                 
@@ -274,7 +283,12 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         
         # 更新任务状态为完成
         try:
-            execute("UPDATE tuning_tasks SET status = :status WHERE task_id = :task_id", task_id=task_id, status='finished')
+            execute(
+                "UPDATE tuning_tasks SET status = :status WHERE task_id = :task_id AND tenant_id = :tenant_id",
+                task_id=task_id,
+                status='finished',
+                tenant_id=tenant,
+            )
         except Exception as e:
             pass
         
@@ -293,7 +307,13 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         
         # 更新任务状态为错误
         try:
-            execute("UPDATE tuning_tasks SET status = :status, error = :error WHERE task_id = :task_id", task_id=task_id, status='error', error=error_msg)
+            execute(
+                "UPDATE tuning_tasks SET status = :status, error = :error WHERE task_id = :task_id AND tenant_id = :tenant_id",
+                task_id=task_id,
+                status='error',
+                error=error_msg,
+                tenant_id=tenant,
+            )
         except Exception as db_error:
             pass
         
@@ -302,7 +322,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
 
 def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], interval: str = '1m', 
                       start: str = None, end: str = None, start_time: str = None, end_time: str = None,
-                      params_config: str = None) -> str:
+                      params_config: str = None, tenant_id: Optional[str] = None) -> str:
     """
     异步启动参数调优任务
     
@@ -321,6 +341,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
         str: 任务ID
     """
     task_id = str(uuid.uuid4())
+    tenant = tenant_id or get_current_tenant()
     
     # 处理参数名兼容性，优先使用新参数名
     if start_time is None and start is not None:
@@ -359,6 +380,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
             params_json = json.dumps(params_grid) if params_grid else '{}'
         
         task_data = {
+            'tenant_id': tenant,
             'task_id': task_id,
             'strategy': strategy,
             'status': 'pending',
@@ -383,7 +405,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
         logger.info(f"当前实例类型: {'secondary' if IS_SECONDARY_INSTANCE else 'primary'}")
         if IS_SECONDARY_INSTANCE:
             # 在第二套实例上，直接提交任务
-            run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+            run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total, tenant)
             logger.info(f"在secondary实例上直接提交调优任务: {task_id}")
         else:
             # 在主实例上，需要将任务转发到第二套实例
@@ -407,7 +429,8 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
                         "end_time": end_time,
                         "params_grid": params_grid,
                         "interval": interval,
-                        "total": total
+                        "total": total,
+                        "tenant_id": tenant
                     }
                     
                     # 设置超时和重试策略
@@ -446,18 +469,24 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
             # 如果所有重试都失败，尝试在本地执行任务
             if not forwarded:
                 logger.warning(f"所有转发尝试都失败，在primary实例上执行调优任务: {task_id}")
-                run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total)
+                run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total, tenant)
     except Exception as e:
         # 如果提交失败，更新任务状态为错误
         logger.error(f"提交调优任务失败: {str(e)}")
         try:
-            execute("UPDATE tuning_tasks SET status = :status, error = :error WHERE task_id = :task_id", task_id=task_id, status='error', error=str(e))
+            execute(
+                "UPDATE tuning_tasks SET status = :status, error = :error WHERE task_id = :task_id AND tenant_id = :tenant_id",
+                task_id=task_id,
+                status='error',
+                error=str(e),
+                tenant_id=tenant,
+            )
         except Exception as db_error:
             raise
     
     return task_id
 
-def get_all_tuning_tasks() -> List[Dict[str, Any]]:
+def get_all_tuning_tasks(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     获取所有参数调优任务
     
@@ -466,8 +495,9 @@ def get_all_tuning_tasks() -> List[Dict[str, Any]]:
     """
     try:
         # 从数据库获取所有任务状态，包括新添加的字段
-        query = "SELECT task_id, strategy, status, total, finished, start_time, created_at, error, code, params FROM tuning_tasks ORDER BY created_at DESC"
-        result = fetch_df(query)
+        tenant = tenant_id or get_current_tenant()
+        query = "SELECT task_id, strategy, status, total, finished, start_time, created_at, error, code, params FROM tuning_tasks WHERE tenant_id = :tenant_id ORDER BY created_at DESC"
+        result = fetch_df(query, tenant_id=tenant)
         
         if result.empty:
             return []
@@ -498,7 +528,7 @@ def get_all_tuning_tasks() -> List[Dict[str, Any]]:
     except Exception as e:
         return []
 
-def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optional[int] = None) -> Optional[Dict[str, Any]]:
+def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optional[int] = None, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     获取参数调优任务状态
     
@@ -513,14 +543,15 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
     try:
         # 从数据库获取任务状态，包括新增的start_time、timeout和error字段
         # 使用安全的方式查询，处理error列可能不存在的情况
+        tenant = tenant_id or get_current_tenant()
         try:
             # 尝试包含error列的查询
-            query = "SELECT status, total, finished, start_time, timeout, error FROM tuning_tasks WHERE task_id = :task_id"
-            result = fetch_df(query, **{"task_id": task_id})
+            query = "SELECT status, total, finished, start_time, timeout, error FROM tuning_tasks WHERE task_id = :task_id AND tenant_id = :tenant_id"
+            result = fetch_df(query, task_id=task_id, tenant_id=tenant)
         except Exception as e:
             # 如果出错，回退到不包含error列的查询
-            query = "SELECT status, total, finished, start_time, timeout FROM tuning_tasks WHERE task_id = :task_id"
-            result = fetch_df(query, **{"task_id": task_id})
+            query = "SELECT status, total, finished, start_time, timeout FROM tuning_tasks WHERE task_id = :task_id AND tenant_id = :tenant_id"
+            result = fetch_df(query, task_id=task_id, tenant_id=tenant)
         
         if result.empty:
             # 添加任务ID频率检查，避免频繁警告
@@ -549,8 +580,8 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
         # 获取runs总数的查询
         runs_count_query = """SELECT COUNT(*) as count 
                            FROM tuning_results t 
-                           WHERE t.task_id = :task_id"""
-        runs_count_result = fetch_df(runs_count_query, **{"task_id": task_id})
+                           WHERE t.task_id = :task_id AND t.tenant_id = :tenant_id"""
+        runs_count_result = fetch_df(runs_count_query, task_id=task_id, tenant_id=tenant)
         runs_total_count = int(runs_count_result['count'].iloc[0]) if not runs_count_result.empty else 0
         
         # 从数据库查询runs信息，支持分页
@@ -558,17 +589,17 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                                r.trade_count, r.win_rate, r.final_return, 
                                r.sharpe, r.max_drawdown 
                         FROM tuning_results t 
-                        LEFT JOIN backtest_runs r ON t.run_id = r.run_id 
-                        WHERE t.task_id = :task_id 
+                        LEFT JOIN backtest_runs r ON t.run_id = r.run_id AND r.tenant_id = t.tenant_id 
+                        WHERE t.task_id = :task_id AND t.tenant_id = :tenant_id
                         ORDER BY t.created_at DESC"""
         
         # 添加分页逻辑
         if page is not None and page_size is not None:
             offset = (page - 1) * page_size
             runs_query += " LIMIT :limit OFFSET :offset"
-            runs_result = fetch_df(runs_query, **{"task_id": task_id, "limit": page_size, "offset": offset})
+            runs_result = fetch_df(runs_query, task_id=task_id, tenant_id=tenant, limit=page_size, offset=offset)
         else:
-            runs_result = fetch_df(runs_query, **{"task_id": task_id})
+            runs_result = fetch_df(runs_query, task_id=task_id, tenant_id=tenant)
         
         runs = []
         if not runs_result.empty:
@@ -586,8 +617,8 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                 runs.append(run_info)
         
         # 从tuning_tasks表中获取code值
-        code_query = "SELECT code FROM tuning_tasks WHERE task_id = :task_id"
-        code_result = fetch_df(code_query, **{"task_id": task_id})
+        code_query = "SELECT code FROM tuning_tasks WHERE task_id = :task_id AND tenant_id = :tenant_id"
+        code_result = fetch_df(code_query, task_id=task_id, tenant_id=tenant)
         code_value = code_result['code'].iloc[0] if not code_result.empty else ''
         
         status_info = {
@@ -618,7 +649,7 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
         logger.error(f"获取调优任务状态失败: {e}")
         return None
 
-def delete_tuning_task(task_id: str) -> bool:
+def delete_tuning_task(task_id: str, tenant_id: Optional[str] = None) -> bool:
     """
     删除指定的tuning_task记录及其关联数据
     
@@ -629,18 +660,19 @@ def delete_tuning_task(task_id: str) -> bool:
         bool: 是否删除成功
     """
     try:
-        logger.info(f"开始删除调优任务，task_id: {task_id}")
+        tenant = tenant_id or get_current_tenant()
+        logger.info(f"开始删除调优任务，task_id: {task_id}, tenant: {tenant}")
         
         # 首先获取所有关联的run_id
-        run_ids_query = "SELECT run_id FROM tuning_results WHERE task_id = :task_id"
-        run_ids_df = fetch_df(run_ids_query, task_id=task_id)
+        run_ids_query = "SELECT run_id FROM tuning_results WHERE task_id = :task_id AND tenant_id = :tenant_id"
+        run_ids_df = fetch_df(run_ids_query, task_id=task_id, tenant_id=tenant)
         
         # 逐个删除关联的run记录及其子数据
         if not run_ids_df.empty:
             for _, row in run_ids_df.iterrows():
                 run_id = row['run_id']
                 try:
-                    delete_run(run_id)
+                    delete_run(run_id, tenant_id=tenant)
                     logger.debug(f"已删除调优任务关联的回测记录，task_id: {task_id}, run_id: {run_id}")
                 except Exception as e:
                     logger.error(f"删除关联回测记录失败，run_id: {run_id}, 错误: {str(e)}")
@@ -648,11 +680,11 @@ def delete_tuning_task(task_id: str) -> bool:
                     continue
         
         # 删除tuning_results表中的关联数据
-        execute("DELETE FROM tuning_results WHERE task_id = :task_id", task_id=task_id)
+        execute("DELETE FROM tuning_results WHERE task_id = :task_id AND tenant_id = :tenant_id", task_id=task_id, tenant_id=tenant)
         logger.debug(f"已删除tuning_results表中关联数据，task_id: {task_id}")
         
         # 最后删除tuning_tasks表中的主记录
-        execute("DELETE FROM tuning_tasks WHERE task_id = :task_id", task_id=task_id)
+        execute("DELETE FROM tuning_tasks WHERE task_id = :task_id AND tenant_id = :tenant_id", task_id=task_id, tenant_id=tenant)
         logger.debug(f"已删除tuning_tasks表中主记录，task_id: {task_id}")
         
         logger.info(f"调优任务删除成功，task_id: {task_id}")

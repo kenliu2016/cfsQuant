@@ -1,111 +1,95 @@
-from pathlib import Path
-from common.db import fetch_df, get_engine
-from sqlalchemy import text
 import json
 import time
 from pathlib import Path
+from typing import Dict, Optional
+
+import pandas as pd
+from sqlalchemy import text
+
+from common.db import fetch_df, get_engine
 from common import LoggerFactory
+from ..main.tenant_context import get_current_tenant
 
 # 使用LoggerFactory替换原有logger
 logger = LoggerFactory.get_logger('strategies_service')
 
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "strategies"
 
-# 添加内存缓存机制
-_cached_strategies = None
-_cached_timestamp = 0
+# 添加内存缓存机制（按租户区分）
+_cached_strategies: Dict[str, pd.DataFrame] = {}
+_cached_timestamp: Dict[str, float] = {}
 CACHE_EXPIRE_TIME = 30  # 缓存过期时间，单位：秒（从5分钟缩短为30秒，提高新策略可见性）
 
 # 添加异步版本的列表策略函数，优化性能
-async def alist_strategies():
+async def alist_strategies(tenant_id: Optional[str] = None) -> pd.DataFrame:
     """异步获取策略列表，用于API调用"""
-    # 使用单独的异步实现，避免阻塞
-    import pandas as pd
-    
-    # 全局变量声明
-    global _cached_strategies, _cached_timestamp
-    
-    # 先检查内存缓存
-    current_time = time.time()
-    if _cached_strategies is not None and current_time - _cached_timestamp < CACHE_EXPIRE_TIME:
-        logger.info("使用内存缓存的策略列表")
-        return _cached_strategies.copy()  # 返回副本避免修改缓存数据
-    
-    try:
-        # 缓存过期或不存在，从数据库查询
-        logger.info("从数据库查询策略列表")
-        sql = """SELECT id, name, description, params::text AS params FROM sys_strategies ORDER BY id"""
-        
-        # 清除缓存以确保获取最新数据
-        clear_strategies_cache()
-        
-        # 先尝试同步查询作为对比
-        logger.info("尝试同步查询获取数据...")
-        sync_df = fetch_df(sql)
-        logger.info(f"同步查询结果: {len(sync_df)} 行数据")
-        
-        # 然后尝试异步查询
-        logger.info("尝试异步查询获取数据...")
-        from common.db import fetch_df_async
-        df = await fetch_df_async(sql)
-        logger.info(f"异步查询结果: {len(df)} 行数据")
-        
-        # 如果异步查询返回空，使用同步查询结果
-        if len(df) == 0 and len(sync_df) > 0:
-            logger.warning("异步查询返回空结果，使用同步查询结果替代")
-            df = sync_df
-        
-        # 更新内存缓存
-        _cached_strategies = df
-        _cached_timestamp = current_time
-        
-        return df
-    except Exception as e:
-        logger.error(f"获取策略列表失败: {e}", exc_info=True)
-        # 出错时尝试直接使用同步查询
-        try:
-            logger.info("出错时尝试同步查询获取数据...")
-            fallback_df = fetch_df(sql)
-            logger.info(f"错误后同步查询结果: {len(fallback_df)} 行数据")
-            # 更新缓存并返回
-            _cached_strategies = fallback_df
-            _cached_timestamp = current_time
-            return fallback_df
-        except Exception as fallback_e:
-            logger.error(f"同步查询也失败: {fallback_e}", exc_info=True)
-            # 如果同步查询也失败，且有缓存，返回缓存数据
-            if _cached_strategies is not None:
-                return _cached_strategies.copy()
-            # 否则返回空DataFrame
-            return pd.DataFrame(columns=['id', 'name', 'description', 'params'])
+    from common.db import fetch_df_async
 
-def list_strategies():
-    """同步获取策略列表，用于非异步环境"""
-    global _cached_strategies, _cached_timestamp
-    
-    # 检查缓存是否有效
+    tenant = tenant_id or get_current_tenant()
+    cache_key = tenant
     current_time = time.time()
-    if _cached_strategies is not None and current_time - _cached_timestamp < CACHE_EXPIRE_TIME:
-        logger.debug("使用内存缓存的策略列表")
-        return _cached_strategies.copy()  # 返回副本避免修改缓存数据
-    
-    # 缓存过期或不存在，从数据库查询
-    logger.debug("从数据库查询策略列表")
-    sql = """SELECT id, name, description, params::text AS params FROM sys_strategies ORDER BY id"""
-    df = fetch_df(sql)
-    
-    # 更新缓存
-    _cached_strategies = df
-    _cached_timestamp = current_time
-    
+
+    cached_df = _cached_strategies.get(cache_key)
+    cached_ts = _cached_timestamp.get(cache_key, 0)
+    if cached_df is not None and current_time - cached_ts < CACHE_EXPIRE_TIME:
+        logger.info("使用租户 %s 的内存缓存策略列表", tenant)
+        return cached_df.copy()
+
+    sql = """
+    SELECT id, name, description, params::text AS params
+    FROM sys_strategies
+    WHERE tenant_id = :tenant_id
+    ORDER BY id
+    """
+
+    try:
+        logger.info("从数据库查询租户 %s 的策略列表", tenant)
+        df = await fetch_df_async(sql, tenant_id=tenant)
+        if df.empty:
+            # 回退到同步查询以防异步连接池丢失
+            df = fetch_df(sql, tenant_id=tenant)
+        _cached_strategies[cache_key] = df
+        _cached_timestamp[cache_key] = current_time
+        return df
+    except Exception as exc:
+        logger.error("获取租户 %s 策略列表失败: %s", tenant, exc, exc_info=True)
+        fallback = _cached_strategies.get(cache_key)
+        if fallback is not None:
+            return fallback.copy()
+        return pd.DataFrame(columns=['id', 'name', 'description', 'params'])
+
+def list_strategies(tenant_id: Optional[str] = None) -> pd.DataFrame:
+    """同步获取策略列表，用于非异步环境"""
+    tenant = tenant_id or get_current_tenant()
+    cache_key = tenant
+    current_time = time.time()
+
+    cached_df = _cached_strategies.get(cache_key)
+    cached_ts = _cached_timestamp.get(cache_key, 0)
+    if cached_df is not None and current_time - cached_ts < CACHE_EXPIRE_TIME:
+        logger.debug("使用租户 %s 的内存缓存策略列表", tenant)
+        return cached_df.copy()
+
+    sql = """
+    SELECT id, name, description, params::text AS params
+    FROM sys_strategies
+    WHERE tenant_id = :tenant_id
+    ORDER BY id
+    """
+    df = fetch_df(sql, tenant_id=tenant)
+    _cached_strategies[cache_key] = df
+    _cached_timestamp[cache_key] = current_time
     return df
 
 # 提供清除缓存的函数，用于策略有变更时
 
-def clear_strategies_cache():
-    global _cached_strategies, _cached_timestamp
-    _cached_strategies = None
-    _cached_timestamp = 0
+def clear_strategies_cache(tenant_id: Optional[str] = None) -> None:
+    if tenant_id:
+        _cached_strategies.pop(tenant_id, None)
+        _cached_timestamp.pop(tenant_id, None)
+    else:
+        _cached_strategies.clear()
+        _cached_timestamp.clear()
 
 def load_strategy_code(strategy_name: str) -> str:
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
@@ -114,10 +98,12 @@ def load_strategy_code(strategy_name: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
-def save_strategy_code(strategy_name: str, code: str):
+def save_strategy_code(strategy_name: str, code: str, tenant_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(code)
+    
+    tenant = tenant_id or get_current_tenant()
     
     # 从代码中提取DEFAULT_PARAMS并更新到数据库
     try:
@@ -193,8 +179,9 @@ def save_strategy_code(strategy_name: str, code: str):
                 engine = get_engine()
                 with engine.connect() as conn:
                     result = conn.execute(
-                        text("UPDATE sys_strategies SET params = :params WHERE name = :name"),
+                        text("UPDATE sys_strategies SET params = :params WHERE name = :name AND tenant_id = :tenant_id"),
                         {
+                            'tenant_id': tenant,
                             'name': strategy_name,
                             'params': params_json
                         }
@@ -209,8 +196,8 @@ def save_strategy_code(strategy_name: str, code: str):
                         # 尝试插入新记录
                         try:
                             conn.execute(
-                                text("INSERT INTO sys_strategies (name, description, params) VALUES (:name, '', :params)"),
-                                {'name': strategy_name, 'params': params_json}
+                                text("INSERT INTO sys_strategies (tenant_id, name, description, params) VALUES (:tenant_id, :name, '', :params)"),
+                                {'tenant_id': tenant, 'name': strategy_name, 'params': params_json}
                             )
                             conn.commit()
                             logger.info(f"成功在数据库中创建策略 [{strategy_name}] 的记录")
@@ -223,13 +210,16 @@ def save_strategy_code(strategy_name: str, code: str):
     except Exception as e:
         logger.error(f"处理策略参数时出错: {e}")
     
+    clear_strategies_cache(tenant)
     return {"status": "ok", "path": str(file_path)}
 
 
-def create_strategy(strategy_name: str, description: str = "", params: str = "{}"):
+def create_strategy(strategy_name: str, description: str = "", params: str = "{}", tenant_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     if file_path.exists():
         return {"status":"exists", "path": str(file_path)}
+    
+    tenant = tenant_id or get_current_tenant()
     
     # 定义DEFAULT_PARAMS，用于模板和数据库
     default_params = {
@@ -282,8 +272,9 @@ def run(df: pd.DataFrame, params: dict):
         engine = get_engine()
         with engine.connect() as conn:
             conn.execute(
-                text("INSERT INTO sys_strategies (name, description, params) VALUES (:name, :description, :params)"),
+                text("INSERT INTO sys_strategies (tenant_id, name, description, params) VALUES (:tenant_id, :name, :description, :params)"),
                 {
+                    'tenant_id': tenant,
                     'name': strategy_name,
                     'description': description,
                     'params': params_json
@@ -292,13 +283,16 @@ def run(df: pd.DataFrame, params: dict):
             conn.commit()
     except Exception as e:
         print(f"警告: 数据库记录插入失败 - {e}")
+    
+    clear_strategies_cache(tenant)
         
     return {"status":"ok", "path": str(file_path)}
 
-def delete_strategy(strategy_name: str):
+def delete_strategy(strategy_name: str, tenant_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     file_deleted = False
     db_deleted = False
+    tenant = tenant_id or get_current_tenant()
     
     # 删除文件
     if file_path.exists():
@@ -310,8 +304,8 @@ def delete_strategy(strategy_name: str):
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(
-                text("DELETE FROM sys_strategies WHERE name = :name"),
-                {'name': strategy_name}
+                text("DELETE FROM sys_strategies WHERE name = :name AND tenant_id = :tenant_id"),
+                {'name': strategy_name, 'tenant_id': tenant}
             )
             conn.commit()
             if result.rowcount > 0:
@@ -320,6 +314,8 @@ def delete_strategy(strategy_name: str):
         print(f"警告: 数据库记录删除失败 - {e}")
     
     # 根据删除结果返回不同状态
+    if db_deleted:
+        clear_strategies_cache(tenant)
     if file_deleted and db_deleted:
         return {"status":"deleted", "path": str(file_path), "db":"deleted"}
     elif file_deleted:

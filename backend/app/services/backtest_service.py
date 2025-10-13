@@ -18,6 +18,7 @@ from pathlib import Path
 import importlib.util
 from common.db import fetch_df, to_sql, get_engine
 from common import LoggerFactory
+from ..main.tenant_context import get_current_tenant
 
 # 配置回测服务日志记录器
 backtest_service_logger = LoggerFactory.get_logger("backtest_service")
@@ -455,6 +456,7 @@ class DatabaseManager:
         
         run_data = pd.DataFrame([{
             'run_id': result.run_id,
+            'tenant_id': self.tenant_id,
             'strategy': result.strategy,
             'code': result.code,
             'start_time': start_time_value,
@@ -479,6 +481,7 @@ class DatabaseManager:
         """保存交易记录"""
         trades_data = [{
             "run_id": trade.run_id,
+            "tenant_id": self.tenant_id,
             "datetime": trade.datetime,
             "code": trade.code,
             "side": trade.side,
@@ -506,6 +509,7 @@ class DatabaseManager:
         """保存净值曲线"""
         equity_df = pd.DataFrame({
             "run_id": run_id,
+            "tenant_id": self.tenant_id,
             "datetime": pd.to_datetime(datetime_index),
             "nav": nav_list,
             "drawdown": pd.Series(nav_list).expanding().max().subtract(pd.Series(nav_list)).div(
@@ -537,6 +541,7 @@ class DatabaseManager:
                         if isinstance(price, (int, float)):
                             grid_data.append({
                                 "run_id": run_id,
+                                "tenant_id": self.tenant_id,
                                 "level": idx,
                                 "name": str(level.get('name', '')) if 'name' in level else '',
                                 "price": price
@@ -546,6 +551,7 @@ class DatabaseManager:
                             try:
                                 grid_data.append({
                                     "run_id": run_id,
+                                    "tenant_id": self.tenant_id,
                                     "level": idx,
                                     "name": str(level.get('name', '')) if 'name' in level else '',
                                     "price": float(price)
@@ -574,12 +580,13 @@ class DatabaseManager:
 class BacktestEngine:
     """解耦后的回测引擎 - 统一的交易执行框架"""
     
-    def __init__(self):
+    def __init__(self, tenant_id: Optional[str] = None):
         self.logger = None
         self.position_manager = None
         self.risk_manager = None
         self.decision_engine = None
         self.db_manager = None
+        self.tenant_id = tenant_id or get_current_tenant()
         
     def run_backtest(self, df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
         """运行回测的主入口"""
@@ -948,21 +955,35 @@ class BacktestEngine:
         }
 
 # 主要对外接口
-def run_backtest(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
+def run_backtest(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """运行回测的主入口函数"""
-    engine = BacktestEngine()
+    tenant = tenant_id or get_current_tenant()
+    engine = BacktestEngine(tenant_id=tenant)
     return engine.run_backtest(df, params, strategy_name)
 
-def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
+def get_backtest_result(backtest_id: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """获取回测结果"""
+    tenant = tenant_id or get_current_tenant()
     try:
-        df_m = fetch_df("SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid", rid=backtest_id)
-        df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+        df_m = fetch_df(
+            "SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid AND tenant_id=:tenant_id",
+            rid=backtest_id,
+            tenant_id=tenant,
+        )
+        df_e = fetch_df(
+            "SELECT datetime, nav, drawdown FROM backtest_equity_curve WHERE run_id=:rid AND tenant_id=:tenant_id ORDER BY datetime",
+            rid=backtest_id,
+            tenant_id=tenant,
+        )
         
         # 直接获取网格级别数据
         grid_levels = []
         try:
-            df_g = fetch_df("SELECT level, name, price FROM grid_levels WHERE run_id=:rid ORDER BY level", rid=backtest_id)
+            df_g = fetch_df(
+                "SELECT level, name, price FROM backtest_grid_levels WHERE run_id=:rid AND tenant_id=:tenant_id ORDER BY level",
+                rid=backtest_id,
+                tenant_id=tenant,
+            )
             if not df_g.empty:
                 for _, row in df_g.iterrows():
                     grid_level = {'price': row['price']}
@@ -976,7 +997,11 @@ def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
         signals = []
         try:
             # 尝试从trades表获取交易数据作为信号数据
-            df_t = fetch_df("SELECT datetime, side, price, qty FROM backtest_trades WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+            df_t = fetch_df(
+                "SELECT datetime, side, price, qty FROM backtest_trades WHERE run_id=:rid AND tenant_id=:tenant_id ORDER BY datetime",
+                rid=backtest_id,
+                tenant_id=tenant,
+            )
             if not df_t.empty:
                 for _, row in df_t.iterrows():
                     signals.append({

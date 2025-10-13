@@ -1,3 +1,34 @@
 .custom-menu .ant-menu-item-selected {
   background-color: #2E2E4A !important;
 }
+
+/* Settings页面Tabs组件样式 */
+.custom-tabs .ant-tabs-tab {
+  color: #FFFFFF !important;
+  background: transparent !important;
+}
+
+.custom-tabs .ant-tabs-tab-btn {
+  color: #FFFFFF !important;
+}
+
+.custom-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1890ff !important;
+  font-weight: 600 !important;
+}
+
+.custom-tabs .ant-tabs-nav::before {
+  border-bottom: 1px solid #333333 !important;
+}
+
+.custom-tabs .ant-tabs-ink-bar {
+  background: #1890ff !important;
+}
+
+.custom-tabs .ant-tabs-content-holder {
+  color: #FFFFFF !important;
+}
+
+.custom-tabs .ant-tabs-tab:hover {
+  color: #40a9ff !important;
+}

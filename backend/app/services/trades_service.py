@@ -1,7 +1,11 @@
 import pandas as pd
-from common.db import fetch_df
+from typing import Optional
 
-def get_trades_by_run_id(run_id: str) -> pd.DataFrame:
+from common.db import fetch_df
+from ..main.tenant_context import get_current_tenant
+
+
+def get_trades_by_run_id(run_id: str, tenant_id: Optional[str] = None) -> pd.DataFrame:
     """
     根据run_id获取交易记录
     
@@ -14,9 +18,10 @@ def get_trades_by_run_id(run_id: str) -> pd.DataFrame:
     try:
         query = """SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, realized_pnl, nav, close_price, current_cash
                     FROM backtest_trades
-                    WHERE run_id = :run_id
+                    WHERE run_id = :run_id AND tenant_id = :tenant_id
                     ORDER BY datetime"""
-        df = fetch_df(query, run_id=run_id)
+        tenant = tenant_id or get_current_tenant()
+        df = fetch_df(query, run_id=run_id, tenant_id=tenant)
         return df
     except Exception as e:
         print(f"获取交易记录失败: {e}")

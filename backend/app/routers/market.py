@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Request
 import sys
 import os
 
@@ -14,6 +14,7 @@ from ..services.candles_cache_service import clear_candles_cache, clear_all_cand
 from common.db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
+from ..main.config import settings
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -426,7 +427,7 @@ def refresh_market_cache(code: str = Query(None, description="可选的股票代
         return {"status": "error", "message": str(e)}
 
 @router.get("/market_codes/exchanges")
-def get_exchanges(active: bool = Query(True, description="是否只获取活跃的交易所")):
+def get_exchanges(active: bool = Query(True, description="是否只获取活跃的交易所"), request: Request = None):
     """
     获取所有可用的交易所列表
     
@@ -439,7 +440,8 @@ def get_exchanges(active: bool = Query(True, description="是否只获取活跃�
     logger.info(f"接收到获取交易所列表请求: active={active}")
     
     try:
-        df = get_market_exchanges(active)
+        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
+        df = get_market_exchanges(active, tenant_id=tenant_id)
         
         # 处理结果
         context = f"market_codes/exchanges - active={active}"
@@ -461,7 +463,8 @@ def get_exchanges(active: bool = Query(True, description="是否只获取活跃�
 def get_codes(exchange: str = Query(None, description="交易所代码，不提供则获取所有"), 
                 code: str = Query(None, description="交易对代码，不提供则获取所有"),
                 active: bool = Query(None, description="是否只获取活跃的代码"),
-                watch: bool = Query(None, description="是否只获取关注的代码")):
+                watch: bool = Query(None, description="是否只获取关注的代码"),
+                request: Request = None):
     """
     获取市场代码列表，可以按交易所、交易对、活跃状态和关注状态过滤
     
@@ -479,12 +482,13 @@ def get_codes(exchange: str = Query(None, description="交易所代码，不提�
     try:
         # 直接调用底层服务函数，不经过缓存
         # 注意：需要修改服务函数以支持active为None的情况
+        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
         sql = """
         SELECT code, exchange, active, excode, watch FROM market_codes
-        WHERE 1=1
+        WHERE tenant_id = :tenant_id
         """
         
-        params = {}
+        params = {"tenant_id": tenant_id}
         
         if exchange:
             sql += " AND exchange = :exchange"
@@ -532,7 +536,7 @@ def get_codes(exchange: str = Query(None, description="交易所代码，不提�
 
 
 @router.post("/market_codes")
-def add_code(code_data: dict):
+def add_code(code_data: dict, request: Request):
     """
     添加市场代码
     
@@ -552,10 +556,11 @@ def add_code(code_data: dict):
                 raise HTTPException(status_code=400, detail=f"缺少必要字段: {field}")
         
         # 检查是否已存在
+        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
         check_sql = """
-        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code AND tenant_id = :tenant_id
         """
-        check_params = {'exchange': code_data['exchange'], 'code': code_data['code']}
+        check_params = {'exchange': code_data['exchange'], 'code': code_data['code'], 'tenant_id': tenant_id}
         check_df = fetch_df(check_sql, **check_params)
         
         if len(check_df) > 0:
@@ -563,12 +568,13 @@ def add_code(code_data: dict):
         
         # 插入新记录
         insert_sql = """
-        INSERT INTO market_codes (exchange, code, excode, active, watch)
-        VALUES (:exchange, :code, :excode, :active, :watch)
+        INSERT INTO market_codes (tenant_id, exchange, code, excode, active, watch)
+        VALUES (:tenant_id, :exchange, :code, :excode, :active, :watch)
         """
         
         # 设置默认值
         insert_params = {
+            'tenant_id': tenant_id,
             'exchange': code_data['exchange'],
             'code': code_data['code'],
             'excode': code_data['excode'],
@@ -576,7 +582,7 @@ def add_code(code_data: dict):
             'watch': code_data.get('watch', False)
         }
         
-        fetch_df(insert_sql, **insert_params)
+        execute(insert_sql, **insert_params)
         logger.info(f"添加市场代码成功: {code_data['exchange']}:{code_data['code']}")
         
         return {"success": True, "message": "添加成功"}
@@ -588,7 +594,7 @@ def add_code(code_data: dict):
 
 
 @router.put("/market_codes")
-def update_code(exchange: str = Query(...), code: str = Query(...), update_data: dict = Body(...)):
+def update_code(exchange: str = Query(...), code: str = Query(...), update_data: dict = Body(...), request: Request = None):
     """
     更新市场代码
     
@@ -604,10 +610,11 @@ def update_code(exchange: str = Query(...), code: str = Query(...), update_data:
     
     try:
         # 检查记录是否存在
+        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
         check_sql = """
-        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code AND tenant_id = :tenant_id
         """
-        check_params = {'exchange': exchange, 'code': code}
+        check_params = {'exchange': exchange, 'code': code, 'tenant_id': tenant_id}
         check_df = fetch_df(check_sql, **check_params)
         
         if len(check_df) == 0:
@@ -627,14 +634,14 @@ def update_code(exchange: str = Query(...), code: str = Query(...), update_data:
         
         # 添加更新字段
         set_clauses = []
-        params = {'exchange': exchange, 'code': code}
+        params = {'exchange': exchange, 'code': code, 'tenant_id': tenant_id}
         
         for field, value in update_fields.items():
             set_clauses.append(f"{field} = :{field}")
             params[field] = value
         
         update_sql += ", ".join(set_clauses)
-        update_sql += " WHERE exchange = :exchange AND code = :code"
+        update_sql += " WHERE exchange = :exchange AND code = :code AND tenant_id = :tenant_id"
         
         # 使用execute函数执行UPDATE操作，而不是fetch_df
         execute(update_sql, **params)
@@ -649,7 +656,7 @@ def update_code(exchange: str = Query(...), code: str = Query(...), update_data:
 
 
 @router.delete("/market_codes")
-def delete_code(exchange: str = Query(...), code: str = Query(...)):
+def delete_code(exchange: str = Query(...), code: str = Query(...), request: Request = None):
     """
     删除市场代码
     
@@ -664,10 +671,11 @@ def delete_code(exchange: str = Query(...), code: str = Query(...)):
     
     try:
         # 检查记录是否存在
+        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
         check_sql = """
-        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND code = :code AND tenant_id = :tenant_id
         """
-        check_params = {'exchange': exchange, 'code': code}
+        check_params = {'exchange': exchange, 'code': code, 'tenant_id': tenant_id}
         check_df = fetch_df(check_sql, **check_params)
         
         if len(check_df) == 0:
@@ -675,9 +683,9 @@ def delete_code(exchange: str = Query(...), code: str = Query(...)):
         
         # 执行删除
         delete_sql = """
-        DELETE FROM market_codes WHERE exchange = :exchange AND code = :code
+        DELETE FROM market_codes WHERE exchange = :exchange AND code = :code AND tenant_id = :tenant_id
         """
-        delete_params = {'exchange': exchange, 'code': code}
+        delete_params = {'exchange': exchange, 'code': code, 'tenant_id': tenant_id}
         
         # 使用execute函数执行DELETE操作，而不是fetch_df
         execute(delete_sql, **delete_params)
@@ -692,7 +700,7 @@ def delete_code(exchange: str = Query(...), code: str = Query(...)):
 
 
 @router.post("/market_codes/batch_update")
-def batch_update_codes(batch_data: dict):
+def batch_update_codes(batch_data: dict, request: Request = None):
     """
     批量更新市场代码
     
@@ -722,6 +730,7 @@ def batch_update_codes(batch_data: dict):
         if not update_fields:
             return {"success": True, "message": "没有需要更新的字段"}
         
+        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
         # 构建更新语句
         update_sql = """
         UPDATE market_codes SET
@@ -729,14 +738,14 @@ def batch_update_codes(batch_data: dict):
         
         # 添加更新字段
         set_clauses = []
-        params = {}
+        params = {'tenant_id': tenant_id}
         
         for field, value in update_fields.items():
             set_clauses.append(f"{field} = :{field}")
             params[field] = value
         
         update_sql += ", ".join(set_clauses)
-        update_sql += " WHERE CONCAT(exchange, ':', code) = ANY(:keys)"
+        update_sql += " WHERE tenant_id = :tenant_id AND CONCAT(exchange, ':', code) = ANY(:keys)"
         params['keys'] = keys
         
         # 使用execute函数而非fetch_df，因为更新操作不返回数据

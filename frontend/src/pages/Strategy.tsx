@@ -6,6 +6,7 @@ import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
 import SymbolSelector from '../components/SymbolSelector'
+import { useTenant } from '../context/TenantContext'
 
 const { Content } = Layout
 
@@ -14,9 +15,10 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
   const [tree, setTree] = useState<any[]>([])
   const [strategies, setStrategies] = useState<any[]>([])
   const [loading, setLoading] = useState<boolean>(true)
+  const { tenantId } = useTenant()
   
   // 使用localStorage作为持久化缓存，设置缓存过期时间为5分钟
-  const CACHE_KEY = 'strategies_cache'
+  const CACHE_KEY = `strategies_cache_${tenantId}`
   const CACHE_EXPIRE_TIME = 5 * 60 * 1000 // 5分钟
 
   const load = async () => {
@@ -84,7 +86,7 @@ const StrategyTree = ({ onSelect, onCreate, onRefresh }: { onSelect: (strategy: 
     }
   }
 
-  useEffect(() => { load() }, [onRefresh])
+  useEffect(() => { load() }, [onRefresh, tenantId])
 
   // 自定义onSelect处理函数，传递完整策略对象
   const handleSelect = (selectedKeys: any[]) => {
@@ -228,10 +230,11 @@ export default function StrategyPage(){
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [codeLoading, setCodeLoading] = useState<boolean>(false)
   const [isBacktesting, setIsBacktesting] = useState<boolean>(false)
+  const { tenantId } = useTenant()
   
   const refreshStrategyTree = () => {
     // 清除localStorage中的策略缓存
-    localStorage.removeItem('strategies_cache')
+    localStorage.removeItem(`strategies_cache_${tenantId}`)
     setRefreshTrigger(prev => prev + 1)
   }
 

@@ -1,11 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 import pandas as pd
 from ..services.backtest_service import run_backtest, get_backtest_result
 from ..services.market_service import get_candles
 from common.schemas import BacktestRequest, BacktestResp
 router = APIRouter(prefix="/api", tags=["backtest"])
 @router.post("/backtest", response_model=BacktestResp)
-async def backtest(req: BacktestRequest):
+async def backtest(req: BacktestRequest, request: Request):
     
     # 从params中获取所有需要的字段
     # 支持code或excode字段
@@ -30,7 +30,8 @@ async def backtest(req: BacktestRequest):
         df = candles_result
         
     # 调用重构后的run_backtest方法，使用req.params作为参数
-    backtest_result = run_backtest(df, req.params, req.strategy)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    backtest_result = run_backtest(df, req.params, req.strategy, tenant_id=tenant_id)
     
     # 从结果中提取run_id作为backtest_id
     backtest_id = backtest_result["run_id"] if isinstance(backtest_result, dict) and "run_id" in backtest_result else str(backtest_result)
@@ -50,5 +51,6 @@ async def backtest(req: BacktestRequest):
     }
 
 @router.get("/backtest/{backtest_id}/results")
-async def backtest_results(backtest_id: str):
-    return get_backtest_result(backtest_id) or {"error":"not_found"}
+async def backtest_results(backtest_id: str, request: Request):
+    tenant_id = getattr(request.state, "tenant_id", None)
+    return get_backtest_result(backtest_id, tenant_id=tenant_id) or {"error":"not_found"}

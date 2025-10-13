@@ -10,8 +10,9 @@ import Progress from './pages/Progress';
 import ReportDetail from './pages/ReportDetail';
 import Settings from './pages/Settings';
 import './custom-menu.css';
+import TenantSelector from './components/TenantSelector';
 
-const { Sider, Content } = Layout;
+const { Sider, Content, Header } = Layout;
 
 const App: React.FC = () => {
   const [collapsed, setCollapsed] = useState(true);
@@ -99,7 +100,18 @@ const App: React.FC = () => {
         />
       </Sider>
       <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.3s' }}>
-        <Content style={{ padding: 0, minHeight: '100vh', background: '#0A0A15' }}>
+        <Header
+          style={{
+            background: '#0A0A15',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            padding: '0 24px',
+          }}
+        >
+          <TenantSelector />
+        </Header>
+        <Content style={{ padding: 0, minHeight: 'calc(100vh - 64px)', background: '#0A0A15' }}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/strategy" element={<Strategy />} />

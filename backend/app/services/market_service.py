@@ -11,6 +11,7 @@ from .cache_service import (
     LONG_EXPIRE_TIME, 
     clear_market_data_cache
 )
+from ..main.tenant_context import get_current_tenant
 
 # 使用LoggerFactory替换原有logger
 logger = LoggerFactory.get_logger('market_service')
@@ -119,7 +120,7 @@ class MarketDataService:
         self.datetime_parser = DateTimeParser()
         self.logger = logger
         
-    def get_market_exchanges(self, active: bool = True) -> pd.DataFrame:
+    def get_market_exchanges(self, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
         """
         获取所有可用的交易所列表
         
@@ -130,24 +131,26 @@ class MarketDataService:
             交易所列表的DataFrame
         """
         try:
+            tenant = tenant_id or get_current_tenant()
             sql = """
             SELECT DISTINCT exchange FROM market_codes
             WHERE 1=1
             """
-            
+
             if active:
                 sql += " AND active = TRUE"
-            
+            sql += " AND tenant_id = :tenant_id"
+
             sql += " ORDER BY exchange"
-            
-            df = fetch_df(sql)
+
+            df = fetch_df(sql, tenant_id=tenant)
             self.logger.info(f"获取交易所列表成功，共{len(df)}条记录")
             return df
         except Exception as e:
             self.logger.error(f"获取交易所列表失败: {e}")
             return pd.DataFrame(columns=['exchange'])
             
-    def get_market_codes(self, exchange: str = None, active: bool = True) -> pd.DataFrame:
+    def get_market_codes(self, exchange: str = None, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
         """
         获取市场代码列表，可以按交易所过滤
         
@@ -159,13 +162,16 @@ class MarketDataService:
             市场代码列表的DataFrame，包含code, name, exchange, excode等字段
         """
         try:
+            tenant = tenant_id or get_current_tenant()
             sql = """
             SELECT code, exchange, active, excode FROM market_codes
             WHERE 1=1
             """
-            
+
             params = {}
-            
+            params['tenant_id'] = tenant
+            sql += " AND tenant_id = :tenant_id"
+
             if exchange:
                 sql += " AND exchange = :exchange"
                 params['exchange'] = exchange
@@ -787,15 +793,15 @@ def get_candles(code: str, start: str, end: str,
 
 # 添加模块级别的市场代码相关函数
 @cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
-def get_market_exchanges(active: bool = True) -> pd.DataFrame:
+def get_market_exchanges(active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
     """
     模块级别的获取交易所列表函数
     """
-    return market_data_service.get_market_exchanges(active)
+    return market_data_service.get_market_exchanges(active, tenant_id)
 
 @cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)
-def get_market_codes(exchange: str = None, active: bool = True) -> pd.DataFrame:
+def get_market_codes(exchange: str = None, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
     """
     模块级别的获取市场代码列表函数
     """
-    return market_data_service.get_market_codes(exchange, active)
+    return market_data_service.get_market_codes(exchange, active, tenant_id)
