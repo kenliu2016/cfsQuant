@@ -33,3 +33,14 @@ pip install ccxt pandas psycopg2-binary numpy
 # 例如你的脚本在 ~/fetch-klines-data
 cd ~/fetch-klines-data
 python init_symbols.py
+
+
+
+# 每分钟抓分钟线
+* * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1m >> /var/log/fetch_klines.log 2>&1
+
+# 每小时抓小时线
+5 * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1h >> /var/log/fetch_klines.log 2>&1
+
+# 每天抓日线
+5 0 * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1d >> /var/log/fetch_klines.log 2>&1

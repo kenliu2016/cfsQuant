@@ -84,8 +84,8 @@ def run_hmm_signal(exchange, code, tables=['minute_realtime','hour_realtime','da
             continue
         df_returns = compute_returns(df)
         
-        # HMM 模型文件名（区分周期）
-        model_file = f"hmm_model_{code.replace('/','_')}_{table}.pkl"
+        # HMM 模型文件名（区分周期），保存到hmmModel目录
+        model_file = os.path.join("hmmModel", f"hmm_model_{code.replace('/','_')}_{table}.pkl")
         hmm = load_or_train_hmm(df_returns, model_file)
         
         # 生成信号

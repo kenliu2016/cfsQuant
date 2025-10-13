@@ -25,11 +25,3 @@ npm run dev
 celery -A app.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
 
 
-# 每分钟抓分钟线
-* * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1m >> /var/log/fetch_klines.log 2>&1
-
-# 每小时抓小时线
-5 * * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1h >> /var/log/fetch_klines.log 2>&1
-
-# 每天抓日线
-5 0 * * * /home/ubuntu/fetch-klines-data/fetch_klines.py --interval 1d >> /var/log/fetch_klines.log 2>&1
