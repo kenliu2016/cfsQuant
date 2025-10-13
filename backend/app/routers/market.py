@@ -1,14 +1,19 @@
 from fastapi import APIRouter, HTTPException, Query, Body
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("routers.market")
+
 from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service, get_latest_candles
 from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
 from ..db import fetch_df, execute
 from datetime import datetime, timedelta
 import pandas as pd
-import logging
-
-# 配置日志记录器
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 

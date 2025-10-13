@@ -4,6 +4,15 @@ import pandas as pd
 import time
 import ccxt
 from datetime import datetime, timedelta, timezone
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("fetchdata.realtime")
 
 # ================== 数据库配置 ==================
 DB_CONFIG = {
@@ -94,7 +103,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
                 row.to_json(),
             ))
     conn.commit()
-    print(f"[INFO] {exchange} {symbol} {timeframe} 实时写入 {len(df)} 条", flush=True)
+    logger.info(f"{exchange} {symbol} {timeframe} 实时写入 {len(df)} 条")
 
 def fetch_latest_ohlcv(exchange, symbol, timeframe="1m", limit=100):
     """获取最新 N 根 K 线"""
@@ -116,25 +125,46 @@ if __name__ == "__main__":
     poll_interval = 35  # 每 60 秒轮询一次
     limit = 100         # 每次取最近 100 根 K 线
 
+    # 获取活跃交易对
     with psycopg2.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
             codes = cur.fetchall()
-        print(f"[DEBUG] 查询到 {len(codes)} 个 active=true 交易对")
+    logger.info(f"查询到 {len(codes)} 个交易对")
 
-        while True:
-            for exchange_name, symbol in codes:
+    # 创建交易所实例
+    exchanges = {}
+    for exchange_name, symbol in codes:
+        if exchange_name not in exchanges:
+            try:
+                ex = get_exchange(exchange_name)
+                exchanges[exchange_name] = ex
+                logger.info(f"创建交易所实例: {exchange_name}")
+            except Exception as e:
+                logger.error(f"无法创建交易所 {exchange_name}: {e}")
+                continue
+
+    # 主循环
+    while True:
+        for exchange_name, symbol in codes:
+            if exchange_name not in exchanges:
+                continue
+            ex = exchanges[exchange_name]
+            
+            for tf in ["1m","1h","1d"]:
+                logger.info(f"开始采集 {exchange_name} {symbol} {tf}")
                 try:
-                    ex = get_exchange(exchange_name)
-                except Exception as e:
-                    print(f"[ERROR] 无法初始化交易所 {exchange_name}: {e}")
-                    continue
-
-                for tf in ["1m","1h","1d"]:
-                    df = fetch_latest_ohlcv(ex, symbol, tf, limit=limit)
+                    df = fetch_latest_ohlcv(ex, exchange_name, symbol, tf, limit=100)
                     if df.empty:
+                        logger.warning(f"{exchange_name} {symbol} {tf} 无数据")
                         continue
-                    upsert_ohlcv(exchange_name, symbol, df, tf, conn)
+                    
+                    with psycopg2.connect(**DB_CONFIG) as conn:
+                        upsert_ohlcv(exchange_name, symbol, df, tf, conn)
+                    
+                    logger.info(f"{exchange_name} {symbol} {tf} 采集完成")
+                except Exception as e:
+                    logger.error(f"{exchange_name} {symbol} {tf} 采集失败: {e}")
 
-            print(f"[LOOP] 本轮实时采集完成 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-            time.sleep(poll_interval)
+        logger.info(f"本轮实时采集完成 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
+        time.sleep(poll_interval)

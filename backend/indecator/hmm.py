@@ -1,16 +1,18 @@
 import numpy as np
 import pandas as pd
+import psycopg2
 from hmmlearn.hmm import GaussianHMM
 import joblib
 from datetime import datetime
 import sys
 import os
 
-# 添加项目根目录和backend目录到Python路径，以便能导入app.db
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-backend_dir = os.path.join(project_root, 'backend')
-sys.path.append(project_root)
-sys.path.append(backend_dir)
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("indecator.hmm")
 
 from app.db import get_engine
 
@@ -36,12 +38,12 @@ def compute_returns(df):
 def load_or_train_hmm(df_returns, model_file):
     try:
         hmm = joblib.load(model_file)
-        print(f"Loaded HMM model from {model_file}")
+        logger.info(f"加载HMM模型从 {model_file}")
     except:
         hmm = GaussianHMM(n_components=2, covariance_type='full', n_iter=1000, random_state=42)
         hmm.fit(df_returns['returns'].values.reshape(-1,1))
         joblib.dump(hmm, model_file)
-        print(f"Trained new HMM model and saved to {model_file}")
+        logger.info(f"模型训练完成，状态数: {hmm.n_components}")
     return hmm
 
 # === 生成信号和仓位 ===
@@ -78,7 +80,7 @@ def run_hmm_signal(exchange, code, tables=['minute_realtime','hour_realtime','da
         # 获取数据
         df = get_ohlcv(table, exchange, code)
         if df.empty:
-            print(f"No data for {table} {code}")
+            logger.warning(f"{table} {code} 无数据")
             continue
         df_returns = compute_returns(df)
         
@@ -92,7 +94,7 @@ def run_hmm_signal(exchange, code, tables=['minute_realtime','hour_realtime','da
         
         # 写入 PostgreSQL
         save_signal(exchange, code, table.replace('_realtime',''), dt, state_prob, signal, position)
-        print(f"[{table}] {code} {dt} => Signal: {signal}, Position: {position}, Prob: {state_prob[1]:.2f}")
+        logger.info(f"[{table}] {code} {dt} => 信号: {signal}, 仓位: {position}, 概率: {state_prob[1]:.2f}")
 
 # === 运行示例 ===
 if __name__ == "__main__":

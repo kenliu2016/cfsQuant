@@ -1,12 +1,18 @@
-import logging
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("routers.tuning")
+
 from fastapi import APIRouter, Body, HTTPException
 from ..services.tuning_service import start_tuning_async, get_tuning_status, get_all_tuning_tasks, delete_tuning_task, run_parameter_tuning
 
 # 创建用于 /api/tuning 前缀的路由器（与前端保持一致）
 router = APIRouter(prefix="/api/tuning", tags=["tuning"])
-
-# 配置日志
-logger = logging.getLogger(__name__)
 # 定义共享的端点处理函数
 async def create_tuning_handler(payload: dict = Body(...)):
     strategy = payload.get("strategy")

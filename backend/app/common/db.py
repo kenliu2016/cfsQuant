@@ -294,7 +294,6 @@ def fetch_df(query: str, config_path: Optional[str] = None, **kwargs):
 
 async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
     """异步执行SQL查询并返回pandas DataFrame"""
-    import logging  # 添加缺失的logging模块导入
     logger = LoggerFactory.get_logger('db')
     # 设置为INFO级别以确保日志可见
     logger.setLevel(logging.INFO)
@@ -491,8 +490,7 @@ async def to_sql_async(df, table_name: str, config_path: Optional[str] = None, i
                 await conn.execute(text(_create_table_sql_from_df(df, table_name)))
             except Exception as e:
                 # 如果创建表失败，记录日志并继续
-                import logging
-                logging.error(f"创建表 {table_name} 失败: {e}")
+                logger.error(f"创建表 {table_name} 失败: {e}")
         elif if_exists == 'fail':
             # 检查表是否存在
             result = await conn.execute(

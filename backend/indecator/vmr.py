@@ -13,6 +13,15 @@ from datetime import datetime, timedelta
 import sys
 import os
 
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("indecator.vmr")
+
+from app.db import get_engine
+
 # ========== 用户配置区 ==========
 EXCHANGE = "binance"
 SYMBOLS = ["BTC/USDT", "ETH/USDT"]
@@ -94,7 +103,7 @@ def save_to_db(df: pd.DataFrame, symbol: str):
 
     engine = get_engine()
     df_to_save.to_sql('vmr_metrics', engine, if_exists='append', index=False)
-    print(f"✅ 已写入 {len(df_to_save)} 条记录到 vmr_metrics ({symbol})")
+    logger.info(f"VMR指标计算完成，共处理 {len(df)} 条数据")
 
 
 def plot_vmr_plotly(vmr_dict, threshold=0.005):
@@ -124,16 +133,16 @@ def plot_vmr_plotly(vmr_dict, threshold=0.005):
 
 
 def main():
-    print(f"🚀 启动 VMR 指标计算 ({EXCHANGE}, timeframe={TIMEFRAME}, window={WINDOW_HOURS}h)")
+    logger.info(f"启动 VMR 指标计算 ({EXCHANGE}, timeframe={TIMEFRAME}, window={WINDOW_HOURS}h)")
     vmr_dict = {}
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=30)
 
     for sym in SYMBOLS:
-        print(f"⏳ 获取数据: {sym}")
+        logger.info(f"获取数据: {sym}")
         df = fetch_data(sym, start_date, end_date)
         if df.empty:
-            print(f"⚠️ 无数据: {sym}")
+            logger.warning(f"无数据: {sym}")
             continue
 
         vmr_df = compute_vmr(df, window_hours=WINDOW_HOURS)
@@ -141,7 +150,7 @@ def main():
         vmr_dict[sym] = vmr_df
 
     if not vmr_dict:
-        print("❌ 没有任何币种可绘制。")
+        logger.error("没有任何币种可绘制。")
         return
 
     if USE_PLOTLY:

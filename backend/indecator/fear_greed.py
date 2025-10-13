@@ -1,13 +1,19 @@
 import requests
+import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime
+from datetime import datetime, timezone
+import sys
+import os
 
-# === API 配置 ===
-API_KEY = "aa933896-7789-4070-adf4-7a4231aa9e83"
-API_BASE = "https://pro-api.coinmarketcap.com/v3/fear-and-greed"
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
 
-# === 数据库配置 ===
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("indecator.fear_greed")
+
+# ================== 数据库配置 ==================
 DB_CONFIG = {
     "dbname": "quant",
     "user": "cfs",
@@ -15,6 +21,10 @@ DB_CONFIG = {
     "host": "127.0.0.1",
     "port": 5432
 }
+
+# === API 配置 ===
+API_KEY = "aa933896-7789-4070-adf4-7a4231aa9e83"
+API_BASE = "https://pro-api.coinmarketcap.com/v3/fear-and-greed"
 
 
 def get_api_data(endpoint: str, params: dict = None):
@@ -94,7 +104,7 @@ def parse_records(data):
 def save_to_postgres(records):
     """写入 PostgreSQL"""
     if not records:
-        print("⚠️ 无可保存数据")
+        logger.warning("无可保存数据")
         return
 
     conn = psycopg2.connect(**DB_CONFIG)
@@ -111,31 +121,28 @@ def save_to_postgres(records):
     """
     execute_values(cur, sql, records)
     conn.commit()
+    logger.info(f"成功保存恐惧贪婪指数 {len(records)} 条记录")
     cur.close()
     conn.close()
-    print(f"✅ 成功保存 {len(records)} 条记录。")
-
 
 def fetch_latest():
     """获取最新恐惧与贪婪指数"""
-    print("📊 正在获取最新 Fear & Greed Index...")
+    logger.info("正在获取最新 Fear & Greed Index...")
     data = get_api_data("latest")
     records = parse_records(data)
     save_to_postgres(records)
 
-
 def fetch_historical(limit=100):
     """获取历史恐惧与贪婪指数"""
-    print(f"📈 正在获取最近 {limit} 条历史数据...")
+    logger.info(f"正在获取最近 {limit} 条历史数据...")
     data = get_api_data("historical", params={"limit": limit})
     records = parse_records(data)
     save_to_postgres(records)
-
 
 if __name__ == "__main__":
     try:
         fetch_latest()        # 获取最新指数
         fetch_historical(500) # 获取历史指数（可改为任意数量）
-        print("✅ 全部任务完成。")
+        logger.info("全部任务完成。")
     except Exception as e:
-        print("❌ 出错：", e)
+        logger.error(f"出错：{e}")

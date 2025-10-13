@@ -15,18 +15,12 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple, Protocol
 from dataclasses import dataclass, field
 from pathlib import Path
-import logging
 import importlib.util
 from ..db import fetch_df, to_sql, get_engine
-from ..common import setup_logger_with_file_handler
+from ..common import LoggerFactory
 
 # 配置回测服务日志记录器
-backtest_service_logger = setup_logger_with_file_handler(
-    logger_name="backtest_service",
-    log_filename="backtest_service.log",
-    log_level=logging.INFO,
-    mode='w'
-)
+backtest_service_logger = LoggerFactory.get_logger("backtest_service")
 
 # 常量定义
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "core" / "strategies"
@@ -116,12 +110,7 @@ class BacktestLogger:
     
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
-        self.logger = setup_logger_with_file_handler(
-            logger_name="backtest_engine",
-            log_filename="backtest_engine_debug.log",
-            log_level=logging.INFO,
-            mode='w'
-        )
+        self.logger = LoggerFactory.get_logger("backtest_engine")
     
     def _safe_format(self, value: Any, format_str: str) -> str:
         """安全格式化数值"""

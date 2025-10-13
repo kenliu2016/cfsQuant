@@ -747,9 +747,15 @@ def update_market_data_and_refresh_cache(data, table_name, code=None):
         code: 可选，股票代码，如提供则只刷新该代码的缓存
     """
     from ..db import to_sql
-    import logging
+    import sys
+    import os
     
-    logger = logging.getLogger(__name__)
+    # 添加项目根目录到Python路径，以便能够导入app模块
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    from app.common.logger import LoggerFactory
+    
+    # 使用项目统一的日志工具
+    logger = LoggerFactory.get_logger("services.market")
     
     try:
         # 写入数据到数据库

@@ -9,28 +9,26 @@
 
 import pandas as pd
 import numpy as np
-import logging
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("strategies.grid_fixed")
+
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime
-import sys
-import os
+
 # 获取项目根目录（当前文件在backend/core/strategies目录下）
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 # 确保项目根目录在Python路径中
 if project_root not in sys.path:
     sys.path.append(project_root)
-# 从common.py导入setup_logger_with_file_handler函数
-from backend.app.common import setup_logger_with_file_handler
-
-# 配置日志记录器
-grid_strategy_logger = setup_logger_with_file_handler(
-    logger_name="grid_strategy",
-    log_filename="grid_strategy.log",
-    log_level=logging.INFO,
-    mode='w'
-)
 
 # 默认策略参数
 DEFAULT_PARAMS = {

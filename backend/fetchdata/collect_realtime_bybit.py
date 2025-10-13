@@ -4,6 +4,15 @@ import pandas as pd
 import time
 import ccxt
 from datetime import datetime, timedelta, timezone
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("fetchdata.realtime_bybit")
 
 # ================== 数据库配置 ==================
 DB_CONFIG = {
@@ -94,7 +103,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
                 row.to_json(),
             ))
     conn.commit()
-    print(f"[INFO] {exchange} {symbol} {timeframe} 实时写入 {len(df)} 条", flush=True)
+    logger.info(f"{exchange} {symbol} {timeframe} 实时写入 {len(df)} 条")
 
 def fetch_latest_ohlcv(exchange, symbol, timeframe="1m", limit=100):
     """获取最新 N 根 K 线"""

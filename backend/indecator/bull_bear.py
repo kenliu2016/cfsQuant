@@ -160,7 +160,7 @@ def main():
 
     signals = fetch_latest_signals(engine, exchange, norm_symbol)
     result = score_and_decide(df, signals)
-    print('Result:', result)
+    logger.info(f"判定结果: {result}")
 
    
 

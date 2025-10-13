@@ -2,16 +2,24 @@ import ccxt
 import psycopg2
 import pandas as pd
 import time
-import ccxt
 from datetime import datetime, timedelta, timezone
+import sys
+import os
 
-# 数据库配置
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("fetchdata.history")
+
+# ================== 数据库配置 ==================
 DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
     "dbname": "quant",
     "user": "cfs",
     "password": "Cc563479,.",
+    "host": "127.0.0.1",
+    "port": 5432
 }
 
 # ================== 工具 ==================
@@ -98,7 +106,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
                 row.to_json(),
             ))
     conn.commit()
-    print(f"[INFO] {exchange} {symbol} {timeframe} 写入 {len(df)} 条", flush=True)
+    logger.info(f"{exchange} {symbol} {timeframe} 历史写入 {len(df)} 条")
 
 # ================== 分页抓取 ==================
 def fetch_ohlcv_paginated(exchange, exchange_name, symbol, timeframe, since, until, conn):
@@ -137,13 +145,48 @@ if __name__ == "__main__":
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=10)  # 最近三年
 
+    # 获取活跃交易对
     with psycopg2.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
             codes = cur.fetchall()
-        print(f"[DEBUG] 查询到 {len(codes)} 个交易对")
+    logger.info(f"查询到 {len(codes)} 个交易对")
 
-        for exchange_name, symbol in codes:
+    # 创建交易所实例
+    exchanges = {}
+    for exchange_name, symbol in codes:
+        if exchange_name not in exchanges:
+            try:
+                ex = get_exchange(exchange_name)
+                exchanges[exchange_name] = ex
+                logger.info(f"创建交易所实例: {exchange_name}")
+            except Exception as e:
+                logger.error(f"无法创建交易所 {exchange_name}: {e}")
+                continue
+
+    # 主循环
+    for exchange_name, symbol in codes:
+        if exchange_name not in exchanges:
+            continue
+        ex = exchanges[exchange_name]
+        
+        for tf in ["1m","1h","1d"]:
+            logger.info(f"开始采集 {exchange_name} {symbol} {tf}")
+            try:
+                df = fetch_historical_ohlcv(ex, exchange_name, symbol, tf, since=since, until=until)
+                if df.empty:
+                    logger.warning(f"{exchange_name} {symbol} {tf} 无数据")
+                    continue
+                
+                with psycopg2.connect(**DB_CONFIG) as conn:
+                    upsert_ohlcv(exchange_name, symbol, df, tf, conn)
+                
+                logger.info(f"{exchange_name} {symbol} {tf} 采集完成")
+            except Exception as e:
+                logger.error(f"{exchange_name} {symbol} {tf} 采集失败: {e}")
+
+    logger.info("历史数据采集完成")
+    for exchange_name, symbol in codes:
             try:
                 ex = get_exchange(exchange_name)
             except Exception as e:

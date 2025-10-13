@@ -6,15 +6,17 @@ from functools import wraps
 from typing import Any, Callable, Optional, Dict, Tuple, List
 import hashlib
 import time
-import logging
 import os
 import yaml
 import concurrent.futures
 import numpy as np
 
-# 配置日志
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("services.cache")
 
 # 加载数据库配置
 def load_db_config(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -1087,9 +1089,6 @@ async def async_clear_market_data_cache(code: str = None) -> None:
 async def async_update_market_data_and_refresh_cache(data, table_name, code=None):
     """异步更新市场数据并刷新相关缓存"""
     from ..db import to_sql_async
-    import logging
-    
-    logger = logging.getLogger(__name__)
     
     try:
         # 异步写入数据到数据库

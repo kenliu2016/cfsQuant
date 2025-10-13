@@ -3,13 +3,19 @@ import uuid
 import itertools
 import time
 import json
-import logging
+import sys
+import os
+
+# 添加项目根目录到Python路径，以便能够导入app模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from app.common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("services.tuning")
+
 from datetime import datetime
 import traceback  # 添加traceback导入
 
-# 创建logger实例
-logger = logging.getLogger('tuning_service')
-logger.setLevel(logging.INFO)
 import inspect
 from typing import Dict, Any, Optional, List
 import pandas as pd
@@ -518,8 +524,6 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
         if result.empty:
             # 添加任务ID频率检查，避免频繁警告
             import time
-            import logging
-            logger = logging.getLogger(__name__)
             if not hasattr(get_tuning_status, 'last_warned'):
                 get_tuning_status.last_warned = {}
             current_time = time.time()
