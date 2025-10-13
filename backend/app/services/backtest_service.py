@@ -462,8 +462,8 @@ class DatabaseManager:
             'paras': json.dumps(result.params)
         }])
         
-        run_data.to_sql("runs", con=self.engine, if_exists="append", index=False)
-        self.logger.info(f"成功写入runs表: {result.run_id}")
+        run_data.to_sql("backtest_runs", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入backtest_runs表: {result.run_id}")
     
     def _save_trades(self, trades: List[TradeRecord]):
         """保存交易记录"""
@@ -488,8 +488,8 @@ class DatabaseManager:
         } for trade in trades]
         
         trades_df = pd.DataFrame(trades_data)
-        trades_df.to_sql("trades", con=self.engine, if_exists="append", index=False)
-        self.logger.info(f"成功写入trades表: {len(trades_df)} 条记录")
+        trades_df.to_sql("backtest_trades", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入backtest_trades表: {len(trades_df)} 条记录")
     
     def _save_equity_curve(self, run_id: str, code: str, nav_list: List[float], 
                           datetime_index: pd.Index):
@@ -501,8 +501,8 @@ class DatabaseManager:
             "drawdown": pd.Series(nav_list).expanding().max().subtract(pd.Series(nav_list)).div(
                 pd.Series(nav_list).expanding().max()).fillna(0)
         })
-        equity_df.to_sql("equity_curve", con=self.engine, if_exists="append", index=False)
-        self.logger.info(f"成功写入equity_curve: {len(equity_df)} 条记录")
+        equity_df.to_sql("backtest_equity_curve", con=self.engine, if_exists="append", index=False)
+        self.logger.info(f"成功写入backtest_equity_curve: {len(equity_df)} 条记录")
     
     def _save_grid_levels(self, run_id: str, grid_levels: List[Dict[str, Any]]):
         """保存网格级别数据"""
@@ -551,8 +551,8 @@ class DatabaseManager:
             if grid_data:
                 try:
                     grid_df = pd.DataFrame(grid_data)
-                    grid_df.to_sql("grid_levels", con=self.engine, if_exists="append", index=False)
-                    self.logger.info(f"成功写入grid_levels: {len(grid_df)} 条记录")
+                    grid_df.to_sql("backtest_grid_levels", con=self.engine, if_exists="append", index=False)
+                    self.logger.info(f"成功写入backtest_grid_levels: {len(grid_df)} 条记录")
                 except Exception as e:
                     self.logger.error(f"写入grid_levels表失败: {str(e)}")
                     # 这里不抛出异常，避免影响整体回测结果的保存
@@ -935,7 +935,7 @@ def run_backtest(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -
 def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
     """获取回测结果"""
     try:
-        df_m = fetch_df("SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid", rid=backtest_id)
+        df_m = fetch_df("SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid", rid=backtest_id)
         df_e = fetch_df("SELECT datetime, nav, drawdown FROM equity_curve WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
         
         # 直接获取网格级别数据
@@ -955,7 +955,7 @@ def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
         signals = []
         try:
             # 尝试从trades表获取交易数据作为信号数据
-            df_t = fetch_df("SELECT datetime, side, price, qty FROM trades WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
+            df_t = fetch_df("SELECT datetime, side, price, qty FROM backtest_trades WHERE run_id=:rid ORDER BY datetime", rid=backtest_id)
             if not df_t.empty:
                 for _, row in df_t.iterrows():
                     signals.append({

@@ -110,7 +110,7 @@ def save_to_postgres(records):
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
     sql = """
-    INSERT INTO fear_greed_index (timestamp, value, value_classification, source)
+    INSERT INTO indecator_fear_greed (timestamp, value, value_classification, source)
     VALUES %s
     ON CONFLICT (timestamp)
     DO UPDATE SET

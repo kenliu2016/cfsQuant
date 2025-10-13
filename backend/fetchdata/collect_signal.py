@@ -26,7 +26,7 @@ engine = get_engine()
 
 def ensure_table(engine):
     sql = '''
-    CREATE TABLE IF NOT EXISTS public.market_signals (
+    CREATE TABLE IF NOT EXISTS public.indecator_metrics (
         id SERIAL PRIMARY KEY,
         exchange VARCHAR NOT NULL,
         symbol VARCHAR NOT NULL,
@@ -35,7 +35,7 @@ def ensure_table(engine):
         stablecoin_flow NUMERIC,
         created_at TIMESTAMP DEFAULT now()
     );
-    CREATE INDEX IF NOT EXISTS market_signals_idx ON public.market_signals (exchange, symbol, datetime);
+    CREATE INDEX IF NOT EXISTS indecator_metrics_idx ON public.indecator_metrics (exchange, symbol, datetime);
     '''
     with engine.begin() as conn:
         conn.execute(text(sql))
@@ -76,7 +76,7 @@ def fetch_stablecoin_flow_proxy():
 
 def persist_signal(engine, exchange, symbol, funding_rate, stablecoin_flow):
     sql = text('''
-        INSERT INTO market_signals (exchange, symbol, funding_rate, stablecoin_flow)
+        INSERT INTO indecator_metrics (exchange, symbol, funding_rate, stablecoin_flow)
         VALUES (:exchange, :symbol, :funding_rate, :stablecoin_flow)
     ''')
     with engine.begin() as conn:

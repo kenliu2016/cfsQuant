@@ -26,9 +26,9 @@ class DDLExporter:
         """初始化DDL导出器"""
         # 使用绝对路径，计算config目录的位置
         if not config_path:
-            # 从当前文件位置(dbscripts)向上两级到项目根目录，然后进入backend/config
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            self.config_path = os.environ.get("DB_CONFIG", os.path.join(base_dir, "backend", "config", "db_config.yaml"))
+            # 从当前文件位置(dbscripts)向上到backend目录，然后进入config
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.config_path = os.environ.get("DB_CONFIG", os.path.join(base_dir, "config", "db_config.yaml"))
         else:
             self.config_path = config_path
         
@@ -79,6 +79,10 @@ class DDLExporter:
         if not output_file:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = f"db_ddl_export_{timestamp}.sql"
+        
+        # 确保输出文件在脚本所在目录
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_file = os.path.join(script_dir, output_file)
         
         self.output_file = output_file
         logger.info(f"准备导出DDL到文件: {output_file}")

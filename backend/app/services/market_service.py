@@ -204,14 +204,14 @@ class MarketDataService:
             start_dt, end_dt = self._prepare_query_params(start, end)
             # 根据interval后缀确定表名
             if interval.endswith('m'):
-                table_name = "minute_realtime"
+                table_name = "market_minute_klines"
             elif interval.endswith('h'):
-                table_name = "hour_realtime"
+                table_name = "market_hour_klines"
             elif interval.endswith(('D', 'W', 'M')):
-                table_name = "day_realtime"
+                table_name = "market_day_klines"
             else:
                 # 默认使用分钟表
-                table_name = "minute_realtime"
+                table_name = "market_minute_klines"
             
             # 构建SQL查询
             sql = """
@@ -342,7 +342,7 @@ def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", pag
         low,
         close,
         volume
-    FROM day_realtime
+    FROM market_day_klines
     WHERE code = :code AND datetime BETWEEN :start AND :end
     ORDER BY datetime
     """
@@ -366,7 +366,7 @@ def get_daily_candles(code: str, start: str, end: str, interval: str = "1D", pag
     # 获取总条数的SQL
     count_sql = """
     SELECT COUNT(*) as count
-    FROM day_realtime
+    FROM market_day_klines
     WHERE code = :code AND datetime BETWEEN :start AND :end
     """
     
@@ -418,14 +418,14 @@ def get_batch_candles(codes: list, interval: str = "1m", limit: int = 1, timesta
     
     # 根据interval后缀确定表名
     if interval.endswith('m'):
-        table_name = "minute_realtime"
+        table_name = "market_minute_klines"
     elif interval.endswith('h'):
-        table_name = "hour_realtime"
+        table_name = "market_hour_klines"
     elif interval.endswith(('D', 'W', 'M')):
-        table_name = "day_realtime"
+        table_name = "market_day_klines"
     else:
         # 默认使用分钟表
-        table_name = "minute_realtime"
+        table_name = "market_minute_klines"
     
     sql = """
     WITH ranked_data AS (
@@ -470,14 +470,14 @@ def get_latest_candles(code: str, interval: str = "1m", limit: int = 2) -> Tuple
     
     # 根据interval后缀确定表名
     if interval.endswith('m'):
-        table_name = "minute_realtime"
+        table_name = "market_minute_klines"
     elif interval.endswith('h'):
-        table_name = "hour_realtime"
+        table_name = "market_hour_klines"
     elif interval.endswith(('D', 'W', 'M')):
-        table_name = "day_realtime"
+        table_name = "market_day_klines"
     else:
         # 默认使用分钟表
-        table_name = "minute_realtime"
+        table_name = "market_minute_klines"
     
     # SQL查询，获取按时间倒序排列的最近N条记录
     sql = """

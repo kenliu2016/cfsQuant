@@ -50,7 +50,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         r.total_fee, 
         r.total_profit
     
-    FROM runs r
+    FROM backtest_runs r
     """
     
     # 构建过滤条件
@@ -99,7 +99,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     df = fetch_df(sql, **params)
     
     # 查询总数
-    count_sql = f"SELECT COUNT(*) as total FROM runs r {where_clause}"
+    count_sql = f"SELECT COUNT(*) as total FROM backtest_runs r {where_clause}"
     count_df = fetch_df(count_sql, **{k: v for k, v in params.items() if k not in ['limit', 'offset']})
     total = count_df.iloc[0]['total'] if not count_df.empty else 0
     
@@ -146,7 +146,7 @@ def get_grid_levels(run_id: str) -> list:
     # 查询grid_levels表获取指定run_id的网格级别数据
     df_grid = fetch_df("""
         SELECT run_id, level, price, name 
-        FROM grid_levels 
+        FROM backtest_grid_levels 
         WHERE run_id = :rid
         ORDER BY level
     """, rid=run_id)
@@ -200,7 +200,7 @@ def run_detail(run_id: str):
         }
     
     # 获取指标数据
-    df_m = fetch_df("""SELECT metric_name, metric_value FROM metrics WHERE run_id=:rid""", rid=run_id)
+    df_m = fetch_df("""SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid""", rid=run_id)
 
     # 从runs表获取主要指标并添加到metrics列表中（如果metrics表中不存在）
     if not df_run.empty:
@@ -349,12 +349,12 @@ def delete_run(run_id: str) -> bool:
         # 首先删除关联的子表数据
         # 删除trades表中的关联数据
         logger.debug(f"开始删除trades表中关联数据，run_id: {run_id}")
-        trade_rows_affected = execute("DELETE FROM trades WHERE run_id = :rid", rid=run_id)
+        trade_rows_affected = execute("DELETE FROM backtest_trades WHERE run_id = :rid", rid=run_id)
         logger.debug(f"已删除trades表中关联数据，run_id: {run_id}, 受影响行数: {trade_rows_affected}")
         
         # 删除metrics表中的关联数据
         logger.debug(f"开始删除metrics表中关联数据，run_id: {run_id}")
-        metrics_rows_affected = execute("DELETE FROM metrics WHERE run_id = :rid", rid=run_id)
+        metrics_rows_affected = execute("DELETE FROM backtest_metrics WHERE run_id = :rid", rid=run_id)
         logger.debug(f"已删除metrics表中关联数据，run_id: {run_id}, 受影响行数: {metrics_rows_affected}")
         
         # 删除equity_curve表中的关联数据
@@ -446,7 +446,7 @@ def get_run_equity(run_id: str, limit: int = 1000):
     # 从trades表中读取equity相关数据
     df_e = fetch_df("""
         SELECT datetime, nav, drawdown 
-        FROM trades 
+        FROM backtest_trades 
         WHERE run_id=:rid 
         ORDER BY datetime
     """, rid=run_id)
@@ -488,7 +488,7 @@ def get_run_trades(run_id: str, limit: int = 1000):
     df_t = fetch_df("""
         SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
                realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
-        FROM trades
+        FROM backtest_trades
         WHERE run_id = :rid
         ORDER BY datetime
         LIMIT :limit

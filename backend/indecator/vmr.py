@@ -34,9 +34,9 @@ USE_PLOTLY = True
 
 # ========== 数据源映射 ==========
 TABLE_MAP = {
-    "1m": "minute_realtime",
-    "1h": "hour_realtime",
-    "1d": "day_realtime"
+    "1m": "market_minute_klines",
+"1h": "market_hour_klines",
+"1d": "market_day_klines"
 }
 TABLE_NAME = TABLE_MAP[TIMEFRAME]
 # =================================
@@ -102,7 +102,7 @@ def save_to_db(df: pd.DataFrame, symbol: str):
     df_to_save['created_at'] = datetime.utcnow()
 
     engine = get_engine()
-    df_to_save.to_sql('vmr_metrics', engine, if_exists='append', index=False)
+    df_to_save.to_sql('indecator_vmr', engine, if_exists='append', index=False)
     logger.info(f"VMR指标计算完成，共处理 {len(df)} 条数据")
 
 

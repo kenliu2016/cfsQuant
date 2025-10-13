@@ -46,7 +46,7 @@ def fetch_klines(engine, table, exchange, symbol, since_hours=48):
 def fetch_latest_signals(engine, exchange, symbol):
     sql = text('''
         SELECT funding_rate, stablecoin_flow, datetime
-        FROM market_signals
+        FROM indecator_metrics
         WHERE exchange = :exchange AND symbol = :symbol
         ORDER BY datetime DESC
         LIMIT 1
@@ -150,7 +150,7 @@ def main():
     exchange = 'binance'
     symbol = 'binance-BTC/USDT'
     norm_symbol = 'BTCUSDT'
-    kline_table = 'minute_realtime'
+    kline_table = 'market_minute_klines'
     lookback_hours = 48
     ma_short = 50
     ma_long = 200

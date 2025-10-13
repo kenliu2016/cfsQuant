@@ -72,10 +72,10 @@ def save_signal(exchange, code, timeframe, dt, state_prob, signal, position):
         'created_at': datetime.now(),
         'updated_at': datetime.now()
     }])
-    df.to_sql('hmm_signal_realtime', engine, if_exists='append', index=False)
+    df.to_sql('indecator_hmm', engine, if_exists='append', index=False)
 
 # === 主流程函数 ===
-def run_hmm_signal(exchange, code, tables=['minute_realtime','hour_realtime','day_realtime']):
+def run_hmm_signal(exchange, code, tables=['market_minute_klines','market_hour_klines','market_day_klines']):
     for table in tables:
         # 获取数据
         df = get_ohlcv(table, exchange, code)

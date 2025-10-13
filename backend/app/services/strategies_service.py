@@ -35,7 +35,7 @@ async def alist_strategies():
     try:
         # 缓存过期或不存在，从数据库查询
         logger.info("从数据库查询策略列表")
-        sql = """SELECT id, name, description, params::text AS params FROM strategies ORDER BY id"""
+        sql = """SELECT id, name, description, params::text AS params FROM sys_strategies ORDER BY id"""
         
         # 清除缓存以确保获取最新数据
         clear_strategies_cache()
@@ -91,7 +91,7 @@ def list_strategies():
     
     # 缓存过期或不存在，从数据库查询
     logger.debug("从数据库查询策略列表")
-    sql = """SELECT id, name, description, params::text AS params FROM strategies ORDER BY id"""
+    sql = """SELECT id, name, description, params::text AS params FROM sys_strategies ORDER BY id"""
     df = fetch_df(sql)
     
     # 更新缓存
@@ -193,7 +193,7 @@ def save_strategy_code(strategy_name: str, code: str):
                 engine = get_engine()
                 with engine.connect() as conn:
                     result = conn.execute(
-                        text("UPDATE strategies SET params = :params WHERE name = :name"),
+                        text("UPDATE sys_strategies SET params = :params WHERE name = :name"),
                         {
                             'name': strategy_name,
                             'params': params_json
@@ -209,7 +209,7 @@ def save_strategy_code(strategy_name: str, code: str):
                         # 尝试插入新记录
                         try:
                             conn.execute(
-                                text("INSERT INTO strategies (name, description, params) VALUES (:name, '', :params)"),
+                                text("INSERT INTO sys_strategies (name, description, params) VALUES (:name, '', :params)"),
                                 {'name': strategy_name, 'params': params_json}
                             )
                             conn.commit()
@@ -282,7 +282,7 @@ def run(df: pd.DataFrame, params: dict):
         engine = get_engine()
         with engine.connect() as conn:
             conn.execute(
-                text("INSERT INTO strategies (name, description, params) VALUES (:name, :description, :params)"),
+                text("INSERT INTO sys_strategies (name, description, params) VALUES (:name, :description, :params)"),
                 {
                     'name': strategy_name,
                     'description': description,
@@ -310,7 +310,7 @@ def delete_strategy(strategy_name: str):
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(
-                text("DELETE FROM strategies WHERE name = :name"),
+                text("DELETE FROM sys_strategies WHERE name = :name"),
                 {'name': strategy_name}
             )
             conn.commit()

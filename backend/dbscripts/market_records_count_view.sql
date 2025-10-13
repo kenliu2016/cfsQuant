@@ -11,7 +11,7 @@ WITH minute_counts AS (
         code, 
         COUNT(*) AS minute_count
     FROM 
-        public.minute_realtime
+        public.market_minute_klines
     GROUP BY 
         exchange, 
         code
@@ -22,7 +22,7 @@ hour_counts AS (
         code, 
         COUNT(*) AS hour_count
     FROM 
-        public.hour_realtime
+        public.market_hour_klines
     GROUP BY 
         exchange, 
         code
@@ -33,7 +33,7 @@ day_counts AS (
         code, 
         COUNT(*) AS day_count
     FROM 
-        public.day_realtime
+        public.market_day_klines
     GROUP BY 
         exchange, 
         code
@@ -49,19 +49,19 @@ all_exchanges_codes AS (
         exchange, 
         code 
     FROM 
-        public.minute_realtime
+        public.market_minute_klines
     UNION
     SELECT DISTINCT 
         exchange, 
         code 
     FROM 
-        public.hour_realtime
+        public.market_hour_klines
     UNION
     SELECT DISTINCT 
         exchange, 
         code 
     FROM 
-        public.day_realtime
+        public.market_day_klines
 )
 SELECT 
     a.exchange,

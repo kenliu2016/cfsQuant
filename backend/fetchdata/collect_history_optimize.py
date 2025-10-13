@@ -14,9 +14,9 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     
     # 映射timeframe到数据库表名
     table_mapping = {
-        '1m': 'minute_realtime',
-        '1h': 'hour_realtime',
-        '1d': 'day_realtime'
+        '1m': 'market_minute_klines',
+'1h': 'market_hour_klines',
+'1d': 'market_day_klines'
     }
     
     table = table_mapping.get(timeframe)
@@ -29,7 +29,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     cur = conn.cursor()
     for _, row in df.iterrows():
         # 根据表的不同，处理timestamp字段名
-        timestamp_field = "datetime" if table != "day_realtime" else "datetime"
+        timestamp_field = "datetime" if table != "market_day_klines" else "datetime"
         timestamp_value = row["timestamp"].to_pydatetime()
         
         try:

@@ -53,20 +53,20 @@ def load_db_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     
     # 确保配置文件路径是绝对路径
     if not os.path.isabs(path):
-        # 获取项目根目录
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        # 获取backend目录
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # 如果路径以'config/'开头，直接构建相对于项目根目录的绝对路径
+        # 如果路径以'config/'开头，直接构建相对于backend目录的绝对路径
         if path.startswith('config/'):
-            path = os.path.join(project_root, path)
+            path = os.path.join(backend_dir, path)
         else:
-            # 构建相对于项目根目录的绝对路径
-            path = os.path.join(project_root, path)
+            # 构建相对于backend目录的绝对路径
+            path = os.path.join(backend_dir, path)
     
     # 如果路径不存在，尝试使用backend/config/db_config.yaml作为备选路径
     if not os.path.exists(path):
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        alternative_path = os.path.join(project_root, 'config', 'db_config.yaml')
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        alternative_path = os.path.join(backend_dir, 'config', 'db_config.yaml')
         if os.path.exists(alternative_path):
             path = alternative_path
         else:
