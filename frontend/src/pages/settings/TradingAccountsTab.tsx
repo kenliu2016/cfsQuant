@@ -11,7 +11,6 @@ import {
   message,
   Switch,
   Popconfirm,
-  Tooltip,
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined } from '@ant-design/icons';
 import client from '../../api/client';

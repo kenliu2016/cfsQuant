@@ -141,8 +141,22 @@ const TenantsTab: React.FC = () => {
           >
             <Input placeholder="唯一租户标识" />
           </Form.Item>
-          <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}> 
+          <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="名称" />
+          </Form.Item>
+          <Form.Item
+            label="管理员邮箱"
+            name="admin_email"
+            rules={[{ required: true, message: '请输入管理员邮箱' }, { type: 'email', message: '请输入有效的邮箱地址' }]}
+          >
+            <Input placeholder="管理员邮箱" />
+          </Form.Item>
+          <Form.Item
+            label="管理员密码"
+            name="admin_password"
+            rules={[{ required: true, message: '请输入管理员密码' }, { min: 6, message: '密码至少6位' }]}
+          >
+            <Input.Password placeholder="管理员密码" />
           </Form.Item>
           <Form.Item label="描述" name="description">
             <Input.TextArea rows={3} placeholder="描述" />

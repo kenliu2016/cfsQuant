@@ -60,23 +60,23 @@ class LiveTradingService:
             id=account_id,
             tenant_id=self.tenant_id,
         )
-    if df.empty:
-        raise ValueError("Account not found")
+        if df.empty:
+            raise ValueError("Account not found")
 
-    record = df.iloc[0].to_dict()
-    extra = record.get("extra")
+        record = df.iloc[0].to_dict()
+        extra = record.get("extra")
         if isinstance(extra, str):
             try:
                 record["extra"] = json.loads(extra)
             except json.JSONDecodeError:
                 record["extra"] = {}
 
-    if not include_secret:
-        record["api_key_preview"] = self._mask_secret(record.get("api_key"))
-        record["has_passphrase"] = bool(record.get("api_passphrase"))
-        record.pop("api_key", None)
-        record.pop("api_secret", None)
-        record.pop("api_passphrase", None)
+        if not include_secret:
+            record["api_key_preview"] = self._mask_secret(record.get("api_key"))
+            record["has_passphrase"] = bool(record.get("api_passphrase"))
+            record.pop("api_key", None)
+            record.pop("api_secret", None)
+            record.pop("api_passphrase", None)
 
         return record
 

@@ -46,7 +46,7 @@ async def login(payload: dict = Body(...)):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
     access_token = create_access_token(
-        subject=user["id"],
+        subject=str(user["id"]),  # 确保ID是字符串，避免UUID序列化问题
         tenant_id=tenant_id,
         extra_claims={"is_admin": user.get("is_admin", False)},
     )

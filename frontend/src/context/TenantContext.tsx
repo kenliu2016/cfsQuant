@@ -50,8 +50,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.error('Failed to load tenants', error);
       setTenants([
         {
-          tenant_id,
-          name: tenant_id,
+          tenant_id: tenantId,
+          name: tenantId,
           is_active: true,
         },
       ]);

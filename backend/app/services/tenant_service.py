@@ -66,7 +66,7 @@ def create_tenant(tenant_id: str, name: str, description: str = "", settings: Op
     execute(
         """
         INSERT INTO tenants (tenant_id, name, description, settings, created_at, updated_at)
-        VALUES (:tenant_id, :name, :description, :settings::jsonb, :created_at, :updated_at)
+        VALUES (:tenant_id, :name, :description, :settings, :created_at, :updated_at)
         """,
         tenant_id=tenant_id,
         name=name,

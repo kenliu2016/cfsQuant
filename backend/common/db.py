@@ -8,6 +8,7 @@
 
 import os
 import asyncio
+import logging
 from typing import Dict, Any, Optional, AsyncGenerator
 import yaml
 from .logger import LoggerFactory  # 修复导入路径

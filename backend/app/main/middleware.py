@@ -21,9 +21,9 @@ async def tenant_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
     finally:
-        extra_token = getattr(request.state, "_tenant_token", None)
-        if extra_token is not None:
-            reset_tenant(extra_token)
+        # Only reset the token that this middleware created
+        # Do not reset tokens created by dependencies (like require_user)
+        # as they have their own cleanup mechanisms
         reset_tenant(token)
     return response
 
