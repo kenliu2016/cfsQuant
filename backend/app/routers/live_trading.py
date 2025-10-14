@@ -10,7 +10,8 @@ router = APIRouter(prefix="/api/live-trading", tags=["live-trading"], dependenci
 
 def _service_from_request(request: Request) -> LiveTradingService:
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
-    return LiveTradingService(tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    return LiveTradingService(tenant_id=tenant_id, current_user=current_user)
 
 
 @router.get("/exchanges")
@@ -44,8 +45,11 @@ async def create_account(request: Request, payload: Dict[str, Any] = Body(...)):
             api_passphrase=payload.get("api_passphrase"),
             extra=payload.get("extra"),
             is_active=payload.get("is_active", True),
+            owner_user_id=payload.get("owner_user_id"),
         )
         return account
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -63,8 +67,11 @@ async def update_account(account_id: str, request: Request, payload: Dict[str, A
             api_passphrase=payload.get("api_passphrase"),
             extra=payload.get("extra"),
             is_active=payload.get("is_active"),
+            owner_user_id=payload.get("owner_user_id"),
         )
         return account
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -75,6 +82,8 @@ async def delete_account(account_id: str, request: Request):
     try:
         service.delete_account(account_id)
         return {"status": "deleted"}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -85,6 +94,8 @@ async def test_account(account_id: str, request: Request):
     try:
         result = service.test_connection(account_id)
         return result
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -97,6 +108,8 @@ async def fetch_balance(account_id: str = Query(...), request: Request = None):
     try:
         balances = service.fetch_balances(account_id)
         return balances
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -113,6 +126,8 @@ async def fetch_open_orders(
     try:
         orders = service.fetch_open_orders(account_id, symbol)
         return {"rows": orders, "total": len(orders)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -138,6 +153,8 @@ async def place_order(request: Request, payload: Dict[str, Any] = Body(...)):
             params=payload.get("params"),
         )
         return order
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -155,6 +172,8 @@ async def cancel_order(
     try:
         result = service.cancel_order(account_id, order_id, symbol)
         return result
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:

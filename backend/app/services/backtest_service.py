@@ -84,6 +84,7 @@ class BacktestResult:
     signals: List[StrategySignal]
     grid_levels: List[Dict[str, Any]] = field(default_factory=list)  # 网格级别数据
     grid_parameters: Dict[str, Any] = field(default_factory=dict)  # 网格参数数据
+    created_by: Optional[str] = None
 
 class StrategyInterface(Protocol):
     """策略接口协议"""
@@ -457,6 +458,7 @@ class DatabaseManager:
         run_data = pd.DataFrame([{
             'run_id': result.run_id,
             'tenant_id': self.tenant_id,
+            'created_by': result.created_by,
             'strategy': result.strategy,
             'code': result.code,
             'start_time': start_time_value,
@@ -580,13 +582,14 @@ class DatabaseManager:
 class BacktestEngine:
     """解耦后的回测引擎 - 统一的交易执行框架"""
     
-    def __init__(self, tenant_id: Optional[str] = None):
+    def __init__(self, tenant_id: Optional[str] = None, user_id: Optional[str] = None):
         self.logger = None
         self.position_manager = None
         self.risk_manager = None
         self.decision_engine = None
         self.db_manager = None
         self.tenant_id = tenant_id or get_current_tenant()
+        self.user_id = user_id
         
     def run_backtest(self, df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
         """运行回测的主入口"""
@@ -624,6 +627,7 @@ class BacktestEngine:
         backtest_result = self._execute_backtest(
             df, strategy_result, merged_params, strategy_name, backtest_id
         )
+        backtest_result["created_by"] = self.user_id
         
         metrics = backtest_result.get('metrics', {})
         backtest_service_logger.info(
@@ -914,7 +918,8 @@ class BacktestEngine:
             metrics=metrics,
             signals=executed_signals,
             grid_levels=grid_levels,
-            grid_parameters=grid_parameters
+            grid_parameters=grid_parameters,
+            created_by=self.user_id,
         )
         
         backtest_service_logger.info(f"回测ID={backtest_id}: 信号处理完成，生成 {len(trades)} 条交易记录")
@@ -955,15 +960,22 @@ class BacktestEngine:
         }
 
 # 主要对外接口
-def run_backtest(df: pd.DataFrame, params: Dict[str, Any], strategy_name: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+def run_backtest(
+    df: pd.DataFrame,
+    params: Dict[str, Any],
+    strategy_name: str,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """运行回测的主入口函数"""
     tenant = tenant_id or get_current_tenant()
-    engine = BacktestEngine(tenant_id=tenant)
+    engine = BacktestEngine(tenant_id=tenant, user_id=user_id)
     return engine.run_backtest(df, params, strategy_name)
 
-def get_backtest_result(backtest_id: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+def get_backtest_result(backtest_id: str, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """获取回测结果"""
     tenant = tenant_id or get_current_tenant()
+    _verify_run_access(backtest_id, tenant, current_user)
     try:
         df_m = fetch_df(
             "SELECT metric_name, metric_value FROM backtest_metrics WHERE run_id=:rid AND tenant_id=:tenant_id",
@@ -1126,3 +1138,22 @@ def run_strategy_only(df: pd.DataFrame, params: Dict[str, Any], strategy_name: s
         result['signals'] = formatted_signals
     
     return result
+def _verify_run_access(run_id: str, tenant_id: str, current_user: Optional[Dict[str, Any]]) -> None:
+    df = fetch_df(
+        """SELECT created_by FROM backtest_runs WHERE run_id=:rid AND tenant_id=:tenant_id""",
+        rid=run_id,
+        tenant_id=tenant_id,
+    )
+    if df.empty:
+        raise ValueError("not_found")
+    created_by = df.iloc[0]['created_by']
+    if pd.notna(created_by):
+        created_by = str(created_by)
+    else:
+        created_by = None
+    user = current_user or {}
+    if user.get("is_super_admin") or user.get("is_admin"):
+        return
+    if created_by and user.get("id") == created_by:
+        return
+    raise PermissionError("forbidden")

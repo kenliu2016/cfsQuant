@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS public.tenant_users (
     is_active boolean DEFAULT TRUE,
     created_at timestamp DEFAULT now(),
     updated_at timestamp DEFAULT now(),
-    UNIQUE(tenant_id, email)
+    UNIQUE(tenant_id, email),
+    UNIQUE(tenant_id, id)
 );
 
 INSERT INTO public.tenant_users (id, tenant_id, email, hashed_password, full_name, is_admin, is_active, created_at, updated_at)
@@ -151,5 +152,55 @@ CREATE INDEX IF NOT EXISTS idx_tenant_exchange_accounts_active
 
 CREATE INDEX IF NOT EXISTS idx_tenant_users_active
     ON public.tenant_users (tenant_id, is_active);
+
+-- Add unique constraint for foreign key references
+ALTER TABLE public.tenant_users
+    ADD CONSTRAINT tenant_users_tenant_id_id_key UNIQUE (tenant_id, id);
+
+ALTER TABLE public.tenant_exchange_accounts
+    ADD COLUMN IF NOT EXISTS owner_user_id uuid;
+
+ALTER TABLE public.tenant_exchange_accounts
+    ADD COLUMN IF NOT EXISTS metadata jsonb DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_exchange_accounts_owner
+    ON public.tenant_exchange_accounts (tenant_id, owner_user_id);
+
+ALTER TABLE public.tenant_exchange_accounts
+    ADD CONSTRAINT tenant_exchange_accounts_owner_fk
+    FOREIGN KEY (tenant_id, owner_user_id) REFERENCES public.tenant_users(tenant_id, id)
+    ON DELETE SET NULL;
+
+ALTER TABLE public.backtest_runs
+    ADD COLUMN IF NOT EXISTS created_by uuid;
+
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_created_by
+    ON public.backtest_runs (tenant_id, created_by, created_at DESC);
+
+ALTER TABLE public.backtest_runs
+    ADD CONSTRAINT backtest_runs_owner_fk
+    FOREIGN KEY (tenant_id, created_by) REFERENCES public.tenant_users(tenant_id, id)
+    ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS public.tenant_audit_logs (
+    id uuid PRIMARY KEY,
+    tenant_id varchar NOT NULL,
+    user_id uuid,
+    role text,
+    method text NOT NULL,
+    path text NOT NULL,
+    query text,
+    status_code int,
+    user_agent text,
+    ip_address text,
+    created_at timestamp DEFAULT now(),
+    extra jsonb DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_logs_tenant_created
+    ON public.tenant_audit_logs (tenant_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_logs_user_created
+    ON public.tenant_audit_logs (tenant_id, user_id, created_at DESC);
 
 COMMIT;

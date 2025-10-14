@@ -63,6 +63,12 @@ async def require_super_admin(request: Request, current_user=Depends(require_use
     return current_user
 
 
+async def require_tenant_admin(request: Request, current_user=Depends(require_user)):
+    if current_user.get("is_super_admin") or current_user.get("is_admin"):
+        return current_user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator privileges required")
+
+
 async def cleanup_user(request: Request):
     token_ctx = getattr(request.state, "_tenant_token", None)
     if token_ctx is not None:

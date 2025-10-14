@@ -3,6 +3,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import ccxt
+import pandas as pd
 from common.db import fetch_df, execute
 from common import LoggerFactory
 from ..main.tenant_context import get_current_tenant
@@ -27,8 +28,9 @@ class LiveTradingService:
         "bitget",
     }
 
-    def __init__(self, tenant_id: Optional[str] = None):
+    def __init__(self, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None):
         self.tenant_id = tenant_id or get_current_tenant()
+        self.current_user = current_user or {}
 
     # ------------------------------------------------------------------
     # Account management helpers
@@ -36,7 +38,7 @@ class LiveTradingService:
     def list_accounts(self) -> List[Dict[str, Any]]:
         df = fetch_df(
             """
-            SELECT id, exchange, label, is_active, created_at, updated_at
+            SELECT id, exchange, label, is_active, owner_user_id, created_at, updated_at
             FROM tenant_exchange_accounts
             WHERE tenant_id = :tenant_id
             ORDER BY created_at ASC
@@ -44,16 +46,23 @@ class LiveTradingService:
             tenant_id=self.tenant_id,
         )
         accounts = df.to_dict(orient="records") if not df.empty else []
+        if not self._is_admin():
+            user_id = self.current_user.get("id")
+            accounts = [acc for acc in accounts if acc.get("owner_user_id") == user_id]
         for item in accounts:
             item["has_credentials"] = True
             item["api_key_preview"] = item.get("api_key_preview") or "已配置"
+            item["owner_user_id"] = str(item.get("owner_user_id")) if item.get("owner_user_id") else None
         return accounts
+
+    def _is_admin(self) -> bool:
+        return bool(self.current_user.get("is_super_admin") or self.current_user.get("is_admin"))
 
     def get_account(self, account_id: str, include_secret: bool = False) -> Dict[str, Any]:
         df = fetch_df(
             """
             SELECT id, tenant_id, exchange, label, api_key, api_secret, api_passphrase,
-                   extra, is_active, created_at, updated_at
+                   extra, is_active, owner_user_id, created_at, updated_at
             FROM tenant_exchange_accounts
             WHERE id = :id AND tenant_id = :tenant_id
             """,
@@ -70,6 +79,17 @@ class LiveTradingService:
                 record["extra"] = json.loads(extra)
             except json.JSONDecodeError:
                 record["extra"] = {}
+
+        owner_id = record.get("owner_user_id")
+        if pd.notna(owner_id):
+            owner_id = str(owner_id)
+        else:
+            owner_id = None
+        record["owner_user_id"] = owner_id
+
+        if not self._is_admin():
+            if owner_id and owner_id != self.current_user.get("id"):
+                raise PermissionError("access denied")
 
         if not include_secret:
             record["api_key_preview"] = self._mask_secret(record.get("api_key"))
@@ -89,15 +109,17 @@ class LiveTradingService:
         api_passphrase: Optional[str] = None,
         extra: Optional[Dict[str, Any]] = None,
         is_active: bool = True,
+        owner_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._validate_exchange(exchange)
         account_id = str(uuid.uuid4())
+        owner = owner_user_id if self._is_admin() and owner_user_id else self.current_user.get("id")
         execute(
             """
             INSERT INTO tenant_exchange_accounts
-            (id, tenant_id, exchange, label, api_key, api_secret, api_passphrase, extra, is_active, created_at, updated_at)
+            (id, tenant_id, exchange, label, api_key, api_secret, api_passphrase, extra, is_active, owner_user_id, created_at, updated_at)
             VALUES
-            (:id, :tenant_id, :exchange, :label, :api_key, :api_secret, :api_passphrase, CAST(:extra AS jsonb), :is_active, NOW(), NOW())
+            (:id, :tenant_id, :exchange, :label, :api_key, :api_secret, :api_passphrase, CAST(:extra AS jsonb), :is_active, :owner_user_id, NOW(), NOW())
             """,
             id=account_id,
             tenant_id=self.tenant_id,
@@ -108,6 +130,7 @@ class LiveTradingService:
             api_passphrase=api_passphrase,
             extra=json.dumps(extra or {}),
             is_active=is_active,
+            owner_user_id=owner,
         )
         logger.info("Created trading account %s for tenant %s", account_id, self.tenant_id)
         return self.get_account(account_id)
@@ -122,14 +145,19 @@ class LiveTradingService:
         api_passphrase: Optional[str] = None,
         extra: Optional[Dict[str, Any]] = None,
         is_active: Optional[bool] = None,
+        owner_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         df = fetch_df(
-            "SELECT id FROM tenant_exchange_accounts WHERE id = :id AND tenant_id = :tenant_id",
+            "SELECT id, owner_user_id FROM tenant_exchange_accounts WHERE id = :id AND tenant_id = :tenant_id",
             id=account_id,
             tenant_id=self.tenant_id,
         )
         if df.empty:
             raise ValueError("Account not found")
+        owner = df.iloc[0]['owner_user_id']
+        owner = str(owner) if pd.notna(owner) else None
+        if not self._is_admin() and owner and owner != self.current_user.get("id"):
+            raise PermissionError("access denied")
 
         fields = []
         params: Dict[str, Any] = {"id": account_id, "tenant_id": self.tenant_id}
@@ -156,6 +184,11 @@ class LiveTradingService:
         if is_active is not None:
             fields.append("is_active = :is_active")
             params["is_active"] = is_active
+        if owner_user_id is not None:
+            if not self._is_admin():
+                raise PermissionError("Only administrators can reassign account owner")
+            fields.append("owner_user_id = :owner_user_id")
+            params["owner_user_id"] = owner_user_id
 
         if not fields:
             return self.get_account(account_id)
@@ -171,6 +204,17 @@ class LiveTradingService:
         return self.get_account(account_id)
 
     def delete_account(self, account_id: str) -> None:
+        df = fetch_df(
+            "SELECT owner_user_id FROM tenant_exchange_accounts WHERE id = :id AND tenant_id = :tenant_id",
+            id=account_id,
+            tenant_id=self.tenant_id,
+        )
+        if df.empty:
+            raise ValueError("Account not found")
+        owner = df.iloc[0]['owner_user_id']
+        owner = str(owner) if pd.notna(owner) else None
+        if not self._is_admin() and owner and owner != self.current_user.get("id"):
+            raise PermissionError("access denied")
         affected = execute(
             "DELETE FROM tenant_exchange_accounts WHERE id = :id AND tenant_id = :tenant_id",
             id=account_id,

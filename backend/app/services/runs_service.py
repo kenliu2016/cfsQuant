@@ -14,7 +14,29 @@ pd.set_option('future.no_silent_downcasting', True)
 from common.db import fetch_df, execute
 from ..main.tenant_context import get_current_tenant
 
-def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, tenant_id: Optional[str] = None) -> dict:
+def _ensure_run_access(run_id: str, tenant_id: str, current_user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    tenant = tenant_id or get_current_tenant()
+    df = fetch_df(
+        """
+        SELECT created_by FROM backtest_runs WHERE run_id = :rid AND tenant_id = :tenant_id
+        """,
+        rid=run_id,
+        tenant_id=tenant,
+    )
+    if df.empty:
+        raise ValueError("not_found")
+    raw_created = df.iloc[0]['created_by']
+    created_by = None
+    if pd.notna(raw_created):
+        created_by = str(raw_created)
+    current = current_user or {}
+    if current.get('is_super_admin') or current.get('is_admin'):
+        return {'tenant': tenant, 'created_by': created_by}
+    if created_by and current.get('id') == created_by:
+        return {'tenant': tenant, 'created_by': created_by}
+    raise PermissionError("forbidden")
+
+def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None) -> dict:
     """
     获取回测运行记录，支持分页、过滤和排序，包含最大回撤和夏普率指标
     
@@ -43,6 +65,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         r.initial_capital, 
         r.final_capital, 
         r.created_at,
+        r.created_by,
         
         -- 直接从runs表获取指标
         r.max_drawdown, 
@@ -68,6 +91,14 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     if strategy:
         filters.append("r.strategy = :strategy")
         params['strategy'] = strategy
+
+    is_super = current_user.get('is_super_admin') if current_user else False
+    is_admin = current_user.get('is_admin') if current_user else False
+    user_id = current_user.get('id') if current_user else None
+
+    if not is_super and not is_admin:
+        filters.append("r.created_by = :current_user_id")
+        params['current_user_id'] = user_id
     
     # 构建排序子句
     order_by = "ORDER BY r.created_at DESC"  # 默认排序
@@ -132,13 +163,16 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
             df[col] = df[col].apply(lambda x: x.item() if isinstance(x, (np.integer, np.floating)) else x)
             # 处理NaN值
             df[col] = df[col].fillna(0)
+
+        if 'created_by' in df.columns:
+            df['created_by'] = df['created_by'].fillna('').astype(str)
     
     return {
         'rows': df,
         'total': total
     }
 
-def get_grid_levels(run_id: str, tenant_id: Optional[str] = None) -> list:
+def get_grid_levels(run_id: str, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None) -> list:
     """
     获取特定回测ID的网格级别数据
     
@@ -149,7 +183,8 @@ def get_grid_levels(run_id: str, tenant_id: Optional[str] = None) -> list:
         网格级别数据列表
     """
     # 查询grid_levels表获取指定run_id的网格级别数据
-    tenant = tenant_id or get_current_tenant()
+    access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
+    tenant = access['tenant']
     df_grid = fetch_df("""
         SELECT run_id, level, price, name 
         FROM backtest_grid_levels 
@@ -177,11 +212,12 @@ def get_grid_levels(run_id: str, tenant_id: Optional[str] = None) -> list:
     logger.debug(f"成功获取网格级别数据，run_id: {run_id}, 级别数量: {len(grid_levels)}")
     return grid_levels
 
-def run_detail(run_id: str, tenant_id: Optional[str] = None):
+def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None):
     
     # 获取基本回测信息，包含新增的paras字段和所有指标
-    tenant = tenant_id or get_current_tenant()
-    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit
+    access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
+    tenant = access['tenant']
+    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit, created_by
                          FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
     
     # 日志记录查询结果
@@ -199,7 +235,8 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None):
             "initial_capital": 0.0,
             "final_capital": 0.0,
             "created_at": datetime.datetime.now().isoformat(),
-            "paras": {}
+            "paras": {},
+            "created_by": access.get('created_by')
         }
         return {
             "info": default_run_info,
@@ -298,6 +335,12 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None):
                 run_info[key] = float(run_info[key])
             except (ValueError, TypeError):
                 run_info[key] = 0.0
+
+    if 'created_by' in run_info:
+        if pd.notna(run_info['created_by']):
+            run_info['created_by'] = str(run_info['created_by'])
+        else:
+            run_info['created_by'] = None
     
     # 处理paras字段，确保它是一个字典并清理时间参数
     if 'paras' in run_info:
@@ -486,10 +529,10 @@ def batch_delete_runs(run_ids: list, tenant_id: Optional[str] = None) -> dict:
     }
 
 # 新增独立查询函数
-def get_run_equity(run_id: str, limit: int = 1000, tenant_id: Optional[str] = None):
+def get_run_equity(run_id: str, limit: int = 1000, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None):
     """获取回测的equity曲线数据"""
-    # 从trades表中读取equity相关数据
-    tenant = tenant_id or get_current_tenant()
+    access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
+    tenant = access['tenant']
     df_e = fetch_df("""
         SELECT datetime, nav, drawdown 
         FROM backtest_trades 
@@ -528,10 +571,11 @@ def get_run_equity(run_id: str, limit: int = 1000, tenant_id: Optional[str] = No
     logger.debug(f"成功获取回测equity数据，run_id: {run_id}, 数据点数量: {len(df_e)}")
     return df_e.to_dict(orient="records")
 
-def get_run_trades(run_id: str, limit: int = 1000, tenant_id: Optional[str] = None):
+def get_run_trades(run_id: str, limit: int = 1000, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None):
     """获取回测的交易记录数据"""
     # 获取交易记录数据，添加limit限制
-    tenant = tenant_id or get_current_tenant()
+    access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
+    tenant = access['tenant']
     df_t = fetch_df("""
         SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
                realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
@@ -560,12 +604,13 @@ def get_run_trades(run_id: str, limit: int = 1000, tenant_id: Optional[str] = No
     logger.debug(f"成功获取回测交易记录，run_id: {run_id}, 交易数量: {len(df_t)}")
     return df_t.to_dict(orient="records")
 
-def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = None):
+def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None):
     """获取回测的K线数据，当数据量超过30000条时不执行查询"""
     klines = []
     try:
         # 获取回测运行的基本信息
-        tenant = tenant_id or get_current_tenant()
+        access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
+        tenant = access['tenant']
         df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
         if not df_run.empty:
             run_data = df_run.iloc[0]

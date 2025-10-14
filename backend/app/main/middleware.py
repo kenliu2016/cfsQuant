@@ -3,6 +3,7 @@ from fastapi import Request
 from common import LoggerFactory
 from .config import settings
 from .tenant_context import push_tenant, reset_tenant, get_current_tenant
+from ..services.audit_service import log_action
 from .security import decode_token
 
 logger = LoggerFactory.get_logger("app.middleware")
@@ -56,3 +57,38 @@ async def logging_middleware(request: Request, call_next):
         process_time,
     )
     return response
+
+
+async def audit_middleware(request: Request, call_next):
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        try:
+            path = request.url.path
+            if path.startswith("/docs") or path.startswith("/openapi"):
+                return
+            tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
+            user = getattr(request.state, "user", {}) or {}
+            role = "super_admin" if user.get("is_super_admin") else "admin" if user.get("is_admin") else "user"
+            status = getattr(response, "status_code", None)
+            user_agent = request.headers.get("user-agent")
+            ip_address = request.client.host if request.client else None
+            extra = {
+                "method": request.method,
+            }
+            log_action(
+                tenant_id=tenant_id,
+                user_id=user.get("id"),
+                role=role,
+                method=request.method,
+                path=path,
+                query=str(request.url.query) if request.url.query else None,
+                status_code=status,
+                user_agent=user_agent,
+                ip_address=ip_address,
+                extra=extra,
+            )
+        except Exception as exc:
+            logger.error("Audit logging failed: %s", exc, exc_info=True)

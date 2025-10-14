@@ -14,6 +14,8 @@ import {
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined } from '@ant-design/icons';
 import client from '../../api/client';
+import { useTenant } from '../../context/TenantContext';
+import { useAuth } from '../../context/AuthContext';
 
 interface TradingAccount {
   id: string;
@@ -23,7 +25,10 @@ interface TradingAccount {
   created_at?: string;
   updated_at?: string;
   api_key_preview?: string;
+  owner_user_id?: string | null;
 }
+
+
 
 const TradingAccountsTab: React.FC = () => {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
@@ -33,6 +38,10 @@ const TradingAccountsTab: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [form] = Form.useForm();
+  const { tenantId } = useTenant();
+  const { user } = useAuth();
+  const isAdmin = Boolean(user?.is_admin || user?.is_super_admin);
+  const [tenantUsers, setTenantUsers] = useState<{ value: string; label: string }[]>([]);
 
   const fetchAccounts = async () => {
     try {
@@ -46,19 +55,46 @@ const TradingAccountsTab: React.FC = () => {
     }
   };
 
-  const fetchExchanges = async () => {
-    try {
-      const response = await client.get('/api/live-trading/exchanges');
-      setExchanges(response.data?.exchanges || []);
-    } catch (error) {
-      console.warn('加载交易所列表失败', error);
-    }
-  };
+
 
   useEffect(() => {
-    void fetchAccounts();
-    void fetchExchanges();
-  }, []);
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        
+        // 并行获取账户和交易所数据
+        const [accountsResponse, exchangesResponse] = await Promise.all([
+          client.get('/api/live-trading/accounts'),
+          client.get('/api/live-trading/exchanges')
+        ]);
+        
+        setAccounts(accountsResponse.data?.rows || []);
+        setExchanges(exchangesResponse.data?.exchanges || []);
+        
+        // 如果是管理员，获取租户用户数据
+        if (isAdmin) {
+          try {
+            const usersResponse = await client.get('/api/users');
+            const rows = usersResponse.data?.rows || [];
+            setTenantUsers(
+              rows.map((u: any) => ({ value: u.id, label: `${u.email}${u.is_admin ? ' (管理员)' : ''}` }))
+            );
+          } catch (error) {
+            console.warn('加载租户用户失败', error);
+          }
+        }
+      } catch (error) {
+        message.error('加载交易账户失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    // 只有在tenantId和isAdmin有实际变化时才执行
+    if (tenantId) {
+      void fetchData();
+    }
+  }, [tenantId, isAdmin]);
 
   const handleCreate = async () => {
     try {
@@ -77,6 +113,8 @@ const TradingAccountsTab: React.FC = () => {
       message.success('交易账户创建成功');
       setModalVisible(false);
       form.resetFields();
+      
+      // 重新获取账户数据
       await fetchAccounts();
     } catch (error: any) {
       if (error?.errorFields) return;
@@ -90,6 +128,8 @@ const TradingAccountsTab: React.FC = () => {
     try {
       await client.delete(`/api/live-trading/accounts/${accountId}`);
       message.success('交易账户已删除');
+      
+      // 重新获取账户数据
       await fetchAccounts();
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '删除交易账户失败');
@@ -100,6 +140,8 @@ const TradingAccountsTab: React.FC = () => {
     try {
       await client.patch(`/api/live-trading/accounts/${record.id}`, { is_active: value });
       message.success('账户状态已更新');
+      
+      // 重新获取账户数据
       await fetchAccounts();
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '更新账户状态失败');
@@ -144,6 +186,19 @@ const TradingAccountsTab: React.FC = () => {
       key: 'api_key_preview',
       render: (text: string) => text || '已配置',
     },
+    ...(isAdmin
+      ? [
+          {
+            title: '归属用户',
+            dataIndex: 'owner_user_id',
+            key: 'owner_user_id',
+            render: (value: string | null) => {
+              const match = tenantUsers.find((u) => u.value === value);
+              return match?.label || '当前用户';
+            },
+          },
+        ]
+      : []),
     {
       title: '创建时间',
       dataIndex: 'created_at',
@@ -181,7 +236,37 @@ const TradingAccountsTab: React.FC = () => {
       title="实时交易账户"
       extra={
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => fetchAccounts()} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={async () => {
+            try {
+              setLoading(true);
+              
+              // 并行获取账户和交易所数据
+              const [accountsResponse, exchangesResponse] = await Promise.all([
+                client.get('/api/live-trading/accounts'),
+                client.get('/api/live-trading/exchanges')
+              ]);
+              
+              setAccounts(accountsResponse.data?.rows || []);
+              setExchanges(exchangesResponse.data?.exchanges || []);
+              
+              // 如果是管理员，获取租户用户数据
+              if (isAdmin) {
+                try {
+                  const usersResponse = await client.get('/api/users');
+                  const rows = usersResponse.data?.rows || [];
+                  setTenantUsers(
+                    rows.map((u: any) => ({ value: u.id, label: `${u.email}${u.is_admin ? ' (管理员)' : ''}` }))
+                  );
+                } catch (error) {
+                  console.warn('加载租户用户失败', error);
+                }
+              }
+            } catch (error) {
+              message.error('刷新数据失败');
+            } finally {
+              setLoading(false);
+            }
+          }} loading={loading}>
             刷新
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>
@@ -236,6 +321,11 @@ const TradingAccountsTab: React.FC = () => {
           <Form.Item label="启用状态" name="is_active" valuePropName="checked" initialValue>
             <Switch />
           </Form.Item>
+          {isAdmin && (
+            <Form.Item label="归属用户" name="owner_user_id">
+              <Select placeholder="默认归属当前用户" allowClear options={tenantUsers} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
     </Card>

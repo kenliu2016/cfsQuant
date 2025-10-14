@@ -12,7 +12,7 @@ logger = LoggerFactory.get_logger("routers.runs")
 from ..services.runs_service import recent_runs, run_detail, get_grid_levels, delete_run, batch_delete_runs, get_run_equity, get_run_trades, get_run_klines
 from fastapi import HTTPException, APIRouter, Request, Depends
 from ..main.config import settings
-from ..main.dependencies import require_user
+from ..main.dependencies import require_user, require_super_admin
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["runs"], dependencies=[Depends(require_user)])
@@ -38,7 +38,17 @@ def convert_numpy_types(data):
 @router.get("/runs")
 async def runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, request: Request = None):
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
-    result = recent_runs(limit=limit, page=page, code=code, strategy=strategy, sortField=sortField, sortOrder=sortOrder, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    result = recent_runs(
+        limit=limit,
+        page=page,
+        code=code,
+        strategy=strategy,
+        sortField=sortField,
+        sortOrder=sortOrder,
+        tenant_id=tenant_id,
+        current_user=current_user,
+    )
     rows = result['rows'].to_dict(orient="records")
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_rows = convert_numpy_types(rows)
@@ -53,7 +63,13 @@ async def get_grid_levels_endpoint(run_id: str, request: Request):
     logger.debug(f"接收到grid_levels请求，run_id: {run_id}")
     # 获取网格级别数据
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
-    grid_levels_data = get_grid_levels(run_id, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    try:
+        grid_levels_data = get_grid_levels(run_id, tenant_id=tenant_id, current_user=current_user)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="access denied")
     logger.debug(f"获取网格级别数据完成，数据数量: {len(grid_levels_data)}")
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(grid_levels_data)
@@ -63,7 +79,13 @@ async def get_grid_levels_endpoint(run_id: str, request: Request):
 async def runs_detail(run_id: str, request: Request):
     # 调用服务层获取回测详情数据（只返回基本信息和指标）
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
-    detail_data = run_detail(run_id, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    try:
+        detail_data = run_detail(run_id, tenant_id=tenant_id, current_user=current_user)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="access denied")
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(detail_data)
     return processed_data
@@ -73,7 +95,13 @@ async def runs_detail(run_id: str, request: Request):
 async def get_run_equity_endpoint(run_id: str, limit: int = 1000, request: Request = None):
     # 调用服务层获取equity数据
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
-    equity_data = get_run_equity(run_id, limit, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    try:
+        equity_data = get_run_equity(run_id, limit, tenant_id=tenant_id, current_user=current_user)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="access denied")
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(equity_data)
     return processed_data
@@ -83,7 +111,13 @@ async def get_run_equity_endpoint(run_id: str, limit: int = 1000, request: Reque
 async def get_run_trades_endpoint(run_id: str, limit: int = 1000, request: Request = None):
     # 调用服务层获取交易记录数据
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
-    trades_data = get_run_trades(run_id, limit, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    try:
+        trades_data = get_run_trades(run_id, limit, tenant_id=tenant_id, current_user=current_user)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="access denied")
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(trades_data)
     return processed_data
@@ -93,13 +127,19 @@ async def get_run_trades_endpoint(run_id: str, limit: int = 1000, request: Reque
 async def get_run_klines_endpoint(run_id: str, limit: int = 30000, request: Request = None):
     # 调用服务层获取K线数据
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
-    klines_data = get_run_klines(run_id, limit, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    try:
+        klines_data = get_run_klines(run_id, limit, tenant_id=tenant_id, current_user=current_user)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="access denied")
     # 确保所有数据都是可JSON序列化的Python原生类型
     processed_data = convert_numpy_types(klines_data)
     return processed_data
 
 @router.delete("/runs/{run_id}")
-async def delete_run_endpoint(run_id: str, request: Request):
+async def delete_run_endpoint(run_id: str, request: Request, current_user=Depends(require_super_admin)):
     """
     删除指定的回测记录及其关联数据
     
@@ -124,7 +164,7 @@ async def delete_run_endpoint(run_id: str, request: Request):
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
 
 @router.post("/runs/batch_delete")
-async def batch_delete_runs_endpoint(request: BatchDeleteRequest, http_request: Request):
+async def batch_delete_runs_endpoint(request: BatchDeleteRequest, http_request: Request, current_user=Depends(require_super_admin)):
     """
     批量删除多个回测记录及其关联数据
     

@@ -3,6 +3,7 @@ import { Tabs } from 'antd';
 import MarketCodesTab from './settings/MarketCodesTab';
 import TenantsTab from './settings/TenantsTab';
 import TradingAccountsTab from './settings/TradingAccountsTab';
+import TenantUsersTab from './settings/TenantUsersTab';
 import { useAuth } from '../context/AuthContext';
 
 const tabStyle = {
@@ -36,6 +37,9 @@ const Settings: React.FC = () => {
         children: <TradingAccountsTab />,
       },
     ];
+    if (user?.is_admin || user?.is_super_admin) {
+      list.push({ key: 'users', label: '租户用户', children: <TenantUsersTab /> });
+    }
     if (user?.is_super_admin) {
       list.push({ key: 'tenants', label: '租户管理', children: <TenantsTab /> });
     }

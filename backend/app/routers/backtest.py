@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 import pandas as pd
 from ..services.backtest_service import run_backtest, get_backtest_result
 from ..services.market_service import get_candles
@@ -32,7 +32,14 @@ async def backtest(req: BacktestRequest, request: Request):
         
     # 调用重构后的run_backtest方法，使用req.params作为参数
     tenant_id = getattr(request.state, "tenant_id", None)
-    backtest_result = run_backtest(df, req.params, req.strategy, tenant_id=tenant_id)
+    current_user = getattr(request.state, "user", {}) or {}
+    backtest_result = run_backtest(
+        df,
+        req.params,
+        req.strategy,
+        tenant_id=tenant_id,
+        user_id=current_user.get("id"),
+    )
     
     # 从结果中提取run_id作为backtest_id
     backtest_id = backtest_result["run_id"] if isinstance(backtest_result, dict) and "run_id" in backtest_result else str(backtest_result)
@@ -54,4 +61,10 @@ async def backtest(req: BacktestRequest, request: Request):
 @router.get("/backtest/{backtest_id}/results")
 async def backtest_results(backtest_id: str, request: Request):
     tenant_id = getattr(request.state, "tenant_id", None)
-    return get_backtest_result(backtest_id, tenant_id=tenant_id) or {"error":"not_found"}
+    current_user = getattr(request.state, "user", {}) or {}
+    try:
+        return get_backtest_result(backtest_id, tenant_id=tenant_id, current_user=current_user) or {"error":"not_found"}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="access denied")
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not found")

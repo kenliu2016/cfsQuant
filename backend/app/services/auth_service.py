@@ -1,5 +1,8 @@
 import uuid
 from typing import Optional, Dict, Any
+from datetime import datetime
+
+import pandas as pd
 
 from common.db import fetch_df, execute
 from common import LoggerFactory
@@ -77,7 +80,6 @@ def authenticate_user(tenant_id: str, email: str, password: str) -> Optional[Dic
         return None
     if not verify_password(password, user.get("hashed_password", "")):
         return None
-    user.pop("hashed_password", None)
     return user
 
 
@@ -94,3 +96,56 @@ def serialize_user(user: Dict[str, Any]) -> Dict[str, Any]:
         "is_active": user.get("is_active", True),
     }
     return data
+
+
+def list_users(tenant_id: str) -> pd.DataFrame:
+    df = fetch_df(
+        """
+        SELECT id, tenant_id, email, full_name, is_admin, is_super_admin, is_active, created_at, updated_at
+        FROM tenant_users
+        WHERE tenant_id = :tenant_id
+        ORDER BY created_at ASC
+        """,
+        tenant_id=tenant_id,
+    )
+    return df
+
+
+def update_user(
+    tenant_id: str,
+    user_id: str,
+    full_name: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    is_admin: Optional[bool] = None,
+    password: Optional[str] = None,
+) -> Dict[str, Any]:
+    set_clauses = []
+    params: Dict[str, Any] = {"tenant_id": tenant_id, "id": user_id}
+    if full_name is not None:
+        set_clauses.append("full_name = :full_name")
+        params["full_name"] = full_name
+    if is_active is not None:
+        set_clauses.append("is_active = :is_active")
+        params["is_active"] = is_active
+    if is_admin is not None:
+        set_clauses.append("is_admin = :is_admin")
+        params["is_admin"] = is_admin
+    if password:
+        set_clauses.append("hashed_password = :hashed_password")
+        params["hashed_password"] = hash_password(password)
+
+    if not set_clauses:
+        return get_user_by_id(user_id, tenant_id) or {}
+
+    set_clauses.append("updated_at = :updated_at")
+    params["updated_at"] = datetime.utcnow()
+
+    execute(
+        f"""
+        UPDATE tenant_users
+        SET {', '.join(set_clauses)}
+        WHERE tenant_id = :tenant_id AND id = :id
+        """,
+        **params,
+    )
+    return get_user_by_id(user_id, tenant_id) or {}

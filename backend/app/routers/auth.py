@@ -5,13 +5,13 @@ from ..services import auth_service
 from ..services.tenant_service import get_tenant
 from ..main.security import create_access_token
 from ..main.config import settings
-from ..main.dependencies import require_user
+from ..main.dependencies import require_user, require_tenant_admin
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/register")
-async def register_user(payload: dict = Body(...), current_user=Depends(require_user)):
+async def register_user(payload: dict = Body(...), current_user=Depends(require_tenant_admin)):
     tenant_id = current_user["tenant_id"]
     if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Only administrators can create users")

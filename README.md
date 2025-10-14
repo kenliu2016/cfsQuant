@@ -62,6 +62,24 @@ curl -X POST http://localhost:8000/api/auth/login \
   -d '{ "tenant_id": "demo", "email": "admin@demo.io", "password": "ChangeMe123" }'
 ```
 
+## Role-based Permissions
+
+- **Super Administrator** (`is_super_admin = true`)
+  - Full visibility into all tenants (active and inactive) and their data.
+  - May switch tenant context via `X-Tenant-ID`, manage tenants, users, and audit logs across the platform.
+- **Tenant Administrator** (`is_admin = true`)
+  - Manage users within their tenant (create, disable, promote/demote admin).
+  - Configure trading accounts for any tenant user.
+  - View all business data and audit logs inside the tenant, but cannot delete historical data.
+- **Tenant User**
+  - Manage only their own trading accounts.
+  - View only business data they created (e.g. backtests); no destructive operations are permitted.
+
+## Audit Logging
+
+- Every authenticated request is recorded in `tenant_audit_logs` with user, tenant, endpoint, status, and client metadata.
+- Super/Tenant administrators can query logs via `GET /api/audit-logs?offset=0&limit=100` (front-end Settings page will surface this in upcoming iterations).
+
 ## Real-time Trading Integration
 
 - A new `/api/live-trading` namespace exposes account management and trading endpoints powered by `ccxt`.
