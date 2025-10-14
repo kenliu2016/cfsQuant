@@ -97,7 +97,7 @@ class LiveTradingService:
             INSERT INTO tenant_exchange_accounts
             (id, tenant_id, exchange, label, api_key, api_secret, api_passphrase, extra, is_active, created_at, updated_at)
             VALUES
-            (:id, :tenant_id, :exchange, :label, :api_key, :api_secret, :api_passphrase, :extra::jsonb, :is_active, NOW(), NOW())
+            (:id, :tenant_id, :exchange, :label, :api_key, :api_secret, :api_passphrase, CAST(:extra AS jsonb), :is_active, NOW(), NOW())
             """,
             id=account_id,
             tenant_id=self.tenant_id,
@@ -151,7 +151,7 @@ class LiveTradingService:
             fields.append("api_passphrase = :api_passphrase")
             params["api_passphrase"] = api_passphrase
         if extra is not None:
-            fields.append("extra = :extra::jsonb")
+            fields.append("extra = CAST(:extra AS jsonb)")
             params["extra"] = json.dumps(extra)
         if is_active is not None:
             fields.append("is_active = :is_active")

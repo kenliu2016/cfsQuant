@@ -8,11 +8,12 @@ router = APIRouter(prefix="/api/tenants", tags=["tenants"])
 
 
 @router.get("")
-async def list_tenants(active: Optional[bool] = True, current_user=Depends(require_super_admin)):
+async def list_tenants(active: Optional[bool] = None, current_user=Depends(require_super_admin)):
     """
     List tenants. `active` defaults to True but can be overridden to show all.
     """
-    df = tenant_service.list_tenants(active_only=active if active is not None else False)
+    filter_value = active if active is not None else None
+    df = tenant_service.list_tenants(active_filter=filter_value)
     return {"rows": df.to_dict(orient="records")}
 
 

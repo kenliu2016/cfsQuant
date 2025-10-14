@@ -11,18 +11,19 @@ from .auth_service import create_user
 logger = LoggerFactory.get_logger("tenant_service")
 
 
-def list_tenants(active_only: bool = True) -> pd.DataFrame:
+def list_tenants(active_filter: Optional[bool] = True) -> pd.DataFrame:
     """
     Retrieve tenants, optionally filtering by active flag.
     """
     sql = """
     SELECT tenant_id, name, description, is_active, settings, created_at, updated_at
     FROM tenants
-    WHERE 1=1
     """
     params: Dict[str, Any] = {}
-    if active_only:
-        sql += " AND is_active = TRUE"
+    if active_filter is True:
+        sql += " WHERE is_active = TRUE"
+    elif active_filter is False:
+        sql += " WHERE is_active = FALSE"
 
     sql += " ORDER BY created_at ASC"
     return fetch_df(sql, **params)
