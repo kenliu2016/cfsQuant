@@ -79,7 +79,7 @@ def create_tenant(tenant_id: str, name: str, description: str = "", settings: Op
 
     if admin_email and admin_password:
         try:
-            create_user(tenant_id, admin_email, admin_password, admin_name, is_admin=True)
+            create_user(tenant_id, admin_email, admin_password, admin_name, is_admin=True, is_super_admin=False)
         except Exception as exc:
             logger.error("Failed to create tenant admin: %s", exc)
             execute("DELETE FROM tenants WHERE tenant_id = :tenant_id", tenant_id=tenant_id)

@@ -8,6 +8,7 @@ interface AuthUser {
   email: string;
   full_name?: string;
   is_admin?: boolean;
+  is_super_admin?: boolean;
 }
 
 interface AuthContextValue {
@@ -24,6 +25,8 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const tokenKey = (tenantId: string) => `cfsToken_${tenantId}`;
 const userKey = (tenantId: string) => `cfsUser_${tenantId}`;
+const SHARED_TOKEN_KEY = 'cfsToken_shared';
+const SHARED_USER_KEY = 'cfsUser_shared';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { tenantId, setTenantId, refreshTenants } = useTenant();
@@ -33,8 +36,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadSession = useCallback(
     (tenant: string) => {
-      const storedToken = window.localStorage.getItem(tokenKey(tenant));
-      const storedUser = window.localStorage.getItem(userKey(tenant));
+      const storedToken =
+        window.localStorage.getItem(tokenKey(tenant)) || window.localStorage.getItem(SHARED_TOKEN_KEY);
+      const storedUser =
+        window.localStorage.getItem(userKey(tenant)) || window.localStorage.getItem(SHARED_USER_KEY);
       setToken(storedToken);
       setUser(storedUser ? (JSON.parse(storedUser) as AuthUser) : null);
     },
@@ -50,6 +55,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const persistSession = useCallback((tenant: string, newToken: string, newUser: AuthUser) => {
     window.localStorage.setItem(tokenKey(tenant), newToken);
     window.localStorage.setItem(userKey(tenant), JSON.stringify(newUser));
+    window.localStorage.setItem(SHARED_TOKEN_KEY, newToken);
+    window.localStorage.setItem(SHARED_USER_KEY, JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
   }, []);
@@ -61,6 +68,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (tenant === tenantId) {
         setToken(null);
         setUser(null);
+        window.localStorage.removeItem(SHARED_TOKEN_KEY);
+        window.localStorage.removeItem(SHARED_USER_KEY);
       }
     },
     [tenantId],

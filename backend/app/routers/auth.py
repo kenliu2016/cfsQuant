@@ -19,10 +19,13 @@ async def register_user(payload: dict = Body(...), current_user=Depends(require_
     password = payload.get("password")
     full_name = payload.get("full_name")
     is_admin = payload.get("is_admin", False)
+    is_super_admin = payload.get("is_super_admin", False)
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password required")
+    if is_super_admin and not current_user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Only super administrators can create super administrators")
     try:
-        user = auth_service.create_user(tenant_id, email, password, full_name, is_admin)
+        user = auth_service.create_user(tenant_id, email, password, full_name, is_admin, is_super_admin)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return auth_service.serialize_user(user)
@@ -48,7 +51,10 @@ async def login(payload: dict = Body(...)):
     access_token = create_access_token(
         subject=str(user["id"]),  # 确保ID是字符串，避免UUID序列化问题
         tenant_id=tenant_id,
-        extra_claims={"is_admin": user.get("is_admin", False)},
+        extra_claims={
+            "is_admin": user.get("is_admin", False),
+            "is_super_admin": user.get("is_super_admin", False),
+        },
     )
     return {
         "access_token": access_token,

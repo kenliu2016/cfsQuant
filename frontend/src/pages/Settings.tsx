@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Tabs } from 'antd';
 import MarketCodesTab from './settings/MarketCodesTab';
 import TenantsTab from './settings/TenantsTab';
 import TradingAccountsTab from './settings/TradingAccountsTab';
+import { useAuth } from '../context/AuthContext';
 
 const tabStyle = {
   color: '#FFFFFF',
@@ -21,23 +22,25 @@ const tabStyle = {
 };
 
 const Settings: React.FC = () => {
-  const items = [
-    {
-      key: 'market',
-      label: '交易对',
-      children: <MarketCodesTab />,
-    },
-    {
-      key: 'trading',
-      label: '交易账户',
-      children: <TradingAccountsTab />,
-    },
-    {
-      key: 'tenants',
-      label: '租户管理',
-      children: <TenantsTab />,
-    },
-  ];
+  const { user } = useAuth();
+  const items = useMemo(() => {
+    const list = [
+      {
+        key: 'market',
+        label: '交易对',
+        children: <MarketCodesTab />,
+      },
+      {
+        key: 'trading',
+        label: '交易账户',
+        children: <TradingAccountsTab />,
+      },
+    ];
+    if (user?.is_super_admin) {
+      list.push({ key: 'tenants', label: '租户管理', children: <TenantsTab /> });
+    }
+    return list;
+  }, [user]);
 
   return (
     <div style={{ padding: '0px 0px 0px 0px' }}>

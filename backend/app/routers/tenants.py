@@ -2,15 +2,13 @@ from fastapi import APIRouter, Body, HTTPException, Depends
 from typing import Any, Dict, Optional
 
 from ..services import tenant_service
-from ..main.dependencies import require_user
+from ..main.dependencies import require_user, require_super_admin
 
 router = APIRouter(prefix="/api/tenants", tags=["tenants"])
 
 
 @router.get("")
-async def list_tenants(active: Optional[bool] = True, current_user=Depends(require_user)):
-    if not current_user.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="Only administrators can list tenants")
+async def list_tenants(active: Optional[bool] = True, current_user=Depends(require_super_admin)):
     """
     List tenants. `active` defaults to True but can be overridden to show all.
     """
@@ -20,7 +18,7 @@ async def list_tenants(active: Optional[bool] = True, current_user=Depends(requi
 
 @router.get("/{tenant_id}")
 async def get_tenant(tenant_id: str, current_user=Depends(require_user)):
-    if not current_user.get("is_admin", False) and tenant_id != current_user.get("tenant_id"):
+    if not current_user.get("is_super_admin", False) and tenant_id != current_user.get("tenant_id"):
         raise HTTPException(status_code=403, detail="Access denied")
     tenant = tenant_service.get_tenant(tenant_id)
     if not tenant:
@@ -29,7 +27,7 @@ async def get_tenant(tenant_id: str, current_user=Depends(require_user)):
 
 
 @router.post("")
-async def create_tenant(payload: Dict[str, Any] = Body(...)):
+async def create_tenant(payload: Dict[str, Any] = Body(...), current_user=Depends(require_super_admin)):
     tenant_id = payload.get("tenant_id")
     name = payload.get("name")
     description = payload.get("description", "")
@@ -59,9 +57,7 @@ async def create_tenant(payload: Dict[str, Any] = Body(...)):
 
 
 @router.patch("/{tenant_id}")
-async def update_tenant(tenant_id: str, payload: Dict[str, Any] = Body(...), current_user=Depends(require_user)):
-    if not current_user.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="Only administrators can update tenants")
+async def update_tenant(tenant_id: str, payload: Dict[str, Any] = Body(...), current_user=Depends(require_super_admin)):
     if tenant_id == "public":
         # Allow updates but do not permit disabling the default tenant inadvertently.
         if payload.get("is_active") is False:
@@ -81,9 +77,7 @@ async def update_tenant(tenant_id: str, payload: Dict[str, Any] = Body(...), cur
 
 
 @router.delete("/{tenant_id}")
-async def delete_tenant(tenant_id: str, current_user=Depends(require_user)):
-    if not current_user.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="Only administrators can delete tenants")
+async def delete_tenant(tenant_id: str, current_user=Depends(require_super_admin)):
     if tenant_id == "public":
         raise HTTPException(status_code=400, detail="Default tenant cannot be deleted")
     try:

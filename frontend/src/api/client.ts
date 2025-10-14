@@ -26,7 +26,8 @@ client.interceptors.request.use((config) => {
       config.headers = config.headers ?? {};
       config.headers['X-Tenant-ID'] = tenantId;
     }
-    const token = window.localStorage.getItem(`cfsToken_${tenantId}`);
+    const token =
+      window.localStorage.getItem(`cfsToken_${tenantId}`) || window.localStorage.getItem('cfsToken_shared');
     if (token) {
       config.headers = config.headers ?? {};
       config.headers.Authorization = `Bearer ${token}`;
@@ -42,6 +43,8 @@ client.interceptors.response.use(
       const tenantId = window.localStorage.getItem('cfsTenantId') || 'public';
       window.localStorage.removeItem(`cfsToken_${tenantId}`);
       window.localStorage.removeItem(`cfsUser_${tenantId}`);
+      window.localStorage.removeItem('cfsToken_shared');
+      window.localStorage.removeItem('cfsUser_shared');
       window.dispatchEvent(new CustomEvent('auth:logout', { detail: { tenantId } }));
     }
     return Promise.reject(error);

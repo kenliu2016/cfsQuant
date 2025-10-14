@@ -3,6 +3,7 @@ from fastapi import Request
 from common import LoggerFactory
 from .config import settings
 from .tenant_context import push_tenant, reset_tenant, get_current_tenant
+from .security import decode_token
 
 logger = LoggerFactory.get_logger("app.middleware")
 
@@ -11,11 +12,21 @@ async def tenant_middleware(request: Request, call_next):
     """
     Resolve tenant identifier from the incoming request and seed the context.
     """
-    tenant_id = (
-        request.headers.get("X-Tenant-ID")
-        or request.query_params.get("tenant_id")
-        or settings.DEFAULT_TENANT_ID
-    )
+    tenant_id = settings.DEFAULT_TENANT_ID
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        try:
+            payload = decode_token(token)
+            tenant_id = payload.get("tenant_id", settings.DEFAULT_TENANT_ID)
+        except ValueError:
+            tenant_id = settings.DEFAULT_TENANT_ID
+    else:
+        tenant_id = (
+            request.headers.get("X-Tenant-ID")
+            or request.query_params.get("tenant_id")
+            or settings.DEFAULT_TENANT_ID
+        )
     request.state.tenant_id = tenant_id
     token = push_tenant(tenant_id)
     try:
