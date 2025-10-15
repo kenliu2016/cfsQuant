@@ -85,3 +85,23 @@ curl -X POST http://localhost:8000/api/auth/login \
 - A new `/api/live-trading` namespace exposes account management and trading endpoints powered by `ccxt`.
 - Configure exchange API keys per tenant from Settings → “实时交易账户”. Connection tests, enable/disable toggles, and account deletion are supported.
 - Once an account is configured you can interact with the endpoints to pull balances, open orders, place or cancel orders programmatically.
+
+
+
+┌─────────────────────────────────────────────────────────────┐
+│                     选币系统工作流程                           │
+└─────────────────────────────────────────────────────────────┘
+
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   数据源      │────▶│  选币引擎     │────▶│  结果输出      │
+│              │     │              │     │              │
+│ • VMR指标表   │     │ • VMR加权     │     │ • 结果表      │
+│ • K线数据表   │     │ • 涨幅计算     │     │ • API接口    │
+│ • 市值数据    │     │ • 排序筛选     │     │ • 通知推送    │
+└──────────────┘     └──────────────┘     └──────────────┘
+       │                     │                     │
+       ▼                     ▼                     ▼
+  [定时更新]           [定时执行]            [实时查询]
+   每小时               每4小时              随时访问
+
+

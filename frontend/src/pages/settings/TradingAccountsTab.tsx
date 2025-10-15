@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Card,
   Table,
@@ -28,12 +28,16 @@ interface TradingAccount {
   owner_user_id?: string | null;
 }
 
-
+interface TenantUserOption {
+  value: string;
+  label: string;
+}
 
 const TradingAccountsTab: React.FC = () => {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
-  const [loading, setLoading] = useState(false);
   const [exchanges, setExchanges] = useState<string[]>([]);
+  const [tenantUsers, setTenantUsers] = useState<TenantUserOption[]>([]);
+  const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
@@ -41,62 +45,41 @@ const TradingAccountsTab: React.FC = () => {
   const { tenantId } = useTenant();
   const { user } = useAuth();
   const isAdmin = Boolean(user?.is_admin || user?.is_super_admin);
-  const [tenantUsers, setTenantUsers] = useState<{ value: string; label: string }[]>([]);
 
-  const fetchAccounts = async () => {
+  const loadData = useCallback(async () => {
+    console.log('loadData called, tenantId:', tenantId, 'isAdmin:', isAdmin);
+    setLoading(true);
     try {
-      setLoading(true);
-      const response = await client.get('/api/live-trading/accounts');
-      setAccounts(response.data?.rows || []);
+      const requests: Promise<any>[] = [
+        client.get('/api/live-trading/accounts'),
+        client.get('/api/live-trading/exchanges'),
+      ];
+      if (isAdmin) {
+        requests.push(client.get('/api/users'));
+      }
+      const [accountsRes, exchangesRes, usersRes] = await Promise.all(requests);
+      setAccounts(accountsRes.data?.rows || []);
+      setExchanges(exchangesRes.data?.exchanges || []);
+      if (isAdmin && usersRes) {
+        const rows = usersRes.data?.rows || [];
+        setTenantUsers(
+          rows.map((u: any) => ({ value: u.id, label: `${u.email}${u.is_admin ? ' (管理员)' : ''}` })),
+        );
+      }
     } catch (error) {
       message.error('加载交易账户失败');
     } finally {
       setLoading(false);
     }
-  };
-
-
+  }, [isAdmin, tenantId]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        
-        // 并行获取账户和交易所数据
-        const [accountsResponse, exchangesResponse] = await Promise.all([
-          client.get('/api/live-trading/accounts'),
-          client.get('/api/live-trading/exchanges')
-        ]);
-        
-        setAccounts(accountsResponse.data?.rows || []);
-        setExchanges(exchangesResponse.data?.exchanges || []);
-        
-        // 如果是管理员，获取租户用户数据
-        if (isAdmin) {
-          try {
-            const usersResponse = await client.get('/api/users');
-            const rows = usersResponse.data?.rows || [];
-            setTenantUsers(
-              rows.map((u: any) => ({ value: u.id, label: `${u.email}${u.is_admin ? ' (管理员)' : ''}` }))
-            );
-          } catch (error) {
-            console.warn('加载租户用户失败', error);
-          }
-        }
-      } catch (error) {
-        message.error('加载交易账户失败');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    // 只有在tenantId和isAdmin有实际变化时才执行
     if (tenantId) {
-      void fetchData();
+      void loadData();
     }
-  }, [tenantId, isAdmin]);
+  }, [loadData, tenantId]);
 
-  const handleCreate = async () => {
+  const handleCreate = useCallback(async () => {
     try {
       const values = await form.validateFields();
       const payload: Record<string, any> = { ...values };
@@ -113,42 +96,42 @@ const TradingAccountsTab: React.FC = () => {
       message.success('交易账户创建成功');
       setModalVisible(false);
       form.resetFields();
-      
-      // 重新获取账户数据
-      await fetchAccounts();
+      await loadData();
     } catch (error: any) {
       if (error?.errorFields) return;
       message.error(error?.response?.data?.detail || '创建交易账户失败');
     } finally {
       setSaving(false);
     }
-  };
+  }, [form, loadData]);
 
-  const handleDelete = async (accountId: string) => {
-    try {
-      await client.delete(`/api/live-trading/accounts/${accountId}`);
-      message.success('交易账户已删除');
-      
-      // 重新获取账户数据
-      await fetchAccounts();
-    } catch (error: any) {
-      message.error(error?.response?.data?.detail || '删除交易账户失败');
-    }
-  };
+  const handleDelete = useCallback(
+    async (accountId: string) => {
+      try {
+        await client.delete(`/api/live-trading/accounts/${accountId}`);
+        message.success('交易账户已删除');
+        await loadData();
+      } catch (error: any) {
+        message.error(error?.response?.data?.detail || '删除交易账户失败');
+      }
+    },
+    [loadData],
+  );
 
-  const handleToggle = async (record: TradingAccount, value: boolean) => {
-    try {
-      await client.patch(`/api/live-trading/accounts/${record.id}`, { is_active: value });
-      message.success('账户状态已更新');
-      
-      // 重新获取账户数据
-      await fetchAccounts();
-    } catch (error: any) {
-      message.error(error?.response?.data?.detail || '更新账户状态失败');
-    }
-  };
+  const handleToggle = useCallback(
+    async (record: TradingAccount, value: boolean) => {
+      try {
+        await client.patch(`/api/live-trading/accounts/${record.id}`, { is_active: value });
+        message.success('账户状态已更新');
+        await loadData();
+      } catch (error: any) {
+        message.error(error?.response?.data?.detail || '更新账户状态失败');
+      }
+    },
+    [loadData],
+  );
 
-  const handleTest = async (accountId: string) => {
+  const handleTest = useCallback(async (accountId: string) => {
     try {
       setTesting(accountId);
       await client.post(`/api/live-trading/accounts/${accountId}/test`);
@@ -158,115 +141,90 @@ const TradingAccountsTab: React.FC = () => {
     } finally {
       setTesting(null);
     }
-  };
+  }, []);
 
-  const columns = [
-    {
-      title: '标签',
-      dataIndex: 'label',
-      key: 'label',
-      render: (text: string, record: TradingAccount) => text || record.exchange,
-    },
-    {
-      title: '交易所',
-      dataIndex: 'exchange',
-      key: 'exchange',
-    },
-    {
-      title: '状态',
-      dataIndex: 'is_active',
-      key: 'is_active',
-      render: (_: any, record: TradingAccount) => (
-        <Switch checked={record.is_active !== false} onChange={(value) => handleToggle(record, value)} />
-      ),
-    },
-    {
-      title: 'API Key',
-      dataIndex: 'api_key_preview',
-      key: 'api_key_preview',
-      render: (text: string) => text || '已配置',
-    },
-    ...(isAdmin
-      ? [
-          {
-            title: '归属用户',
-            dataIndex: 'owner_user_id',
-            key: 'owner_user_id',
-            render: (value: string | null) => {
-              const match = tenantUsers.find((u) => u.value === value);
-              return match?.label || '当前用户';
+  const columns = useMemo(
+    () => [
+      {
+        title: '标签',
+        dataIndex: 'label',
+        key: 'label',
+        render: (text: string, record: TradingAccount) => text || record.exchange,
+      },
+      {
+        title: '交易所',
+        dataIndex: 'exchange',
+        key: 'exchange',
+      },
+      {
+        title: '状态',
+        dataIndex: 'is_active',
+        key: 'is_active',
+        render: (_: any, record: TradingAccount) => (
+          <Switch checked={record.is_active !== false} onChange={(value) => handleToggle(record, value)} />
+        ),
+      },
+      {
+        title: 'API Key',
+        dataIndex: 'api_key_preview',
+        key: 'api_key_preview',
+        render: (text: string) => text || '已配置',
+      },
+      ...(isAdmin
+        ? [
+            {
+              title: '归属用户',
+              dataIndex: 'owner_user_id',
+              key: 'owner_user_id',
+              render: (value: string | null) => {
+                const match = tenantUsers.find((u) => u.value === value);
+                return match?.label || '当前用户';
+              },
             },
-          },
-        ]
-      : []),
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      render: (_: unknown, record: TradingAccount) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            icon={<ThunderboltOutlined />}
-            loading={testing === record.id}
-            onClick={() => handleTest(record.id)}
-          >
-            测试
-          </Button>
-          <Popconfirm
-            title="确定删除该交易账户?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="删除"
-            cancelText="取消"
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
+          ]
+        : []),
+      {
+        title: '创建时间',
+        dataIndex: 'created_at',
+        key: 'created_at',
+      },
+      {
+        title: '操作',
+        key: 'actions',
+        render: (_: unknown, record: TradingAccount) => (
+          <Space>
+            <Button
+              type="link"
+              size="small"
+              icon={<ThunderboltOutlined />}
+              loading={testing === record.id}
+              onClick={() => handleTest(record.id)}
+            >
+              测试
+            </Button>
+            <Popconfirm
+              title="确定删除该交易账户?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="删除"
+              cancelText="取消"
+            >
+              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
+      },
+    ],
+    [handleDelete, handleTest, handleToggle, isAdmin, tenantUsers, testing],
+  );
 
   return (
     <Card
       title="实时交易账户"
       extra={
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={async () => {
-            try {
-              setLoading(true);
-              
-              // 并行获取账户和交易所数据
-              const [accountsResponse, exchangesResponse] = await Promise.all([
-                client.get('/api/live-trading/accounts'),
-                client.get('/api/live-trading/exchanges')
-              ]);
-              
-              setAccounts(accountsResponse.data?.rows || []);
-              setExchanges(exchangesResponse.data?.exchanges || []);
-              
-              // 如果是管理员，获取租户用户数据
-              if (isAdmin) {
-                try {
-                  const usersResponse = await client.get('/api/users');
-                  const rows = usersResponse.data?.rows || [];
-                  setTenantUsers(
-                    rows.map((u: any) => ({ value: u.id, label: `${u.email}${u.is_admin ? ' (管理员)' : ''}` }))
-                  );
-                } catch (error) {
-                  console.warn('加载租户用户失败', error);
-                }
-              }
-            } catch (error) {
-              message.error('刷新数据失败');
-            } finally {
-              setLoading(false);
-            }
-          }} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>
             刷新
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>
@@ -298,13 +256,7 @@ const TradingAccountsTab: React.FC = () => {
             <Input placeholder="用于辨识账户，可选" />
           </Form.Item>
           <Form.Item label="交易所" name="exchange" rules={[{ required: true, message: '请选择交易所' }]}>
-            <Select placeholder="请选择交易所">
-              {exchanges.map((exchange) => (
-                <Select.Option key={exchange} value={exchange}>
-                  {exchange}
-                </Select.Option>
-              ))}
-            </Select>
+            <Select placeholder="请选择交易所" options={exchanges.map((ex) => ({ value: ex, label: ex }))} />
           </Form.Item>
           <Form.Item label="API Key" name="api_key" rules={[{ required: true, message: '请输入API Key' }]}>
             <Input placeholder="API Key" />

@@ -40,23 +40,23 @@ const TenantUsersTab: React.FC = () => {
 
   const isSuperAdmin = Boolean(user?.is_super_admin);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      setLoading(true);
-      try {
-        const response = await client.get('/api/users');
-        setUsers(response.data?.rows || []);
-      } catch (error) {
-        message.error('加载用户列表失败');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    void fetchUsers();
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await client.get('/api/users');
+      setUsers(response.data?.rows || []);
+    } catch (error) {
+      message.error('加载用户列表失败');
+    } finally {
+      setLoading(false);
+    }
   }, [tenantId]);
 
-  const handleCreate = async () => {
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
+
+  const handleCreate = useCallback(async () => {
     try {
       const values = await form.validateFields();
       setCreating(true);
@@ -64,34 +64,25 @@ const TenantUsersTab: React.FC = () => {
       message.success('用户创建成功');
       setModalVisible(false);
       form.resetFields();
-      // 重新获取用户列表
-      setLoading(true);
-      const response = await client.get('/api/users');
-      setUsers(response.data?.rows || []);
+      await loadUsers();
       await refreshTenants();
     } catch (error: any) {
       if (error?.errorFields) return;
       message.error(error?.response?.data?.detail || '创建用户失败');
     } finally {
       setCreating(false);
-      setLoading(false);
     }
-  };
+  }, [form, loadUsers, refreshTenants]);
 
-  const handleToggleActive = async (record: TenantUser, value: boolean) => {
+  const handleToggleActive = useCallback(async (record: TenantUser, value: boolean) => {
     try {
       await client.patch(`/api/users/${record.id}`, { is_active: value });
       message.success('用户状态已更新');
-      // 重新获取用户列表
-      setLoading(true);
-      const response = await client.get('/api/users');
-      setUsers(response.data?.rows || []);
+      await loadUsers();
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '更新用户状态失败');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [loadUsers]);
 
   const columns = useMemo(
     () => [
@@ -133,7 +124,7 @@ const TenantUsersTab: React.FC = () => {
         key: 'created_at',
       },
     ],
-    [user],
+    [handleToggleActive, user],
   );
 
   return (
@@ -141,16 +132,7 @@ const TenantUsersTab: React.FC = () => {
       title="用户管理"
       extra={
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => {
-            setLoading(true);
-            client.get('/api/users').then(response => {
-              setUsers(response.data?.rows || []);
-            }).catch(error => {
-              message.error('加载用户列表失败');
-            }).finally(() => {
-              setLoading(false);
-            });
-          }} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={loadUsers} loading={loading}>
             刷新
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Table, Button, Modal, Form, Input, Checkbox, message, Popconfirm, Select } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined, SyncOutlined, EyeInvisibleOutlined, EyeOutlined, DatabaseOutlined, SearchOutlined, DeleteColumnOutlined } from '@ant-design/icons';
 import client from '../../api/client';
@@ -23,11 +23,36 @@ const MarketCodesTab: React.FC = () => {
   const [editForm] = Form.useForm();
   const [exchangeFilter, setExchangeFilter] = useState<string>('');
   const [codeFilter, setCodeFilter] = useState<string>('');
+  const [activeFilter, setActiveFilter] = useState<boolean | null>(null);
+  const [watchFilter, setWatchFilter] = useState<boolean | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(15);
   const [clearingCache, setClearingCache] = useState<boolean>(false);
 
 
+
+  const loadMarketCodes = useCallback(async (overrideParams: Record<string, any> = {}) => {
+    setLoading(true);
+    try {
+      const response = await client.get('/api/market/market_codes', {
+        params: {
+          active: activeFilter === null ? undefined : activeFilter,
+          exchange: exchangeFilter || undefined,
+          code: codeFilter || undefined,
+          page: currentPage,
+          page_size: pageSize,
+          watch: watchFilter === null ? undefined : watchFilter,
+          ...overrideParams,
+        },
+      });
+      setMarketCodes(response.data.rows || []);
+    } catch (error) {
+      console.error('加载交易对失败:', error);
+      message.error('加载交易对失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [exchangeFilter, codeFilter, currentPage, pageSize, activeFilter, watchFilter]);
 
   // 清除所有K线缓存
   const handleClearAllCandlesCache = async () => {
@@ -43,127 +68,33 @@ const MarketCodesTab: React.FC = () => {
     }
   };
 
-  // 初始化时加载数据
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const response = await client.get('/api/market/market_codes', {
-          params: {
-            active: null, // 获取所有代码，包括非活跃的
-            exchange: exchangeFilter || undefined,
-            code: codeFilter || undefined,
-            page: currentPage,
-            page_size: pageSize
-          }
-        });
-        setMarketCodes(response.data.rows || []);
-      } catch (error) {
-        console.error('加载交易对失败:', error);
-        message.error('加载交易对失败');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchData();
-  }, [exchangeFilter, codeFilter, currentPage, pageSize]);
+    void loadMarketCodes();
+  }, [loadMarketCodes]);
 
   // 刷新数据
   const handleRefresh = () => {
-    setLoading(true);
-    client.get('/api/market/market_codes', {
-      params: {
-        active: null, // 获取所有代码，包括非活跃的
-        exchange: exchangeFilter || undefined,
-        code: codeFilter || undefined,
-        page: currentPage,
-        page_size: pageSize
-      }
-    }).then(response => {
-      setMarketCodes(response.data.rows || []);
-      setSelectedRowKeys([]);
-    }).catch(error => {
-      console.error('加载交易对失败:', error);
-      message.error('加载交易对失败');
-    }).finally(() => {
-      setLoading(false);
-    });
+    loadMarketCodes();
+    setSelectedRowKeys([]);
   };
 
   // 应用过滤
   const handleFilter = () => {
-    setLoading(true);
-    client.get('/api/market/market_codes', {
-      params: {
-        active: null, // 获取所有代码，包括非活跃的
-        exchange: exchangeFilter || undefined,
-        code: codeFilter || undefined,
-        page: currentPage,
-        page_size: pageSize
-      }
-    }).then(response => {
-      setMarketCodes(response.data.rows || []);
-      setSelectedRowKeys([]);
-    }).catch(error => {
-      console.error('加载交易对失败:', error);
-      message.error('加载交易对失败');
-    }).finally(() => {
-      setLoading(false);
-    });
+    loadMarketCodes();
+    setSelectedRowKeys([]);
   };
 
   // 过滤观察交易对
   const handleWatchFilter = (value: boolean) => {
     setCurrentPage(1);
-    // 保存原始请求参数结构，但通过接口传递watch参数
-    const fetchFilteredCodes = async () => {
-      setLoading(true);
-      try {
-        const response = await client.get('/api/market/market_codes', {
-          params: {
-            active: null,
-            watch: value,
-            page: 1,
-            page_size: pageSize
-          }
-        });
-        setMarketCodes(response.data.rows || []);
-      } catch (error) {
-        console.error('加载交易对失败:', error);
-        message.error('加载交易对失败');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchFilteredCodes();
+    setWatchFilter(value);
     setSelectedRowKeys([]);
   };
 
   // 过滤接入交易对
   const handleActiveFilter = (value: boolean) => {
     setCurrentPage(1);
-    // 保存原始请求参数结构，但通过接口传递active参数
-    const fetchFilteredCodes = async () => {
-      setLoading(true);
-      try {
-        const response = await client.get('/api/market/market_codes', {
-          params: {
-            active: value,
-            watch: null,
-            page: 1,
-            page_size: pageSize
-          }
-        });
-        setMarketCodes(response.data.rows || []);
-      } catch (error) {
-        console.error('加载交易对失败:', error);
-        message.error('加载交易对失败');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchFilteredCodes();
+    setActiveFilter(value);
     setSelectedRowKeys([]);
   };
 
@@ -173,47 +104,15 @@ const MarketCodesTab: React.FC = () => {
     setCodeFilter('');
     setCurrentPage(1);
     setPageSize(15);
-    setLoading(true);
-    client.get('/api/market/market_codes', {
-      params: {
-        active: null, // 获取所有代码，包括非活跃的
-        exchange: '',
-        code: '',
-        page: 1,
-        page_size: 15
-      }
-    }).then(response => {
-      setMarketCodes(response.data.rows || []);
-      setSelectedRowKeys([]);
-    }).catch(error => {
-      console.error('加载交易对失败:', error);
-      message.error('加载交易对失败');
-    }).finally(() => {
-      setLoading(false);
-    });
+    setActiveFilter(null);
+    setWatchFilter(null);
+    setSelectedRowKeys([]);
   };
 
   // 处理分页变化
   const handlePageChange = (page: number, newPageSize: number) => {
     setCurrentPage(page);
     setPageSize(newPageSize);
-    setLoading(true);
-    client.get('/api/market/market_codes', {
-      params: {
-        active: null, // 获取所有代码，包括非活跃的
-        exchange: exchangeFilter || undefined,
-        code: codeFilter || undefined,
-        page: page,
-        page_size: newPageSize
-      }
-    }).then(response => {
-      setMarketCodes(response.data.rows || []);
-    }).catch(error => {
-      console.error('加载交易对失败:', error);
-      message.error('加载交易对失败');
-    }).finally(() => {
-      setLoading(false);
-    });
   };
 
   // 处理每页条数变化
