@@ -34,7 +34,7 @@ USE_PLOTLY = True
 
 # ========== 数据源映射 ==========
 TABLE_MAP = {
-    "1m": "market_minute_klines",
+"1m": "market_minute_klines",
 "1h": "market_hour_klines",
 "1d": "market_day_klines"
 }
