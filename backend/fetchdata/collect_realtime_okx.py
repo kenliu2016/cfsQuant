@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     with psycopg2.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
+            cur.execute("SELECT exchange, code FROM market_codes WHERE active=true AND exchange='okx'")
             codes = cur.fetchall()
         print(f"[DEBUG] 查询到 {len(codes)} 个 active=true 交易对")
 

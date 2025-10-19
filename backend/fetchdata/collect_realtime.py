@@ -154,7 +154,7 @@ if __name__ == "__main__":
             for tf in ["1m","1h","1d"]:
                 logger.info(f"开始采集 {exchange_name} {symbol} {tf}")
                 try:
-                    df = fetch_latest_ohlcv(ex, exchange_name, symbol, tf, limit=100)
+                    df = fetch_latest_ohlcv(ex, symbol, tf, limit=100)
                     if df.empty:
                         logger.warning(f"{exchange_name} {symbol} {tf} 无数据")
                         continue
