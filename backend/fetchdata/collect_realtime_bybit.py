@@ -1,5 +1,4 @@
 import ccxt
-import psycopg2
 import pandas as pd
 import time
 import ccxt
@@ -10,18 +9,10 @@ import os
 # 添加项目根目录到Python路径，以便能够导入app模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from common.logger import LoggerFactory
+from common.db import get_connection
 
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("fetchdata.realtime_bybit")
-
-# ================== 数据库配置 ==================
-DB_CONFIG = {
-    "dbname": "quant",
-    "user": "cfs",
-    "password": "Cc563479,.",
-    "host": "127.0.0.1",
-    "port": 5432
-}
 
 # ================== 工具函数 ==================
 def get_exchange(name):
@@ -110,7 +101,7 @@ def fetch_latest_ohlcv(exchange, symbol, timeframe="1m", limit=100):
     try:
         data = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
     except Exception as e:
-        print(f"[WARN] fetch_latest_ohlcv {exchange.id} {symbol} {timeframe} 出错: {e}")
+        logger.warning(f"fetch_latest_ohlcv {exchange.id} {symbol} {timeframe} 出错: {e}")
         return pd.DataFrame()
 
     if not data:
@@ -125,25 +116,24 @@ if __name__ == "__main__":
     poll_interval = 5  # 每 60 秒轮询一次
     limit = 100         # 每次取最近 100 根 K 线
 
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT exchange, code FROM market_codes WHERE active=true and exchange='bybit'")
-            codes = cur.fetchall()
-        print(f"[DEBUG] 查询到 {len(codes)} 个 active=true 交易对")
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT exchange, code FROM market_codes WHERE active=true and exchange='bybit'")
+        codes = cur.fetchall()
+    logger.info(f"查询到 {len(codes)} 个 active=true 交易对")
 
-        while True:
-            for exchange_name, symbol in codes:
-                try:
-                    ex = get_exchange(exchange_name)
-                except Exception as e:
-                    print(f"[ERROR] 无法初始化交易所 {exchange_name}: {e}")
+    while True:
+        for exchange_name, symbol in codes:
+            try:
+                ex = get_exchange(exchange_name)
+            except Exception as e:
+                logger.error(f"无法初始化交易所 {exchange_name}: {e}")
+                continue
+
+            for tf in ["1m","1h","1d"]:
+                df = fetch_latest_ohlcv(ex, symbol, tf, limit=limit)
+                if df.empty:
                     continue
+                upsert_ohlcv(exchange_name, symbol, df, tf, conn)
 
-                for tf in ["1m","1h","1d"]:
-                    df = fetch_latest_ohlcv(ex, symbol, tf, limit=limit)
-                    if df.empty:
-                        continue
-                    upsert_ohlcv(exchange_name, symbol, df, tf, conn)
-
-            print(f"[LOOP] 本轮实时采集完成 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-            time.sleep(poll_interval)
+        logger.info(f"本轮实时采集完成 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
+        time.sleep(poll_interval)

@@ -1,5 +1,4 @@
 import ccxt
-import psycopg2
 import pandas as pd
 import time
 import ccxt
@@ -10,18 +9,10 @@ import os
 # 添加项目根目录到Python路径，以便能够导入app模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common.logger import LoggerFactory
+from common.db import get_connection
 
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("fetchdata.realtime")
-
-# ================== 数据库配置 ==================
-DB_CONFIG = {
-    "dbname": "quant",
-    "user": "cfs",
-    "password": "Cc563479,.",
-    "host": "127.0.0.1",
-    "port": 5432
-}
 
 # ================== 工具函数 ==================
 def get_exchange(name):
@@ -126,10 +117,9 @@ if __name__ == "__main__":
     limit = 100         # 每次取最近 100 根 K 线
 
     # 获取活跃交易对
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
-            codes = cur.fetchall()
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
+        codes = cur.fetchall()
     logger.info(f"查询到 {len(codes)} 个交易对")
 
     # 创建交易所实例
@@ -159,7 +149,7 @@ if __name__ == "__main__":
                         logger.warning(f"{exchange_name} {symbol} {tf} 无数据")
                         continue
                     
-                    with psycopg2.connect(**DB_CONFIG) as conn:
+                    with get_connection() as conn:
                         upsert_ohlcv(exchange_name, symbol, df, tf, conn)
                     
                     logger.info(f"{exchange_name} {symbol} {tf} 采集完成")

@@ -19,6 +19,10 @@ sys.path.append(project_root)
 sys.path.append(backend_dir)
 
 from common.db import get_engine
+from common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("fetchdata.signal")
 
 # === PostgreSQL 连接 ===
 engine = get_engine()
@@ -56,10 +60,10 @@ def fetch_latest_funding_rate(symbol='BTCUSDT'):
             return None
         except Exception as e:
             if attempt < max_retries - 1:  # 不是最后一次尝试
-                print(f"获取资金费率失败，第{attempt + 1}次重试，错误: {e}")
+                logger.warning(f"获取资金费率失败，第{attempt + 1}次重试，错误: {e}")
                 continue
             else:
-                print(f"获取资金费率失败，已达最大重试次数，错误: {e}")
+                logger.error(f"获取资金费率失败，已达最大重试次数，错误: {e}")
                 return None
 
 
@@ -91,10 +95,10 @@ def fetch_stablecoin_flow_proxy():
             return float((avg ** 0.5) / 1e3)
         except Exception as e:
             if attempt < max_retries - 1:  # 不是最后一次尝试
-                print(f"获取稳定币流入代理数据失败，第{attempt + 1}次重试，错误: {e}")
+                logger.warning(f"获取稳定币流入代理数据失败，第{attempt + 1}次重试，错误: {e}")
                 continue
             else:
-                print(f"获取稳定币流入代理数据失败，已达最大重试次数，错误: {e}")
+                logger.error(f"获取稳定币流入代理数据失败，已达最大重试次数，错误: {e}")
                 return None
 
 
@@ -118,27 +122,27 @@ def main():
     exchange = 'binance'
     symbol = 'BTCUSDT'
 
-    print(f'[{datetime.utcnow().isoformat()}] Collecting signals for {exchange} {symbol} ...')
+    logger.info(f'Collecting signals for {exchange} {symbol} ...')
     fr = None
     sc = None
     try:
         fr = fetch_latest_funding_rate(symbol)
     except Exception as e:
-        print('Error fetching funding rate:', e)
+        logger.error(f'Error fetching funding rate: {e}')
     try:
         sc = fetch_stablecoin_flow_proxy()
     except Exception as e:
-        print('Error fetching stablecoin flow proxy:', e)
+        logger.error(f'Error fetching stablecoin flow proxy: {e}')
 
-    print('Fetched -> funding_rate:', fr, 'stablecoin_flow:', sc)
+    logger.info(f'Fetched -> funding_rate: {fr}, stablecoin_flow: {sc}')
     
     # 数据完整性检查：当fr或sc有任何一个值为None时，不保存到数据库
     if fr is None or sc is None:
-        print('[SKIP] 数据不完整，跳过保存到数据库')
+        logger.warning('数据不完整，跳过保存到数据库')
         return
     
     persist_signal(engine, exchange, symbol, fr, sc)
-    print('[OK] Persisted signal to DB')
+    logger.info('Persisted signal to DB')
 
 if __name__ == '__main__':
     main()

@@ -1,14 +1,15 @@
 import ccxt
-import psycopg2
 from psycopg2.extras import execute_values
 import sys
 import os
 
-from sqlalchemy import false
-
 # 添加common.db模块路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from common.db import get_connection
+from common.logger import LoggerFactory
+
+# 使用项目统一的日志工具
+logger = LoggerFactory.get_logger("fetchdata.init_symbols")
 
 ENABLED_EXCHANGES = ["binance", "bybit", "coinbase", "upbit", "okx"]
 # ENABLED_EXCHANGES = ["coinbase", "upbit", "okx"]
@@ -57,11 +58,11 @@ def upsert_codes(exchange, symbols):
 if __name__ == "__main__":
     for name in ENABLED_EXCHANGES:
         try:
-            print(f"开始处理交易所: {name}")
+            logger.info(f"开始处理交易所: {name}")
             ex = get_exchange(name)
             syms = get_top_symbols(ex, limit=50)
             upsert_codes(name, syms)
-            print(f"[Init] {name} 已写入 {len(syms)} 个symbols")
+            logger.info(f"{name} 已写入 {len(syms)} 个symbols")
         except Exception as e:
-            print(f"处理交易所 {name} 时出错: {e}")
+            logger.error(f"处理交易所 {name} 时出错: {e}")
             continue
