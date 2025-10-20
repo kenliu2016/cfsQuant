@@ -19,7 +19,7 @@ API_KEY = "aa933896-7789-4070-adf4-7a4231aa9e83"
 API_BASE = "https://pro-api.coinmarketcap.com/v1/cryptocurrency"
 
 
-def get_cmc_listings(limit=200, start=1, convert="USD", max_retries=3):
+def get_cmc_listings(limit=500, start=1, convert="USD", max_retries=3):
     """获取加密货币列表数据，支持重试机制"""
     headers = {
         "Accepts": "application/json",
@@ -154,6 +154,11 @@ def parse_crypto_data(data):
             quote_last_updated_str = usd_quote.get("last_updated")
             quote_last_updated = datetime.fromisoformat(quote_last_updated_str.replace("Z", "+00:00")) if quote_last_updated_str else None
             
+            # 计算VMR (Volume to Market Cap Ratio) = 24h成交量 / 市值
+            vmr_24h = None
+            if market_cap and market_cap > 0 and volume_24h:
+                vmr_24h = volume_24h / market_cap
+            
             parsed_records.append({
                 "crypto_id": crypto_id,
                 "name": name,
@@ -177,6 +182,7 @@ def parse_crypto_data(data):
                 "market_cap_dominance": market_cap_dominance,
                 "fully_diluted_market_cap": fully_diluted_market_cap,
                 "quote_last_updated": quote_last_updated,
+                "vmr_24h": vmr_24h,
                 "data_timestamp": datetime.now(timezone.utc)
             })
             
@@ -206,14 +212,14 @@ def save_crypto_data(records):
                     last_updated, date_added, tags, price, volume_24h, volume_change_24h,
                     percent_change_1h, percent_change_24h, percent_change_7d,
                     market_cap, market_cap_dominance, fully_diluted_market_cap,
-                    quote_last_updated, data_timestamp
+                    quote_last_updated, vmr_24h, data_timestamp
                 ) VALUES (
                     :crypto_id, :name, :symbol, :slug, :cmc_rank,
                     :circulating_supply, :total_supply, :max_supply, :infinite_supply,
                     :last_updated, :date_added, :tags, :price, :volume_24h, :volume_change_24h,
                     :percent_change_1h, :percent_change_24h, :percent_change_7d,
                     :market_cap, :market_cap_dominance, :fully_diluted_market_cap,
-                    :quote_last_updated, :data_timestamp
+                    :quote_last_updated, :vmr_24h, :data_timestamp
                 )
                 ON CONFLICT (crypto_id, symbol)
                 DO UPDATE SET
@@ -237,6 +243,7 @@ def save_crypto_data(records):
                     market_cap_dominance = EXCLUDED.market_cap_dominance,
                     fully_diluted_market_cap = EXCLUDED.fully_diluted_market_cap,
                     quote_last_updated = EXCLUDED.quote_last_updated,
+                    vmr_24h = EXCLUDED.vmr_24h,
                     data_timestamp = EXCLUDED.data_timestamp,
                     updated_at = now()
             """)
@@ -251,7 +258,7 @@ def save_crypto_data(records):
         raise
 
 
-def fetch_cmc_listings(limit=200):
+def fetch_cmc_listings(limit=500):
     """获取并保存CMC加密货币列表"""
     logger.info(f"开始获取CMC加密货币列表，限制: {limit}")
     
@@ -297,7 +304,7 @@ if __name__ == "__main__":
     else:
         try:
             # 获取前100个加密货币数据
-            fetch_cmc_listings(limit=200)
+            fetch_cmc_listings(limit=500)
             logger.info("CMC加密货币列表采集任务完成")
         except Exception as e:
             logger.error(f"CMC加密货币列表采集出错: {e}")
