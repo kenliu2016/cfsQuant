@@ -245,7 +245,7 @@ def save_crypto_data(records):
                     quote_last_updated = EXCLUDED.quote_last_updated,
                     vmr_24h = EXCLUDED.vmr_24h,
                     data_timestamp = EXCLUDED.data_timestamp,
-                    updated_at = now()
+                    updated_at = timezone('utc', now())
             """)
             
             conn.execute(sql, records)

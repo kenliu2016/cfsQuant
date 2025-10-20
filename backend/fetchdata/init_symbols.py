@@ -116,15 +116,15 @@ def get_top_symbols(exchange, limit=None):
 @retry_with_backoff(max_retries=3, base_delay=1, max_delay=10)
 def upsert_codes(exchange, symbols):
     sql = """
-    INSERT INTO market_codes (tenant_id, exchange, code, active, excode, baseCurrency, quoteCurrency)
+    INSERT INTO market_codes (exchange, code, active, excode, baseCurrency, quoteCurrency)
     VALUES %s
-    ON CONFLICT (tenant_id, exchange, code) DO UPDATE SET 
+    ON CONFLICT (exchange, code) DO UPDATE SET 
         active = EXCLUDED.active,
         excode = EXCLUDED.excode,
         baseCurrency = EXCLUDED.baseCurrency,
-        quoteCurrency = EXCLUDED.quoteCurrency
+        quoteCurrency = EXCLUDED.quoteCurrency,
+        updated_at = timezone('utc', now())
     """
-    # 使用标准的tenant_id为'public'
     rows = []
     for s in symbols:
         # 根据"/"拆解symbol为baseCurrency和quoteCurrency
@@ -135,7 +135,7 @@ def upsert_codes(exchange, symbols):
             base_currency = s
             quote_currency = ''
         
-        rows.append(('public', exchange, s, False, f"{exchange}-{s}", base_currency, quote_currency))
+        rows.append((exchange, s, False, f"{exchange}-{s}", base_currency, quote_currency))
     
     with get_connection() as conn, conn.cursor() as cur:
         execute_values(cur, sql, rows)
