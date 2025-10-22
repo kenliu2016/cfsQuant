@@ -73,13 +73,24 @@ def get_top_symbols(exchange, limit=None):
     markets = exchange.load_markets()
     
     # 定义需要排除的稳定币列表
-    stablecoins = {"USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "USDN", "FRAX", "USDD", "GUSD"}
+                # 稳定币列表
+    stablecoins = {
+        'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USDD', 'FRAX', 'GUSD', 
+        'HUSD', 'LUSD', 'MIM', 'SUSD', 'USTC', 'FEI', 'USDN', 'VAI', 'RSV',
+        'USDX', 'DUSD', 'EURS', 'EURT', 'XAUT', 'PAX', 'PAXG', 'WBTC','USDX', 
+        'UST', 'GBPT', 'USDK'
+    }
+    
+    # 定义杠杆代币关键词列表
+    leveraged_keywords = ['UP', 'DOWN', 'BULL', 'BEAR', 'LONG', 'SHORT', 'HALF', 'HEDGE']
     
     symbols = [
         sym for sym, data in markets.items()
         if (data.get("spot") and 
             # 排除稳定币对：确保基础货币不是稳定币
-            data["base"] not in stablecoins)
+            data["base"] not in stablecoins and
+            # 排除杠杆代币：确保基础货币不包含杠杆关键词
+            not any(keyword in data["base"] for keyword in leveraged_keywords))
     ]
     
     # 分批获取ticker数据，避免API限制

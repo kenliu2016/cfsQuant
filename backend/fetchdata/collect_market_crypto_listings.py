@@ -83,7 +83,8 @@ def parse_crypto_data(data):
     stablecoin_symbols = {
         'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USDD', 'FRAX', 'GUSD', 
         'HUSD', 'LUSD', 'MIM', 'SUSD', 'USTC', 'FEI', 'USDN', 'VAI', 'RSV',
-        'USDX', 'DUSD', 'EURS', 'EURT', 'XAUT', 'PAX', 'PAXG', 'WBTC'
+        'USDX', 'DUSD', 'EURS', 'EURT', 'XAUT', 'PAX', 'PAXG', 'WBTC','USDX', 
+        'UST', 'GBPT', 'USDK'
     }
     
     # 常见稳定币名称关键词

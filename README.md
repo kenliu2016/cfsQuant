@@ -3,7 +3,11 @@ Backend: backend/app
 Frontend: frontend/src
 Run backend: cd backend; pip install -r requirements.txt; uvicorn app.main:app --reload --port 8000
 Run frontend: cd frontend; npm install; npm run dev
-Database: backend/config/db_config.yaml contains default Postgres settings.
+Database: backend/config/db_config.yaml contains default Postgres settings
+
+collect_realtime.py可以正常运行，你可以通过以下方式使用：
+- python collect_realtime.py --mode async - 使用异步并发模式
+- python collect_realtime.py --mode serial - 使用串行模式（兼容原有逻辑）
 
 在后台启动Redis
 redis-server --daemonize yes 

@@ -17,3 +17,7 @@ matplotlib
 requests
 passlib[bcrypt]
 python-jose[cryptography]
+asyncpg==0.29.0
+aiohttp==3.10.5
+websockets==12.0
+python-dotenv==1.0.1

@@ -97,7 +97,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
                 row.to_json(),
             ))
     conn.commit()
-    logger.info(f"{exchange} {symbol} {timeframe} 历史写入 {len(df)} 条")
+    # logger.info(f"{exchange} {symbol} {timeframe} 历史写入 {len(df)} 条")
 
 # ================== 分页抓取 ==================
 def fetch_ohlcv_paginated(exchange, exchange_name, symbol, timeframe, since, until, conn):
@@ -134,11 +134,11 @@ def fetch_ohlcv_paginated(exchange, exchange_name, symbol, timeframe, since, unt
 # ================== 主入口 ==================
 if __name__ == "__main__":
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=10)  # 最近三年
+    start_time = end_time - timedelta(days=30)  # 最近三年
 
     # 获取活跃交易对
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT exchange, code FROM market_codes WHERE active=true")
+        cur.execute("SELECT exchange, code FROM market_codes WHERE quoteCurrency='USDT' and active=false")
         codes = cur.fetchall()
     logger.info(f"查询到 {len(codes)} 个交易对")
 
