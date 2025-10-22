@@ -22,7 +22,7 @@ from common.db import get_engine
 from common.logger import LoggerFactory
 
 # 使用项目统一的日志工具
-logger = LoggerFactory.get_logger("fetchdata.signal")
+logger = LoggerFactory.get_logger("indecator.bull_bear_metrics")
 
 # === PostgreSQL 连接 ===
 engine = get_engine()
@@ -30,7 +30,7 @@ engine = get_engine()
 
 def ensure_table(engine):
     sql = '''
-    CREATE TABLE IF NOT EXISTS public.indecator_metrics (
+    CREATE TABLE IF NOT EXISTS public.indecator_bull_bear_metrics (
         id SERIAL PRIMARY KEY,
         exchange VARCHAR NOT NULL,
         symbol VARCHAR NOT NULL,
@@ -39,7 +39,7 @@ def ensure_table(engine):
         stablecoin_flow NUMERIC,
         created_at TIMESTAMP DEFAULT now()
     );
-    CREATE INDEX IF NOT EXISTS indecator_metrics_idx ON public.indecator_metrics (exchange, symbol, datetime);
+    CREATE INDEX IF NOT EXISTS indecator_bull_bear_metrics_idx ON public.indecator_bull_bear_metrics (exchange, symbol, datetime);
     '''
     with engine.begin() as conn:
         conn.execute(text(sql))
@@ -104,7 +104,7 @@ def fetch_stablecoin_flow_proxy():
 
 def persist_signal(engine, exchange, symbol, funding_rate, stablecoin_flow):
     sql = text('''
-        INSERT INTO indecator_metrics (exchange, symbol, funding_rate, stablecoin_flow)
+        INSERT INTO indecator_bull_bear_metrics (exchange, symbol, funding_rate, stablecoin_flow)
         VALUES (:exchange, :symbol, :funding_rate, :stablecoin_flow)
     ''')
     with engine.begin() as conn:

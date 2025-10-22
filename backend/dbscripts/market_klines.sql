@@ -2,24 +2,26 @@
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- ============ 原始 1m K 线表（Spot）============
--- 统一前缀 market_，新增 exchange
-CREATE TABLE IF NOT EXISTS market_ohlcv_1m (
-  exchange          text        NOT NULL,  -- 例如 'binance'
-  symbol            text        NOT NULL,  -- 建议小写存储（如 'btcusdt'）
-  open_ts           timestamptz NOT NULL,  -- kline open time
-  close_ts          timestamptz NOT NULL,  -- kline close time
-  open              numeric     NOT NULL,
-  high              numeric     NOT NULL,
-  low               numeric     NOT NULL,
-  close             numeric     NOT NULL,
-  volume            numeric     NOT NULL,
-  quote_volume      numeric     DEFAULT 0,
-  taker_buy_volume  numeric     DEFAULT 0,
-  taker_buy_qv      numeric     DEFAULT 0,
-  number_of_trades  bigint      DEFAULT 0,
-  is_final          boolean     NOT NULL DEFAULT false,
-  PRIMARY KEY (exchange, symbol, open_ts)
+-- 表: market_ohlcv_1m
+CREATE TABLE IF NOT EXISTS public.market_ohlcv_1m (
+    exchange text NOT NULL,
+    symbol text NOT NULL,
+    open_ts timestamptz NOT NULL,
+    close_ts timestamptz NOT NULL,
+    open numeric NOT NULL,
+    high numeric NOT NULL,
+    low numeric NOT NULL,
+    close numeric NOT NULL,
+    volume numeric NOT NULL,
+    quote_volume numeric DEFAULT 0,
+    taker_buy_volume numeric DEFAULT 0,
+    taker_buy_qv numeric DEFAULT 0,
+    number_of_trades int8 DEFAULT 0,
+    is_final bool NOT NULL DEFAULT false,
+    market_cap numeric DEFAULT NULL::numeric,
+    PRIMARY KEY (exchange, symbol, open_ts)
 );
+COMMENT ON COLUMN public.market_ohlcv_1m.market_cap IS '市值数据，来源于market_crypto_listings表的market_cap字段';
 
 -- 转为 hypertable：时间分区 open_ts
 SELECT create_hypertable('market_ohlcv_1m', 'open_ts');
@@ -49,7 +51,8 @@ SELECT
   sum(quote_volume)     AS quote_volume,
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
-  sum(number_of_trades) AS number_of_trades
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -76,7 +79,8 @@ SELECT
   sum(quote_volume)     AS quote_volume,
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
-  sum(number_of_trades) AS number_of_trades
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -103,7 +107,8 @@ SELECT
   sum(quote_volume)     AS quote_volume,
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
-  sum(number_of_trades) AS number_of_trades
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -113,6 +118,34 @@ SELECT add_continuous_aggregate_policy(
   start_offset => INTERVAL '7 days',
   end_offset   => INTERVAL '1 minute',
   schedule_interval => INTERVAL '1 minute'
+);
+
+-- 30m
+CREATE MATERIALIZED VIEW IF NOT EXISTS market_ohlcv_30m
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT
+  exchange,
+  symbol,
+  time_bucket('30 minutes', open_ts) AS bucket,
+  first(open, open_ts)  AS open,
+  max(high)             AS high,
+  min(low)              AS low,
+  last(close, open_ts)  AS close,
+  sum(volume)           AS volume,
+  sum(quote_volume)     AS quote_volume,
+  sum(taker_buy_volume) AS taker_buy_volume,
+  sum(taker_buy_qv)     AS taker_buy_qv,
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
+FROM market_ohlcv_1m
+GROUP BY exchange, symbol, bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+  'market_ohlcv_30m',
+  start_offset => INTERVAL '15 days',
+  end_offset   => INTERVAL '2 minutes',
+  schedule_interval => INTERVAL '2 minutes'
 );
 
 -- 1h
@@ -130,7 +163,8 @@ SELECT
   sum(quote_volume)     AS quote_volume,
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
-  sum(number_of_trades) AS number_of_trades
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -140,6 +174,34 @@ SELECT add_continuous_aggregate_policy(
   start_offset => INTERVAL '30 days',
   end_offset   => INTERVAL '5 minutes',
   schedule_interval => INTERVAL '5 minutes'
+);
+
+-- 2h
+CREATE MATERIALIZED VIEW IF NOT EXISTS market_ohlcv_2h
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT
+  exchange,
+  symbol,
+  time_bucket('2 hours', open_ts) AS bucket,
+  first(open, open_ts)  AS open,
+  max(high)             AS high,
+  min(low)              AS low,
+  last(close, open_ts)  AS close,
+  sum(volume)           AS volume,
+  sum(quote_volume)     AS quote_volume,
+  sum(taker_buy_volume) AS taker_buy_volume,
+  sum(taker_buy_qv)     AS taker_buy_qv,
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
+FROM market_ohlcv_1m
+GROUP BY exchange, symbol, bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+  'market_ohlcv_2h',
+  start_offset => INTERVAL '60 days',
+  end_offset   => INTERVAL '10 minutes',
+  schedule_interval => INTERVAL '10 minutes'
 );
 
 -- 4h
@@ -157,7 +219,8 @@ SELECT
   sum(quote_volume)     AS quote_volume,
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
-  sum(number_of_trades) AS number_of_trades
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -184,7 +247,8 @@ SELECT
   sum(quote_volume)     AS quote_volume,
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
-  sum(number_of_trades) AS number_of_trades
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -194,4 +258,60 @@ SELECT add_continuous_aggregate_policy(
   start_offset => INTERVAL '400 days',
   end_offset   => INTERVAL '15 minutes',
   schedule_interval => INTERVAL '15 minutes'
+);
+
+-- 2d
+CREATE MATERIALIZED VIEW IF NOT EXISTS market_ohlcv_2d
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT
+  exchange,
+  symbol,
+  time_bucket('2 days', open_ts) AS bucket,
+  first(open, open_ts)  AS open,
+  max(high)             AS high,
+  min(low)              AS low,
+  last(close, open_ts)  AS close,
+  sum(volume)           AS volume,
+  sum(quote_volume)     AS quote_volume,
+  sum(taker_buy_volume) AS taker_buy_volume,
+  sum(taker_buy_qv)     AS taker_buy_qv,
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
+FROM market_ohlcv_1m
+GROUP BY exchange, symbol, bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+  'market_ohlcv_2d',
+  start_offset => INTERVAL '800 days',
+  end_offset   => INTERVAL '30 minutes',
+  schedule_interval => INTERVAL '30 minutes'
+);
+
+-- 3d
+CREATE MATERIALIZED VIEW IF NOT EXISTS market_ohlcv_3d
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT
+  exchange,
+  symbol,
+  time_bucket('3 days', open_ts) AS bucket,
+  first(open, open_ts)  AS open,
+  max(high)             AS high,
+  min(low)              AS low,
+  last(close, open_ts)  AS close,
+  sum(volume)           AS volume,
+  sum(quote_volume)     AS quote_volume,
+  sum(taker_buy_volume) AS taker_buy_volume,
+  sum(taker_buy_qv)     AS taker_buy_qv,
+  sum(number_of_trades) AS number_of_trades,
+  first(market_cap, open_ts) AS market_cap
+FROM market_ohlcv_1m
+GROUP BY exchange, symbol, bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+  'market_ohlcv_3d',
+  start_offset => INTERVAL '1200 days',
+  end_offset   => INTERVAL '45 minutes',
+  schedule_interval => INTERVAL '45 minutes'
 );

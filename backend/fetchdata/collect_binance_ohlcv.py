@@ -190,7 +190,7 @@ async def get_valid_usdt_symbols() -> Set[str]:
 
 # ===================== COPY 批量写 =====================
 COPY_COLS = [
-    "exchange","symbol","open_ts","close_ts",
+    "exchange","symbol","open_ts","close_ts","datetime",
     "open","high","low","close",
     "volume","quote_volume","taker_buy_volume","taker_buy_qv",
     "number_of_trades","is_final","market_cap"
@@ -202,17 +202,18 @@ CREATE TEMP TABLE stage_ohlcv (
   {COPY_COLS[1]} text NOT NULL,
   {COPY_COLS[2]} timestamptz NOT NULL,
   {COPY_COLS[3]} timestamptz NOT NULL,
-  {COPY_COLS[4]} numeric NOT NULL,
+  {COPY_COLS[4]} timestamptz NOT NULL,
   {COPY_COLS[5]} numeric NOT NULL,
   {COPY_COLS[6]} numeric NOT NULL,
   {COPY_COLS[7]} numeric NOT NULL,
   {COPY_COLS[8]} numeric NOT NULL,
-  {COPY_COLS[9]} numeric,
+  {COPY_COLS[9]} numeric NOT NULL,
   {COPY_COLS[10]} numeric,
   {COPY_COLS[11]} numeric,
-  {COPY_COLS[12]} bigint,
-  {COPY_COLS[13]} boolean NOT NULL,
-  {COPY_COLS[14]} numeric
+  {COPY_COLS[12]} numeric,
+  {COPY_COLS[13]} bigint,
+  {COPY_COLS[14]} boolean NOT NULL,
+  {COPY_COLS[15]} numeric
 ) ON COMMIT DROP;
 """
 
@@ -221,6 +222,7 @@ INSERT INTO market_ohlcv_1m ({', '.join(COPY_COLS)})
 SELECT {', '.join(COPY_COLS)} FROM stage_ohlcv
 ON CONFLICT (exchange, symbol, open_ts) DO UPDATE SET
   close_ts = EXCLUDED.close_ts,
+  datetime = EXCLUDED.datetime,
   open = EXCLUDED.open,
   high = GREATEST(market_ohlcv_1m.high, EXCLUDED.high),
   low  = LEAST(market_ohlcv_1m.low, EXCLUDED.low),
@@ -393,6 +395,7 @@ async def backfill_symbol(session: aiohttp.ClientSession, pool: asyncpg.Pool, sy
                 EXCHANGE, symbol_formatted,
                 ms_to_ts(open_ms),
                 ms_to_ts(close_ms),
+                ms_to_ts(close_ms),  # datetime字段取值为close_ts
                 o, h, l, c,
                 v, qv, tbv, tbq,
                 trades, True, market_cap  # 使用获取到的market_cap值
@@ -603,7 +606,7 @@ class Shard:
 
                 row = (
                     EXCHANGE, symbol_formatted,
-                    ms_to_ts(k["t"]), ms_to_ts(k["T"]),
+                    ms_to_ts(k["t"]), ms_to_ts(k["T"]), ms_to_ts(k["T"]),  # datetime字段取值为close_ts
                     k["o"], k["h"], k["l"], k["c"],
                     k["v"], k.get("q","0"), k.get("V","0"), k.get("Q","0"),
                     k.get("n",0), bool(k["x"]), None  # market_cap字段暂时设为None

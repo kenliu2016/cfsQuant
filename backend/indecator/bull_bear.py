@@ -51,11 +51,11 @@ def fetch_klines(engine, table, exchange, symbol, since_hours=48):
     sql = text(f'''
         SELECT datetime, open, high, low, close, volume
         FROM {table}
-        WHERE exchange = :exchange AND code = :code AND datetime >= :since
+        WHERE exchange = :exchange AND symbol = :symbol AND datetime >= :since
         ORDER BY datetime ASC
     ''')
     with engine.begin() as conn:
-        df = pd.read_sql(sql, conn, params={'exchange': exchange, 'code': symbol, 'since': since})
+        df = pd.read_sql(sql, conn, params={'exchange': exchange, 'symbol': symbol, 'since': since})
     if df.empty:
         raise RuntimeError('No kline data returned. Check DB and table fields')
     df['datetime'] = pd.to_datetime(df['datetime'])
@@ -63,7 +63,7 @@ def fetch_klines(engine, table, exchange, symbol, since_hours=48):
     return df
 
 
-def fetch_latest_signals(engine, exchange, symbol):
+def fetch_latest_metrics(engine, exchange, symbol):
     """
     获取最新的市场信号数据（资金费率和稳定币流入）
     
@@ -77,7 +77,7 @@ def fetch_latest_signals(engine, exchange, symbol):
     """
     sql = text('''
         SELECT funding_rate, stablecoin_flow, datetime
-        FROM indecator_metrics
+        FROM indecator_bull_bear_metrics
         WHERE exchange = :exchange AND symbol = :symbol
         ORDER BY datetime DESC
         LIMIT 1
@@ -310,9 +310,9 @@ def main():
     """
     # 配置参数
     exchange = 'binance'  # 交易所
-    symbol = 'binance-BTC/USDT'  # 交易对符号（数据库格式）
+    symbol = 'BTC/USDT'  # 交易对符号（数据库格式）
     norm_symbol = 'BTCUSDT'  # 标准化交易对符号
-    kline_table = 'market_minute_klines'  # K线数据表名
+    kline_table = 'market_ohlcv_1m'  # K线数据表名
     lookback_hours = 48  # 回溯小时数
     ma_short = 50  # 短期移动平均窗口
     ma_long = 200  # 长期移动平均窗口
@@ -324,7 +324,7 @@ def main():
     df = compute_mas(df, ma_short, ma_long)
 
     # 获取最新的市场信号数据
-    signals = fetch_latest_signals(engine, exchange, norm_symbol)
+    signals = fetch_latest_metrics(engine, exchange, norm_symbol)
     
     # 进行综合评分和牛熊判定
     result = score_and_decide(df, signals)
