@@ -184,7 +184,7 @@ def parse_crypto_data(data):
                 "fully_diluted_market_cap": fully_diluted_market_cap,
                 "quote_last_updated": quote_last_updated,
                 "vmr_24h": vmr_24h,
-                "data_timestamp": datetime.now(timezone.utc)
+                "data_timestamp": datetime.now()
             })
             
         except Exception as e:
@@ -246,7 +246,7 @@ def save_crypto_data(records):
                     quote_last_updated = EXCLUDED.quote_last_updated,
                     vmr_24h = EXCLUDED.vmr_24h,
                     data_timestamp = EXCLUDED.data_timestamp,
-                    updated_at = timezone('utc', now())
+                    updated_at = now()
             """)
             
             conn.execute(sql, records)
@@ -256,6 +256,39 @@ def save_crypto_data(records):
         
     except Exception as e:
         logger.error(f"保存加密货币数据到数据库时出错: {e}")
+        raise
+
+
+def update_market_codes_active_status():
+    """根据market_crypto_listings表的symbol更新market_codes表的active状态"""
+    try:
+        engine = get_engine()
+        
+        with engine.connect() as conn:
+            # 首先，将所有market_codes的active设置为false
+            reset_sql = text("""
+                UPDATE market_codes 
+                SET active = false, updated_at = now()
+            """)
+            conn.execute(reset_sql)
+            
+            # 然后，将匹配的market_codes的active设置为true
+            # 匹配逻辑：market_crypto_listings.symbol = market_codes.basecurrency
+            update_sql = text("""
+                UPDATE market_codes mc
+                SET active = true, updated_at = now()
+                FROM market_crypto_listings mcl
+                WHERE mc.basecurrency = mcl.symbol
+                AND mcl.data_timestamp >= NOW() - INTERVAL '24 hours'
+            """)
+            
+            result = conn.execute(update_sql)
+            conn.commit()
+            
+            logger.info(f"更新market_codes表active状态完成，匹配了 {result.rowcount} 条记录")
+            
+    except Exception as e:
+        logger.error(f"更新market_codes表active状态失败: {e}")
         raise
 
 
@@ -278,6 +311,9 @@ def fetch_cmc_listings(limit=500):
         
         # 保存数据
         save_crypto_data(parsed_data)
+        
+        # 更新market_codes表的active状态
+        update_market_codes_active_status()
         
         logger.info("CMC加密货币列表获取完成")
         
@@ -304,7 +340,7 @@ if __name__ == "__main__":
         logger.info("任务完成（网络不可用模式）")
     else:
         try:
-            # 获取前100个加密货币数据
+            # 获取500个加密货币数据
             fetch_cmc_listings(limit=500)
             logger.info("CMC加密货币列表采集任务完成")
         except Exception as e:

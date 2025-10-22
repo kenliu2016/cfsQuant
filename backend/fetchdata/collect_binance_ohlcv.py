@@ -67,7 +67,7 @@ logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
     format="%(asctime)s %(levelname)s %(message)s"
 )
-log = logging.getLogger("collector")
+log = logging.getLogger("collect_binance_hotcopy")
 
 # ===================== SQL =====================
 LOAD_SYMBOLS_FULL_SQL = """
@@ -155,8 +155,8 @@ def filter_streams_with_whitelist(streams: List[str], whitelist_syms: Set[str], 
         if sym not in whitelist_syms:
             bad.append(st); continue
         good.append(st)
-    if bad:
-        log.warning("Filtered %d invalid streams (e.g. %s)", len(bad), bad[:3])
+    #if bad:
+    #    log.warning("Filtered %d invalid streams (e.g. %s)", len(bad), bad[:3])
     return good
 
 # ---------- exchangeInfo 白名单（带降级） ----------
@@ -193,7 +193,7 @@ COPY_COLS = [
     "exchange","symbol","open_ts","close_ts",
     "open","high","low","close",
     "volume","quote_volume","taker_buy_volume","taker_buy_qv",
-    "number_of_trades","is_final"
+    "number_of_trades","is_final","market_cap"
 ]
 
 CREATE_STAGE_SQL = f"""
@@ -211,13 +211,14 @@ CREATE TEMP TABLE stage_ohlcv (
   {COPY_COLS[10]} numeric,
   {COPY_COLS[11]} numeric,
   {COPY_COLS[12]} bigint,
-  {COPY_COLS[13]} boolean NOT NULL
+  {COPY_COLS[13]} boolean NOT NULL,
+  {COPY_COLS[14]} numeric
 ) ON COMMIT DROP;
 """
 
 INSERT_FROM_STAGE_SQL = f"""
-INSERT INTO market_ohlcv_1m ({", ".join(COPY_COLS)})
-SELECT {", ".join(COPY_COLS)} FROM stage_ohlcv
+INSERT INTO market_ohlcv_1m ({', '.join(COPY_COLS)})
+SELECT {', '.join(COPY_COLS)} FROM stage_ohlcv
 ON CONFLICT (exchange, symbol, open_ts) DO UPDATE SET
   close_ts = EXCLUDED.close_ts,
   open = EXCLUDED.open,
@@ -229,7 +230,8 @@ ON CONFLICT (exchange, symbol, open_ts) DO UPDATE SET
   taker_buy_volume = EXCLUDED.taker_buy_volume,
   taker_buy_qv = EXCLUDED.taker_buy_qv,
   number_of_trades = EXCLUDED.number_of_trades,
-  is_final = EXCLUDED.is_final
+  is_final = EXCLUDED.is_final,
+  market_cap = EXCLUDED.market_cap
 """
 
 class CopyBuffer:
@@ -301,6 +303,35 @@ async def load_symbols_since(pool: asyncpg.Pool, since_ts: datetime) -> List[str
         formatted_symbols.append(symbol_formatted)
     return formatted_symbols
 
+# ===================== Market Cap 工具函数 =====================
+async def get_market_cap_for_symbol(pool: asyncpg.Pool, symbol_lc: str) -> float:
+    """从market_crypto_listings表获取symbol对应的market_cap值"""
+    # 将symbol转换为大写格式用于查询（例如：btcusdt -> BTCUSDT）
+    symbol_uc = symbol_lc.upper()
+    
+    # 提取基础货币（例如：BTCUSDT -> BTC）
+    if len(symbol_uc) >= 4:
+        base_currency = symbol_uc[:-4]  # 去掉USDT后缀
+    else:
+        base_currency = symbol_uc
+    
+    # 查询market_crypto_listings表
+    sql = """
+    SELECT market_cap 
+    FROM market_crypto_listings 
+    WHERE symbol = $1 
+    ORDER BY data_timestamp DESC 
+    LIMIT 1
+    """
+    
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.fetchval(sql, base_currency)
+            return float(result) if result else None
+    except Exception as e:
+        log.warning("获取 %s 的market_cap失败: %s", base_currency, e)
+        return None
+
 # ===================== REST Backfill =====================
 async def backfill_symbol(session: aiohttp.ClientSession, pool: asyncpg.Pool, symbol_lc: str, start_ms: int) -> int:
     # 将小写无分隔符格式转换为大写无分隔符格式用于API调用
@@ -312,6 +343,13 @@ async def backfill_symbol(session: aiohttp.ClientSession, pool: asyncpg.Pool, sy
     buf = CopyBuffer(pool, batch_size=max(2000, BATCH_SIZE), flush_sec=1.0)
     max_retries = 3  # 最大重试次数
     retry_count = 0
+    
+    # 获取当前symbol的market_cap值
+    market_cap = await get_market_cap_for_symbol(pool, symbol_lc)
+    #if market_cap:
+    #    log.info("为 %s 获取到market_cap: %s", symbol_uc, market_cap)
+    #else:
+    #    log.info("未找到 %s 的market_cap数据", symbol_uc)
 
     while True:
         async with session.get(url, params=params, timeout=25) as resp:
@@ -357,7 +395,7 @@ async def backfill_symbol(session: aiohttp.ClientSession, pool: asyncpg.Pool, sy
                 ms_to_ts(close_ms),
                 o, h, l, c,
                 v, qv, tbv, tbq,
-                trades, True
+                trades, True, market_cap  # 使用获取到的market_cap值
             ))
         await buf.flush()
         total_rows += len(data)
@@ -568,7 +606,7 @@ class Shard:
                     ms_to_ts(k["t"]), ms_to_ts(k["T"]),
                     k["o"], k["h"], k["l"], k["c"],
                     k["v"], k.get("q","0"), k.get("V","0"), k.get("Q","0"),
-                    k.get("n",0), bool(k["x"])
+                    k.get("n",0), bool(k["x"]), None  # market_cap字段暂时设为None
                 )
                 await self.buf.add(row)
         except ConnectionClosedOK:
