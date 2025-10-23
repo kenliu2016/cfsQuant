@@ -1,7 +1,7 @@
 -- 数据库DDL导出
 -- 数据库: quant
 -- 主机: localhost:5432
--- 导出时间: 2025-10-22 12:50:52
+-- 导出时间: 2025-10-24 01:41:34
 -- 导出内容: 表、视图、索引、序列等
 
 SET statement_timeout = 0;
@@ -35,6 +35,9 @@ CREATE SEQUENCE IF NOT EXISTS public.indecator_hmm_id_seq START WITH 1 INCREMENT
 
 -- 序列: indecator_metrics_id_seq
 CREATE SEQUENCE IF NOT EXISTS public.indecator_metrics_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 NO CYCLE;
+
+-- 序列: indecator_metrics_id_seq1
+CREATE SEQUENCE IF NOT EXISTS public.indecator_metrics_id_seq1 START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 NO CYCLE;
 
 -- 序列: indecator_vmr_id_seq
 CREATE SEQUENCE IF NOT EXISTS public.indecator_vmr_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 NO CYCLE;
@@ -203,6 +206,18 @@ COMMENT ON COLUMN public.indecator_bull_bear.stablecoin_flow IS '稳定币流入
 COMMENT ON COLUMN public.indecator_bull_bear.reasons IS '判定原因列表（JSON格式）';
 COMMENT ON COLUMN public.indecator_bull_bear.created_at IS '记录创建时间';
 
+-- 表: indecator_bull_bear_metrics
+CREATE TABLE IF NOT EXISTS public.indecator_bull_bear_metrics (
+    id int4 NOT NULL,
+    exchange varchar NOT NULL,
+    symbol varchar NOT NULL,
+    datetime timestamp NOT NULL DEFAULT now(),
+    funding_rate numeric,
+    stablecoin_flow numeric,
+    created_at timestamp DEFAULT now(),
+    PRIMARY KEY (id)
+);
+
 -- 表: indecator_fear_greed
 CREATE TABLE IF NOT EXISTS public.indecator_fear_greed (
     id int4 NOT NULL,
@@ -233,23 +248,6 @@ COMMENT ON COLUMN public.indecator_hmm.datetime IS '状态识别时间点';
 COMMENT ON COLUMN public.indecator_hmm.state IS 'HMM模型识别的状态编号';
 COMMENT ON COLUMN public.indecator_hmm.probability IS '状态概率';
 
--- 表: indecator_metrics
-CREATE TABLE IF NOT EXISTS public.indecator_metrics (
-    id int4 NOT NULL,
-    exchange varchar NOT NULL,
-    symbol varchar NOT NULL,
-    datetime timestamp NOT NULL,
-    metric_name varchar NOT NULL,
-    metric_value numeric NOT NULL,
-    created_at timestamp DEFAULT now(),
-    PRIMARY KEY (id)
-);
-COMMENT ON COLUMN public.indecator_metrics.exchange IS '交易所名称';
-COMMENT ON COLUMN public.indecator_metrics.symbol IS '交易对符号';
-COMMENT ON COLUMN public.indecator_metrics.datetime IS '指标计算时间点';
-COMMENT ON COLUMN public.indecator_metrics.metric_name IS '指标名称（如：RSI, MACD, Bollinger Bands等）';
-COMMENT ON COLUMN public.indecator_metrics.metric_value IS '指标数值';
-
 -- 表: indecator_vmr
 CREATE TABLE IF NOT EXISTS public.indecator_vmr (
     id int4 NOT NULL,
@@ -268,37 +266,6 @@ COMMENT ON COLUMN public.indecator_vmr.datetime IS '指标计算时间点';
 COMMENT ON COLUMN public.indecator_vmr.vmr IS '成交量动量比率值';
 COMMENT ON COLUMN public.indecator_vmr.volume IS '成交量';
 COMMENT ON COLUMN public.indecator_vmr.price_change IS '价格变化';
-
--- 表: market_cap
-CREATE TABLE IF NOT EXISTS public.market_cap (
-    id int4 NOT NULL,
-    crypto_id int4 NOT NULL,
-    symbol varchar NOT NULL,
-    name varchar NOT NULL,
-    market_cap numeric NOT NULL,
-    price numeric NOT NULL,
-    volume_24h numeric NOT NULL,
-    percent_change_1h numeric,
-    percent_change_24h numeric,
-    percent_change_7d numeric,
-    cmc_rank int4 NOT NULL,
-    last_updated timestamp NOT NULL,
-    data_timestamp timestamp NOT NULL,
-    created_at timestamp DEFAULT now(),
-    PRIMARY KEY (id)
-);
-COMMENT ON COLUMN public.market_cap.crypto_id IS '加密货币ID';
-COMMENT ON COLUMN public.market_cap.symbol IS '加密货币符号';
-COMMENT ON COLUMN public.market_cap.name IS '加密货币名称';
-COMMENT ON COLUMN public.market_cap.market_cap IS '市值';
-COMMENT ON COLUMN public.market_cap.price IS '价格';
-COMMENT ON COLUMN public.market_cap.volume_24h IS '24小时交易量';
-COMMENT ON COLUMN public.market_cap.percent_change_1h IS '1小时价格变化百分比';
-COMMENT ON COLUMN public.market_cap.percent_change_24h IS '24小时价格变化百分比';
-COMMENT ON COLUMN public.market_cap.percent_change_7d IS '7天价格变化百分比';
-COMMENT ON COLUMN public.market_cap.cmc_rank IS 'CoinMarketCap排名';
-COMMENT ON COLUMN public.market_cap.last_updated IS '数据最后更新时间';
-COMMENT ON COLUMN public.market_cap.data_timestamp IS '数据时间戳';
 
 -- 表: market_codes
 CREATE TABLE IF NOT EXISTS public.market_codes (
@@ -387,7 +354,30 @@ CREATE TABLE IF NOT EXISTS public.market_ohlcv_1m (
     taker_buy_qv numeric DEFAULT 0,
     number_of_trades int8 DEFAULT 0,
     is_final bool NOT NULL DEFAULT false,
+    market_cap numeric DEFAULT NULL::numeric,
+    datetime timestamptz NOT NULL,
     PRIMARY KEY (exchange, symbol, open_ts)
+);
+COMMENT ON COLUMN public.market_ohlcv_1m.market_cap IS '市值数据，来源于market_crypto_listings表的market_cap字段';
+
+-- 表: market_ohlcv_1m_backup
+CREATE TABLE IF NOT EXISTS public.market_ohlcv_1m_backup (
+    exchange text,
+    symbol text,
+    open_ts timestamptz,
+    close_ts timestamptz,
+    open numeric,
+    high numeric,
+    low numeric,
+    close numeric,
+    volume numeric,
+    quote_volume numeric,
+    taker_buy_volume numeric,
+    taker_buy_qv numeric,
+    number_of_trades int8,
+    is_final bool,
+    market_cap numeric,
+    datetime timestamptz
 );
 
 -- 表: sys_cron_log
@@ -511,20 +501,22 @@ CREATE TABLE IF NOT EXISTS public.tuning_tasks (
 -- === 视图 ===
 -- 视图: market_ohlcv_15m
 CREATE OR REPLACE VIEW public.market_ohlcv_15m AS
- SELECT _materialized_hypertable_4.exchange,
-    _materialized_hypertable_4.symbol,
-    _materialized_hypertable_4.bucket,
-    _materialized_hypertable_4.open,
-    _materialized_hypertable_4.high,
-    _materialized_hypertable_4.low,
-    _materialized_hypertable_4.close,
-    _materialized_hypertable_4.volume,
-    _materialized_hypertable_4.quote_volume,
-    _materialized_hypertable_4.taker_buy_volume,
-    _materialized_hypertable_4.taker_buy_qv,
-    _materialized_hypertable_4.number_of_trades
-   FROM _timescaledb_internal._materialized_hypertable_4
-  WHERE _materialized_hypertable_4.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(4)), '-infinity'::timestamp with time zone)
+ SELECT _materialized_hypertable_14.exchange,
+    _materialized_hypertable_14.symbol,
+    _materialized_hypertable_14.bucket,
+    _materialized_hypertable_14.open,
+    _materialized_hypertable_14.high,
+    _materialized_hypertable_14.low,
+    _materialized_hypertable_14.close,
+    _materialized_hypertable_14.volume,
+    _materialized_hypertable_14.quote_volume,
+    _materialized_hypertable_14.taker_buy_volume,
+    _materialized_hypertable_14.taker_buy_qv,
+    _materialized_hypertable_14.number_of_trades,
+    _materialized_hypertable_14.market_cap,
+    _materialized_hypertable_14.vmr
+   FROM _timescaledb_internal._materialized_hypertable_14
+  WHERE _materialized_hypertable_14.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(14)), '-infinity'::timestamp with time zone)
 UNION ALL
  SELECT market_ohlcv_1m.exchange,
     market_ohlcv_1m.symbol,
@@ -537,27 +529,34 @@ UNION ALL
     sum(market_ohlcv_1m.quote_volume) AS quote_volume,
     sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
     sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
-    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
    FROM market_ohlcv_1m
-  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(4)), '-infinity'::timestamp with time zone)
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(14)), '-infinity'::timestamp with time zone)
   GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('00:15:00'::interval, market_ohlcv_1m.open_ts));;
 
 -- 视图: market_ohlcv_1d
 CREATE OR REPLACE VIEW public.market_ohlcv_1d AS
- SELECT _materialized_hypertable_7.exchange,
-    _materialized_hypertable_7.symbol,
-    _materialized_hypertable_7.bucket,
-    _materialized_hypertable_7.open,
-    _materialized_hypertable_7.high,
-    _materialized_hypertable_7.low,
-    _materialized_hypertable_7.close,
-    _materialized_hypertable_7.volume,
-    _materialized_hypertable_7.quote_volume,
-    _materialized_hypertable_7.taker_buy_volume,
-    _materialized_hypertable_7.taker_buy_qv,
-    _materialized_hypertable_7.number_of_trades
-   FROM _timescaledb_internal._materialized_hypertable_7
-  WHERE _materialized_hypertable_7.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(7)), '-infinity'::timestamp with time zone)
+ SELECT _materialized_hypertable_19.exchange,
+    _materialized_hypertable_19.symbol,
+    _materialized_hypertable_19.bucket,
+    _materialized_hypertable_19.open,
+    _materialized_hypertable_19.high,
+    _materialized_hypertable_19.low,
+    _materialized_hypertable_19.close,
+    _materialized_hypertable_19.volume,
+    _materialized_hypertable_19.quote_volume,
+    _materialized_hypertable_19.taker_buy_volume,
+    _materialized_hypertable_19.taker_buy_qv,
+    _materialized_hypertable_19.number_of_trades,
+    _materialized_hypertable_19.market_cap,
+    _materialized_hypertable_19.vmr
+   FROM _timescaledb_internal._materialized_hypertable_19
+  WHERE _materialized_hypertable_19.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(19)), '-infinity'::timestamp with time zone)
 UNION ALL
  SELECT market_ohlcv_1m.exchange,
     market_ohlcv_1m.symbol,
@@ -570,27 +569,34 @@ UNION ALL
     sum(market_ohlcv_1m.quote_volume) AS quote_volume,
     sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
     sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
-    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
    FROM market_ohlcv_1m
-  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(7)), '-infinity'::timestamp with time zone)
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(19)), '-infinity'::timestamp with time zone)
   GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('1 day'::interval, market_ohlcv_1m.open_ts));;
 
 -- 视图: market_ohlcv_1h
 CREATE OR REPLACE VIEW public.market_ohlcv_1h AS
- SELECT _materialized_hypertable_5.exchange,
-    _materialized_hypertable_5.symbol,
-    _materialized_hypertable_5.bucket,
-    _materialized_hypertable_5.open,
-    _materialized_hypertable_5.high,
-    _materialized_hypertable_5.low,
-    _materialized_hypertable_5.close,
-    _materialized_hypertable_5.volume,
-    _materialized_hypertable_5.quote_volume,
-    _materialized_hypertable_5.taker_buy_volume,
-    _materialized_hypertable_5.taker_buy_qv,
-    _materialized_hypertable_5.number_of_trades
-   FROM _timescaledb_internal._materialized_hypertable_5
-  WHERE _materialized_hypertable_5.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(5)), '-infinity'::timestamp with time zone)
+ SELECT _materialized_hypertable_16.exchange,
+    _materialized_hypertable_16.symbol,
+    _materialized_hypertable_16.bucket,
+    _materialized_hypertable_16.open,
+    _materialized_hypertable_16.high,
+    _materialized_hypertable_16.low,
+    _materialized_hypertable_16.close,
+    _materialized_hypertable_16.volume,
+    _materialized_hypertable_16.quote_volume,
+    _materialized_hypertable_16.taker_buy_volume,
+    _materialized_hypertable_16.taker_buy_qv,
+    _materialized_hypertable_16.number_of_trades,
+    _materialized_hypertable_16.market_cap,
+    _materialized_hypertable_16.vmr
+   FROM _timescaledb_internal._materialized_hypertable_16
+  WHERE _materialized_hypertable_16.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(16)), '-infinity'::timestamp with time zone)
 UNION ALL
  SELECT market_ohlcv_1m.exchange,
     market_ohlcv_1m.symbol,
@@ -603,27 +609,194 @@ UNION ALL
     sum(market_ohlcv_1m.quote_volume) AS quote_volume,
     sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
     sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
-    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
    FROM market_ohlcv_1m
-  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(5)), '-infinity'::timestamp with time zone)
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(16)), '-infinity'::timestamp with time zone)
   GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('01:00:00'::interval, market_ohlcv_1m.open_ts));;
+
+-- 视图: market_ohlcv_2d
+CREATE OR REPLACE VIEW public.market_ohlcv_2d AS
+ SELECT _materialized_hypertable_20.exchange,
+    _materialized_hypertable_20.symbol,
+    _materialized_hypertable_20.bucket,
+    _materialized_hypertable_20.open,
+    _materialized_hypertable_20.high,
+    _materialized_hypertable_20.low,
+    _materialized_hypertable_20.close,
+    _materialized_hypertable_20.volume,
+    _materialized_hypertable_20.quote_volume,
+    _materialized_hypertable_20.taker_buy_volume,
+    _materialized_hypertable_20.taker_buy_qv,
+    _materialized_hypertable_20.number_of_trades,
+    _materialized_hypertable_20.market_cap,
+    _materialized_hypertable_20.vmr
+   FROM _timescaledb_internal._materialized_hypertable_20
+  WHERE _materialized_hypertable_20.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(20)), '-infinity'::timestamp with time zone)
+UNION ALL
+ SELECT market_ohlcv_1m.exchange,
+    market_ohlcv_1m.symbol,
+    time_bucket('2 days'::interval, market_ohlcv_1m.open_ts) AS bucket,
+    first(market_ohlcv_1m.open, market_ohlcv_1m.open_ts) AS open,
+    max(market_ohlcv_1m.high) AS high,
+    min(market_ohlcv_1m.low) AS low,
+    last(market_ohlcv_1m.close, market_ohlcv_1m.open_ts) AS close,
+    sum(market_ohlcv_1m.volume) AS volume,
+    sum(market_ohlcv_1m.quote_volume) AS quote_volume,
+    sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
+    sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
+   FROM market_ohlcv_1m
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(20)), '-infinity'::timestamp with time zone)
+  GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('2 days'::interval, market_ohlcv_1m.open_ts));;
+
+-- 视图: market_ohlcv_2h
+CREATE OR REPLACE VIEW public.market_ohlcv_2h AS
+ SELECT _materialized_hypertable_17.exchange,
+    _materialized_hypertable_17.symbol,
+    _materialized_hypertable_17.bucket,
+    _materialized_hypertable_17.open,
+    _materialized_hypertable_17.high,
+    _materialized_hypertable_17.low,
+    _materialized_hypertable_17.close,
+    _materialized_hypertable_17.volume,
+    _materialized_hypertable_17.quote_volume,
+    _materialized_hypertable_17.taker_buy_volume,
+    _materialized_hypertable_17.taker_buy_qv,
+    _materialized_hypertable_17.number_of_trades,
+    _materialized_hypertable_17.market_cap,
+    _materialized_hypertable_17.vmr
+   FROM _timescaledb_internal._materialized_hypertable_17
+  WHERE _materialized_hypertable_17.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(17)), '-infinity'::timestamp with time zone)
+UNION ALL
+ SELECT market_ohlcv_1m.exchange,
+    market_ohlcv_1m.symbol,
+    time_bucket('02:00:00'::interval, market_ohlcv_1m.open_ts) AS bucket,
+    first(market_ohlcv_1m.open, market_ohlcv_1m.open_ts) AS open,
+    max(market_ohlcv_1m.high) AS high,
+    min(market_ohlcv_1m.low) AS low,
+    last(market_ohlcv_1m.close, market_ohlcv_1m.open_ts) AS close,
+    sum(market_ohlcv_1m.volume) AS volume,
+    sum(market_ohlcv_1m.quote_volume) AS quote_volume,
+    sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
+    sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
+   FROM market_ohlcv_1m
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(17)), '-infinity'::timestamp with time zone)
+  GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('02:00:00'::interval, market_ohlcv_1m.open_ts));;
+
+-- 视图: market_ohlcv_30m
+CREATE OR REPLACE VIEW public.market_ohlcv_30m AS
+ SELECT _materialized_hypertable_15.exchange,
+    _materialized_hypertable_15.symbol,
+    _materialized_hypertable_15.bucket,
+    _materialized_hypertable_15.open,
+    _materialized_hypertable_15.high,
+    _materialized_hypertable_15.low,
+    _materialized_hypertable_15.close,
+    _materialized_hypertable_15.volume,
+    _materialized_hypertable_15.quote_volume,
+    _materialized_hypertable_15.taker_buy_volume,
+    _materialized_hypertable_15.taker_buy_qv,
+    _materialized_hypertable_15.number_of_trades,
+    _materialized_hypertable_15.market_cap,
+    _materialized_hypertable_15.vmr
+   FROM _timescaledb_internal._materialized_hypertable_15
+  WHERE _materialized_hypertable_15.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(15)), '-infinity'::timestamp with time zone)
+UNION ALL
+ SELECT market_ohlcv_1m.exchange,
+    market_ohlcv_1m.symbol,
+    time_bucket('00:30:00'::interval, market_ohlcv_1m.open_ts) AS bucket,
+    first(market_ohlcv_1m.open, market_ohlcv_1m.open_ts) AS open,
+    max(market_ohlcv_1m.high) AS high,
+    min(market_ohlcv_1m.low) AS low,
+    last(market_ohlcv_1m.close, market_ohlcv_1m.open_ts) AS close,
+    sum(market_ohlcv_1m.volume) AS volume,
+    sum(market_ohlcv_1m.quote_volume) AS quote_volume,
+    sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
+    sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
+   FROM market_ohlcv_1m
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(15)), '-infinity'::timestamp with time zone)
+  GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('00:30:00'::interval, market_ohlcv_1m.open_ts));;
+
+-- 视图: market_ohlcv_3d
+CREATE OR REPLACE VIEW public.market_ohlcv_3d AS
+ SELECT _materialized_hypertable_21.exchange,
+    _materialized_hypertable_21.symbol,
+    _materialized_hypertable_21.bucket,
+    _materialized_hypertable_21.open,
+    _materialized_hypertable_21.high,
+    _materialized_hypertable_21.low,
+    _materialized_hypertable_21.close,
+    _materialized_hypertable_21.volume,
+    _materialized_hypertable_21.quote_volume,
+    _materialized_hypertable_21.taker_buy_volume,
+    _materialized_hypertable_21.taker_buy_qv,
+    _materialized_hypertable_21.number_of_trades,
+    _materialized_hypertable_21.market_cap,
+    _materialized_hypertable_21.vmr
+   FROM _timescaledb_internal._materialized_hypertable_21
+  WHERE _materialized_hypertable_21.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(21)), '-infinity'::timestamp with time zone)
+UNION ALL
+ SELECT market_ohlcv_1m.exchange,
+    market_ohlcv_1m.symbol,
+    time_bucket('3 days'::interval, market_ohlcv_1m.open_ts) AS bucket,
+    first(market_ohlcv_1m.open, market_ohlcv_1m.open_ts) AS open,
+    max(market_ohlcv_1m.high) AS high,
+    min(market_ohlcv_1m.low) AS low,
+    last(market_ohlcv_1m.close, market_ohlcv_1m.open_ts) AS close,
+    sum(market_ohlcv_1m.volume) AS volume,
+    sum(market_ohlcv_1m.quote_volume) AS quote_volume,
+    sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
+    sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
+   FROM market_ohlcv_1m
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(21)), '-infinity'::timestamp with time zone)
+  GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('3 days'::interval, market_ohlcv_1m.open_ts));;
 
 -- 视图: market_ohlcv_3m
 CREATE OR REPLACE VIEW public.market_ohlcv_3m AS
- SELECT _materialized_hypertable_2.exchange,
-    _materialized_hypertable_2.symbol,
-    _materialized_hypertable_2.bucket,
-    _materialized_hypertable_2.open,
-    _materialized_hypertable_2.high,
-    _materialized_hypertable_2.low,
-    _materialized_hypertable_2.close,
-    _materialized_hypertable_2.volume,
-    _materialized_hypertable_2.quote_volume,
-    _materialized_hypertable_2.taker_buy_volume,
-    _materialized_hypertable_2.taker_buy_qv,
-    _materialized_hypertable_2.number_of_trades
-   FROM _timescaledb_internal._materialized_hypertable_2
-  WHERE _materialized_hypertable_2.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(2)), '-infinity'::timestamp with time zone)
+ SELECT _materialized_hypertable_12.exchange,
+    _materialized_hypertable_12.symbol,
+    _materialized_hypertable_12.bucket,
+    _materialized_hypertable_12.open,
+    _materialized_hypertable_12.high,
+    _materialized_hypertable_12.low,
+    _materialized_hypertable_12.close,
+    _materialized_hypertable_12.volume,
+    _materialized_hypertable_12.quote_volume,
+    _materialized_hypertable_12.taker_buy_volume,
+    _materialized_hypertable_12.taker_buy_qv,
+    _materialized_hypertable_12.number_of_trades,
+    _materialized_hypertable_12.market_cap,
+    _materialized_hypertable_12.vmr
+   FROM _timescaledb_internal._materialized_hypertable_12
+  WHERE _materialized_hypertable_12.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(12)), '-infinity'::timestamp with time zone)
 UNION ALL
  SELECT market_ohlcv_1m.exchange,
     market_ohlcv_1m.symbol,
@@ -636,27 +809,34 @@ UNION ALL
     sum(market_ohlcv_1m.quote_volume) AS quote_volume,
     sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
     sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
-    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
    FROM market_ohlcv_1m
-  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(2)), '-infinity'::timestamp with time zone)
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(12)), '-infinity'::timestamp with time zone)
   GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('00:03:00'::interval, market_ohlcv_1m.open_ts));;
 
 -- 视图: market_ohlcv_4h
 CREATE OR REPLACE VIEW public.market_ohlcv_4h AS
- SELECT _materialized_hypertable_6.exchange,
-    _materialized_hypertable_6.symbol,
-    _materialized_hypertable_6.bucket,
-    _materialized_hypertable_6.open,
-    _materialized_hypertable_6.high,
-    _materialized_hypertable_6.low,
-    _materialized_hypertable_6.close,
-    _materialized_hypertable_6.volume,
-    _materialized_hypertable_6.quote_volume,
-    _materialized_hypertable_6.taker_buy_volume,
-    _materialized_hypertable_6.taker_buy_qv,
-    _materialized_hypertable_6.number_of_trades
-   FROM _timescaledb_internal._materialized_hypertable_6
-  WHERE _materialized_hypertable_6.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(6)), '-infinity'::timestamp with time zone)
+ SELECT _materialized_hypertable_18.exchange,
+    _materialized_hypertable_18.symbol,
+    _materialized_hypertable_18.bucket,
+    _materialized_hypertable_18.open,
+    _materialized_hypertable_18.high,
+    _materialized_hypertable_18.low,
+    _materialized_hypertable_18.close,
+    _materialized_hypertable_18.volume,
+    _materialized_hypertable_18.quote_volume,
+    _materialized_hypertable_18.taker_buy_volume,
+    _materialized_hypertable_18.taker_buy_qv,
+    _materialized_hypertable_18.number_of_trades,
+    _materialized_hypertable_18.market_cap,
+    _materialized_hypertable_18.vmr
+   FROM _timescaledb_internal._materialized_hypertable_18
+  WHERE _materialized_hypertable_18.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(18)), '-infinity'::timestamp with time zone)
 UNION ALL
  SELECT market_ohlcv_1m.exchange,
     market_ohlcv_1m.symbol,
@@ -669,27 +849,34 @@ UNION ALL
     sum(market_ohlcv_1m.quote_volume) AS quote_volume,
     sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
     sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
-    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
    FROM market_ohlcv_1m
-  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(6)), '-infinity'::timestamp with time zone)
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(18)), '-infinity'::timestamp with time zone)
   GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('04:00:00'::interval, market_ohlcv_1m.open_ts));;
 
 -- 视图: market_ohlcv_5m
 CREATE OR REPLACE VIEW public.market_ohlcv_5m AS
- SELECT _materialized_hypertable_3.exchange,
-    _materialized_hypertable_3.symbol,
-    _materialized_hypertable_3.bucket,
-    _materialized_hypertable_3.open,
-    _materialized_hypertable_3.high,
-    _materialized_hypertable_3.low,
-    _materialized_hypertable_3.close,
-    _materialized_hypertable_3.volume,
-    _materialized_hypertable_3.quote_volume,
-    _materialized_hypertable_3.taker_buy_volume,
-    _materialized_hypertable_3.taker_buy_qv,
-    _materialized_hypertable_3.number_of_trades
-   FROM _timescaledb_internal._materialized_hypertable_3
-  WHERE _materialized_hypertable_3.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(3)), '-infinity'::timestamp with time zone)
+ SELECT _materialized_hypertable_13.exchange,
+    _materialized_hypertable_13.symbol,
+    _materialized_hypertable_13.bucket,
+    _materialized_hypertable_13.open,
+    _materialized_hypertable_13.high,
+    _materialized_hypertable_13.low,
+    _materialized_hypertable_13.close,
+    _materialized_hypertable_13.volume,
+    _materialized_hypertable_13.quote_volume,
+    _materialized_hypertable_13.taker_buy_volume,
+    _materialized_hypertable_13.taker_buy_qv,
+    _materialized_hypertable_13.number_of_trades,
+    _materialized_hypertable_13.market_cap,
+    _materialized_hypertable_13.vmr
+   FROM _timescaledb_internal._materialized_hypertable_13
+  WHERE _materialized_hypertable_13.bucket < COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(13)), '-infinity'::timestamp with time zone)
 UNION ALL
  SELECT market_ohlcv_1m.exchange,
     market_ohlcv_1m.symbol,
@@ -702,9 +889,14 @@ UNION ALL
     sum(market_ohlcv_1m.quote_volume) AS quote_volume,
     sum(market_ohlcv_1m.taker_buy_volume) AS taker_buy_volume,
     sum(market_ohlcv_1m.taker_buy_qv) AS taker_buy_qv,
-    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades
+    sum(market_ohlcv_1m.number_of_trades) AS number_of_trades,
+    first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) AS market_cap,
+        CASE
+            WHEN first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts) > 0::numeric THEN sum(market_ohlcv_1m.quote_volume) / first(market_ohlcv_1m.market_cap, market_ohlcv_1m.open_ts)
+            ELSE NULL::numeric
+        END AS vmr
    FROM market_ohlcv_1m
-  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(3)), '-infinity'::timestamp with time zone)
+  WHERE market_ohlcv_1m.open_ts >= COALESCE(_timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(13)), '-infinity'::timestamp with time zone)
   GROUP BY market_ohlcv_1m.exchange, market_ohlcv_1m.symbol, (time_bucket('00:05:00'::interval, market_ohlcv_1m.open_ts));;
 
 
@@ -751,38 +943,14 @@ CREATE INDEX idx_indecator_bull_bear_phase ON public.indecator_bull_bear USING b
 -- 索引: idx_indecator_bull_bear_score (表: indecator_bull_bear)
 CREATE INDEX idx_indecator_bull_bear_score ON public.indecator_bull_bear USING btree (score);
 
--- 索引: indecator_metrics_idx (表: indecator_metrics)
-CREATE INDEX indecator_metrics_idx ON public.indecator_metrics USING btree (exchange, symbol, datetime);
+-- 索引: indecator_bull_bear_metrics_idx (表: indecator_bull_bear_metrics)
+CREATE INDEX indecator_bull_bear_metrics_idx ON public.indecator_bull_bear_metrics USING btree (exchange, symbol, datetime);
+
+-- 索引: indecator_metrics_idx (表: indecator_bull_bear_metrics)
+CREATE INDEX indecator_metrics_idx ON public.indecator_bull_bear_metrics USING btree (exchange, symbol, datetime);
 
 -- 索引: idx_vmr_metrics_code_timeframe_datetime (表: indecator_vmr)
 CREATE INDEX idx_vmr_metrics_code_timeframe_datetime ON public.indecator_vmr USING btree (code, timeframe, datetime);
-
--- 索引: idx_market_cap_cmc_rank (表: market_cap)
-CREATE INDEX idx_market_cap_cmc_rank ON public.market_cap USING btree (cmc_rank);
-
--- 索引: idx_market_cap_crypto_id (表: market_cap)
-CREATE INDEX idx_market_cap_crypto_id ON public.market_cap USING btree (crypto_id);
-
--- 索引: idx_market_cap_data_timestamp (表: market_cap)
-CREATE INDEX idx_market_cap_data_timestamp ON public.market_cap USING btree (data_timestamp);
-
--- 索引: idx_market_cap_last_updated (表: market_cap)
-CREATE INDEX idx_market_cap_last_updated ON public.market_cap USING btree (last_updated);
-
--- 索引: idx_market_cap_market_cap (表: market_cap)
-CREATE INDEX idx_market_cap_market_cap ON public.market_cap USING btree (market_cap);
-
--- 索引: idx_market_cap_price (表: market_cap)
-CREATE INDEX idx_market_cap_price ON public.market_cap USING btree (price);
-
--- 索引: idx_market_cap_rank_timestamp (表: market_cap)
-CREATE INDEX idx_market_cap_rank_timestamp ON public.market_cap USING btree (cmc_rank, data_timestamp);
-
--- 索引: idx_market_cap_symbol (表: market_cap)
-CREATE INDEX idx_market_cap_symbol ON public.market_cap USING btree (symbol);
-
--- 索引: idx_market_cap_symbol_timestamp (表: market_cap)
-CREATE INDEX idx_market_cap_symbol_timestamp ON public.market_cap USING btree (symbol, data_timestamp);
 
 -- 索引: idx_market_crypto_cmc_rank (表: market_crypto_listings)
 CREATE INDEX idx_market_crypto_cmc_rank ON public.market_crypto_listings USING btree (cmc_rank);
@@ -813,6 +981,12 @@ CREATE INDEX idx_market_crypto_symbol_timestamp ON public.market_crypto_listings
 
 -- 索引: idx_market_crypto_tags (表: market_crypto_listings)
 CREATE INDEX idx_market_crypto_tags ON public.market_crypto_listings USING gin (tags);
+
+-- 索引: idx_market_ohlcv_1m_base_symbol (表: market_ohlcv_1m)
+CREATE INDEX idx_market_ohlcv_1m_base_symbol ON public.market_ohlcv_1m USING btree (exchange, get_base_symbol(symbol));
+
+-- 索引: idx_market_ohlcv_1m_datetime (表: market_ohlcv_1m)
+CREATE INDEX idx_market_ohlcv_1m_datetime ON public.market_ohlcv_1m USING btree (datetime);
 
 -- 索引: idx_market_ohlcv_1m_sym_close (表: market_ohlcv_1m)
 CREATE INDEX idx_market_ohlcv_1m_sym_close ON public.market_ohlcv_1m USING btree (exchange, symbol, close_ts DESC);
@@ -939,6 +1113,12 @@ CREATE TRIGGER ts_insert_blocker BEFORE INSERT ON public.market_ohlcv_1m FOR EAC
 -- 函数: first (无法获取函数定义)
 
 -- 函数: generate_uuidv7 (无法获取函数定义)
+
+-- 函数: get_base_symbol (无法获取函数定义)
+
+-- 函数: get_multiple_symbols_market_cap (无法获取函数定义)
+
+-- 函数: get_symbol_market_cap_history (无法获取函数定义)
 
 -- 函数: get_telemetry_report (无法获取函数定义)
 
@@ -1067,6 +1247,8 @@ CREATE TRIGGER ts_insert_blocker BEFORE INSERT ON public.market_ohlcv_1m FOR EAC
 -- 函数: to_uuidv7 (无法获取函数定义)
 
 -- 函数: to_uuidv7_boundary (无法获取函数定义)
+
+-- 函数: update_ohlcv_market_cap (无法获取函数定义)
 
 -- 函数: uuid_timestamp (无法获取函数定义)
 

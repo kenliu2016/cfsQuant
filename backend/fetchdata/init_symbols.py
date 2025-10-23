@@ -130,7 +130,6 @@ def upsert_codes(exchange, symbols):
     INSERT INTO market_codes (exchange, code, active, excode, baseCurrency, quoteCurrency)
     VALUES %s
     ON CONFLICT (exchange, code) DO UPDATE SET 
-        active = EXCLUDED.active,
         excode = EXCLUDED.excode,
         baseCurrency = EXCLUDED.baseCurrency,
         quoteCurrency = EXCLUDED.quoteCurrency,
