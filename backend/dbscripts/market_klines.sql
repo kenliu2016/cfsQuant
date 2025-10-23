@@ -42,7 +42,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('3 minutes', open_ts) AS bucket,
+  time_bucket('3 minutes', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -52,7 +52,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -70,7 +74,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('5 minutes', open_ts) AS bucket,
+  time_bucket('5 minutes', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -80,7 +84,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -98,7 +106,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('15 minutes', open_ts) AS bucket,
+  time_bucket('15 minutes', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -108,7 +116,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -126,7 +138,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('30 minutes', open_ts) AS bucket,
+  time_bucket('30 minutes', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -136,7 +148,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -154,7 +170,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('1 hour', open_ts) AS bucket,
+  time_bucket('1 hour', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -164,7 +180,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -182,7 +202,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('2 hours', open_ts) AS bucket,
+  time_bucket('2 hours', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -192,7 +212,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -210,7 +234,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('4 hours', open_ts) AS bucket,
+  time_bucket('4 hours', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -220,7 +244,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -238,7 +266,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('1 day', open_ts) AS bucket,
+  time_bucket('1 day', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -248,7 +276,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -266,7 +298,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('2 days', open_ts) AS bucket,
+  time_bucket('2 days', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -276,7 +308,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -294,7 +330,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('3 days', open_ts) AS bucket,
+  time_bucket('3 days', open_ts) AS datetime,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -304,7 +340,11 @@ SELECT
   sum(taker_buy_volume) AS taker_buy_volume,
   sum(taker_buy_qv)     AS taker_buy_qv,
   sum(number_of_trades) AS number_of_trades,
-  first(market_cap, open_ts) AS market_cap
+  first(market_cap, open_ts) AS market_cap,
+  CASE 
+    WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
+    ELSE NULL
+  END AS vmr
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
