@@ -42,7 +42,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('3 minutes', open_ts) AS datetime,
+  time_bucket('3 minutes', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -74,7 +74,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('5 minutes', open_ts) AS datetime,
+  time_bucket('5 minutes', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -106,7 +106,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('15 minutes', open_ts) AS datetime,
+  time_bucket('15 minutes', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -138,7 +138,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('30 minutes', open_ts) AS datetime,
+  time_bucket('30 minutes', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -170,7 +170,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('1 hour', open_ts) AS datetime,
+  time_bucket('1 hour', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -202,7 +202,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('2 hours', open_ts) AS datetime,
+  time_bucket('2 hours', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -234,7 +234,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('4 hours', open_ts) AS datetime,
+  time_bucket('4 hours', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -266,7 +266,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('1 day', open_ts) AS datetime,
+  time_bucket('1 day', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -298,7 +298,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('2 days', open_ts) AS datetime,
+  time_bucket('2 days', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,
@@ -330,7 +330,7 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT
   exchange,
   symbol,
-  time_bucket('3 days', open_ts) AS datetime,
+  time_bucket('3 days', open_ts) AS bucket,
   first(open, open_ts)  AS open,
   max(high)             AS high,
   min(low)              AS low,

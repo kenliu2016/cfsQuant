@@ -183,30 +183,39 @@ def save_to_postgres(records):
         
         # 使用SQLAlchemy执行批量插入
         with engine.connect() as conn:
-            # 使用executemany进行批量插入
-            sql = text("""
-                INSERT INTO indecator_fear_greed (timestamp, value, value_classification, source)
-                VALUES (:timestamp, :value, :value_classification, :source)
-                ON CONFLICT (timestamp)
-                DO UPDATE SET
-                    value = EXCLUDED.value,
-                    value_classification = EXCLUDED.value_classification,
-                    source = EXCLUDED.source,
-                    created_at = now()
-            """)
+            # 由于datetime字段没有唯一约束，需要先检查记录是否存在再决定插入或更新
+            for record in records:
+                timestamp, value, value_classification = record[0], record[1], record[2]
+                
+                # 检查是否已存在相同datetime的记录
+                check_sql = text("SELECT id FROM indecator_fear_greed WHERE datetime = :timestamp")
+                result = conn.execute(check_sql, {"timestamp": timestamp})
+                existing_record = result.fetchone()
+                
+                if existing_record:
+                    # 更新现有记录
+                    update_sql = text("""
+                        UPDATE indecator_fear_greed 
+                        SET value = :value, value_classification = :value_classification, created_at = now()
+                        WHERE datetime = :timestamp
+                    """)
+                    conn.execute(update_sql, {
+                        "timestamp": timestamp,
+                        "value": value,
+                        "value_classification": value_classification
+                    })
+                else:
+                    # 插入新记录，使用序列生成id
+                    insert_sql = text("""
+                        INSERT INTO indecator_fear_greed (id, datetime, value, value_classification)
+                        VALUES (nextval('indecator_fear_greed_id_seq'), :timestamp, :value, :value_classification)
+                    """)
+                    conn.execute(insert_sql, {
+                        "timestamp": timestamp,
+                        "value": value,
+                        "value_classification": value_classification
+                    })
             
-            # 将记录转换为字典格式
-            records_dict = [
-                {
-                    "timestamp": record[0],
-                    "value": record[1],
-                    "value_classification": record[2],
-                    "source": record[3]
-                }
-                for record in records
-            ]
-            
-            conn.execute(sql, records_dict)
             conn.commit()
             
         logger.info(f"成功保存恐惧贪婪指数 {len(records)} 条记录")

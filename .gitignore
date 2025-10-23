@@ -124,3 +124,6 @@ backend/config/secret.yaml
 # Database files
 backend/db/*.sqlite
 backend/db/*.db
+
+# HMM model files
+backend/indecator/hmmModel/

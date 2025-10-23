@@ -14,3 +14,16 @@ K线数据获取
 # 恐惧贪婪指数定时任务 - 每2小时执行一次
 0 */2 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 fear_greed.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/fear_greed.log 2>&1
 
+HMM定时任务
+# 高频周期HMM分析 - 每30分钟执行一次 (1分钟, 5分钟, 15分钟, 30分钟)
+*/30 * * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 hmm_high_frequency.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/hmm_high_frequency.log 2>&1
+
+# 中频周期HMM分析 - 每2小时执行一次 (1小时, 2小时, 4小时)
+0 */2 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 hmm_medium_frequency.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/hmm_medium_frequency.log 2>&1
+
+# 低频周期HMM分析 - 每天凌晨1点执行 (1天, 2天, 3天, 3个月)
+0 1 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 hmm_low_frequency.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/hmm_low_frequency.log 2>&1
+
+# 全周期HMM分析 - 每周日凌晨2点执行 (所有12个周期)
+0 2 * * 0 cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 hmm_full_cycle.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/hmm_full_cycle.log 2>&1
+
