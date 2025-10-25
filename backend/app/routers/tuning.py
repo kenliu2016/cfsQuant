@@ -19,9 +19,9 @@ async def create_tuning_handler(payload: dict = Body(...), request: Request = No
     strategy = payload.get("strategy")
     # 使用symbol字段
     symbol = payload.get("symbol") or payload.get("code")
-    # 同时支持新旧参数名，优先使用start_time和end_time（前端实际使用的参数名）
-    start = payload.get("start_time") or payload.get("start")
-    end = payload.get("end_time") or payload.get("end")
+    # 统一使用startTime和endTime参数名
+    startTime = payload.get("startTime") or payload.get("start_time") or payload.get("start")
+    endTime = payload.get("endTime") or payload.get("end_time") or payload.get("end")
     params = payload.get("params", {})
     timeframe = payload.get("timeframe", "1m")
     
@@ -30,13 +30,13 @@ async def create_tuning_handler(payload: dict = Body(...), request: Request = No
         raise HTTPException(status_code=400, detail="策略名称（strategy）不能为空")
     if not symbol:
         raise HTTPException(status_code=400, detail="交易对代码（symbol）不能为空")
-    if not start:
-        raise HTTPException(status_code=400, detail="开始时间（start/start_time）不能为空")
-    if not end:
-        raise HTTPException(status_code=400, detail="结束时间（end/end_time）不能为空")
+    if not startTime:
+        raise HTTPException(status_code=400, detail="开始时间（startTime/start_time/start）不能为空")
+    if not endTime:
+        raise HTTPException(status_code=400, detail="结束时间（endTime/end_time/end）不能为空")
     
     tenant_id = getattr(request.state, "tenant_id", None) if request else None
-    task_id = start_tuning_async(strategy, symbol, params, timeframe, start, end, tenant_id=tenant_id)
+    task_id = start_tuning_async(strategy, symbol, params, timeframe, startTime, endTime, tenant_id=tenant_id)
     return {"task_id": task_id}
 
 # 添加任务转发端点，用于primary实例将任务转发到secondary实例
@@ -50,20 +50,20 @@ async def forward_tuning_task(payload: dict = Body(...)):
     task_id = payload.get("task_id")
     strategy = payload.get("strategy")
     symbol = payload.get("symbol") or payload.get("code")
-    start_time = payload.get("start_time")
-    end_time = payload.get("end_time")
+    startTime = payload.get("startTime") or payload.get("start_time")
+    endTime = payload.get("endTime") or payload.get("end_time")
     params_grid = payload.get("params_grid", {})
     timeframe = payload.get("timeframe", "1m")
     total = payload.get("total", 1)
     tenant_id = payload.get("tenant_id")
     
     # 验证必需参数
-    if not all([task_id, strategy, symbol, start_time, end_time]):
+    if not all([task_id, strategy, symbol, startTime, endTime]):
         raise HTTPException(status_code=400, detail="缺少必需的任务参数")
     
     # 直接提交任务到Celery队列
     try:
-        run_parameter_tuning.delay(task_id, strategy, symbol, start_time, end_time, params_grid, timeframe, total, tenant_id)
+        run_parameter_tuning.delay(task_id, strategy, symbol, startTime, endTime, params_grid, timeframe, total, tenant_id)
         logger.info(f"成功接收并提交转发的调优任务: {task_id}")
         return {"success": True, "task_id": task_id}
     except Exception as e:

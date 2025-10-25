@@ -659,11 +659,11 @@ const ReportDetail: React.FC = () => {
                         </div>
                         <div>
                           <div style={{fontSize: '14px', color: '#666'}}>开始时间</div>
-                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.start_time) || '-'}</div>
+                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.startTime) || '-'}</div>
                         </div>
                         <div>
                           <div style={{fontSize: '14px', color: '#666'}}>结束时间</div>
-                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.end_time) || '-'}</div>
+                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.endTime) || '-'}</div>
                         </div>
                       </div>
                     </Card>

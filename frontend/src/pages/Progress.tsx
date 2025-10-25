@@ -30,7 +30,7 @@ interface TuningTask {
   status: string
   total: number
   finished: number
-  start_time?: string | null
+  startTime?: string | null
   created_at: string
   error?: string | null
   symbol?: string  // 新增：标的代码
@@ -88,7 +88,7 @@ export default function ProgressPage() {
           status: response.data.status || 'unknown',
           total: typeof response.data.total === 'number' ? response.data.total : 0,
           finished: typeof response.data.finished === 'number' ? response.data.finished : 0,
-          start_time: response.data.start_time || null,
+          startTime: response.data.startTime || null,
           timeout: response.data.timeout || null,
           error: response.data.error || null,
           runs: Array.isArray(response.data.runs) ? response.data.runs : [],

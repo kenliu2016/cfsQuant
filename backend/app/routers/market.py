@@ -9,7 +9,7 @@ from common.logger import LoggerFactory
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("routers.market")
 
-from ..services.market_service import get_candles, get_daily_candles, get_intraday, refresh_market_data_cache, get_batch_candles, get_market_exchanges, get_market_codes, market_data_service, get_latest_candles
+from ..services.market_service import get_candles, get_latest_candles, refresh_market_data_cache, get_market_exchanges, get_market_codes, market_data_service
 from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
 from common.db import fetch_df, execute
 from datetime import datetime, timedelta
@@ -190,22 +190,22 @@ def parse_datetime(dt_str, default=None):
     return datetime.now()
 
 @router.get("/candles")
-def candles(symbol: str = Query(...), start: str = Query(None), end: str = Query(None), timeframe: str = Query("1m"), 
+def candles(symbol: str = Query(...), startTime: str = Query(None), endTime: str = Query(None), timeframe: str = Query("1m"), 
                  page: int = Query(None, ge=1, description="页码，从1开始"), 
                  page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条"),
                  limit: int = Query(None, ge=1, le=70000, description="查询最近的记录条数，最大70000条")):
-    logger.info(f"接收到candles请求: symbol={symbol}, start={start}, end={end}, timeframe={timeframe}, page={page}, page_size={page_size}, limit={limit}")
+    logger.info(f"接收到candles请求: symbol={symbol}, startTime={startTime}, endTime={endTime}, timeframe={timeframe}, page={page}, page_size={page_size}, limit={limit}")
     
     # 处理查询逻辑：有时间范围按时间范围查询，没有时间范围按limit查询最近记录
-    if start and end:
+    if startTime and endTime:
         # 有时间范围时，按时间范围查询
         logger.info(f"有时间范围参数，按时间范围查询")
         # 将字符串类型的日期时间转换为datetime对象
         try:
-            start_dt = parse_datetime(start)
-            end_dt = parse_datetime(end, datetime.now())
+            start_dt = parse_datetime(startTime)
+            end_dt = parse_datetime(endTime, datetime.now())
         except ValueError:
-            logger.error(f"日期时间格式错误: start={start}, end={end}")
+            logger.error(f"日期时间格式错误: startTime={startTime}, endTime={endTime}")
             raise HTTPException(status_code=400, detail="日期时间格式错误，请使用YYYY-MM-DD HH:MM:SS或YYYY-MM-DDTHH:MM:SS格式")
         
         result = get_daily_candles(symbol, start_dt, end_dt, timeframe, page, page_size)
@@ -268,147 +268,6 @@ def candles(symbol: str = Query(...), start: str = Query(None), end: str = Query
         
         logger.info(f"返回非元组candles响应: rows={len(response['rows'])}")
         return response
-
-@router.get("/daily")
-def daily(symbol: str = Query(...), start: str = Query(None), end: str = Query(None), timeframe: str = Query("1D"),
-               page: int = Query(None, ge=1, description="页码，从1开始"),
-               page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    logger.info(f"接收到daily请求: symbol={symbol}, start={start}, end={end}, timeframe={timeframe}, page={page}, page_size={page_size}")
-    
-    # 根据timeframe参数设置默认的查询时间范围
-    now = datetime.now()
-    today = datetime(now.year, now.month, now.day)
-    
-    if not start and not end:
-        logger.info(f"未提供start和end参数，使用默认时间范围")
-        if timeframe == "1D":
-            # 1D: 默认查询最近2个月的数据
-            start_dt = today - timedelta(days=60)
-            end_dt = now
-        elif timeframe == "1W":
-            # 1W: 默认查询最近8个月的的数据
-            start_dt = today - timedelta(days=240)
-            end_dt = now
-        elif timeframe == "1M":
-            # 1M: 默认查询最近3年的数据
-            start_dt = today - timedelta(days=1095)
-            end_dt = now
-        else:
-            # 默认查询最近1个月的数据
-            start_dt = today - timedelta(days=30)
-            end_dt = now
-    else:
-        # 将字符串类型的日期时间转换为datetime对象
-        try:
-            start_dt = parse_datetime(start)
-            end_dt = parse_datetime(end, datetime.now())
-        except ValueError:
-            logger.error(f"日期时间格式错误: start={start}, end={end}")
-            raise HTTPException(status_code=400, detail="日期时间格式错误，请使用YYYY-MM-DD HH:MM:SS或YYYY-MM-DDTHH:MM:SS格式")
-        
-    logger.info(f"查询参数: symbol={symbol}, start_dt={start_dt}, end_dt={end_dt}, timeframe={timeframe}")
-    result = get_daily_candles(symbol, start_dt, end_dt, timeframe, page, page_size)
-    
-    # 处理分页数据
-    if isinstance(result, tuple) and len(result) == 2:
-        df, total_count = result
-        context = f"daily - symbol={symbol}, timeframe={timeframe}"
-        processed_df = process_market_data(df, context)
-        
-        response = {
-            "rows": processed_df.to_dict(orient="records"),
-            "total_count": total_count,
-            "page": page,
-            "page_size": page_size,
-            "has_more": page * page_size < total_count
-        }
-        
-        logger.info(f"返回daily响应: rows={len(response['rows'])}, total_count={total_count}")
-        return response
-    else:
-        # 处理非分页数据
-        df = result
-        context = f"daily - symbol={symbol}, timeframe={timeframe}"
-        processed_df = process_market_data(df, context)
-        
-        response = {"rows": processed_df.to_dict(orient="records")}
-        logger.info(f"返回非分页daily响应: rows={len(response['rows'])}")
-        return response
-
-@router.get("/intraday")
-def intraday(symbol: str = Query(...), start: str = Query(...), end: str = Query(...),
-                  page: int = Query(None, ge=1, description="页码，从1开始"),
-                  page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条")):
-    logger.info(f"接收到intraday请求: symbol={symbol}, start={start}, end={end}, page={page}, page_size={page_size}")
-    
-    # 将字符串类型的日期时间转换为datetime对象
-    try:
-        start_dt = parse_datetime(start)
-        end_dt = parse_datetime(end)
-    except ValueError:
-        logger.error(f"日期时间格式错误: start={start}, end={end}")
-        raise HTTPException(status_code=400, detail="日期时间格式错误，请使用YYYY-MM-DD HH:MM:SS或YYYY-MM-DDTHH:MM:SS格式")
-
-    logger.info(f"查询参数: symbol={symbol}, start_dt={start_dt}, end_dt={end_dt}")
-    result = get_intraday(symbol, start_dt, end_dt, page, page_size)
-
-    # 处理分页数据
-    if isinstance(result, tuple) and len(result) == 2:
-        df, total_count = result
-        context = f"intraday - symbol={symbol}"
-        processed_df = process_market_data(df, context)
-        
-        response = {
-            "rows": processed_df.to_dict(orient="records"),
-            "total_count": total_count,
-            "page": page,
-            "page_size": page_size,
-            "has_more": page * page_size < total_count
-        }
-        
-        logger.info(f"返回intraday响应: rows={len(response['rows'])}, total_count={total_count}")
-        return response
-    else:
-        # 处理非分页数据
-        df = result
-        context = f"intraday - symbol={symbol}"
-        processed_df = process_market_data(df, context)
-        
-        response = {"rows": processed_df.to_dict(orient="records")}
-        logger.info(f"返回非分页intraday响应: rows={len(response['rows'])}")
-        return response
-
-@router.get("/batch-candles")
-def batch_candles(symbols: str = Query(..., description="交易对代码列表，用逗号分隔"),
-                  timeframe: str = Query("1m", description="时间间隔"),
-                  limit: int = Query(2, ge=1, description="每个股票返回的bar数量，默认返回最近2个bar的数据"),
-                  timestamp: str = Query(None, description="时间戳，用于缓存优化，精确到分钟")):
-    """
-    批量获取多个交易对代码的最新K线数据
-    """
-    logger.info(f"接收到batch-candles请求: symbols={symbols}, timeframe={timeframe}, limit={limit}, timestamp={timestamp}")
-    
-    # 将逗号分隔的字符串转换为列表
-    symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    logger.info(f"解析后的交易对代码列表: {symbol_list}")
-    
-    # 调用服务层的批量查询函数，传递limit参数和timestamp参数
-    df = get_batch_candles(symbol_list, timeframe, limit, timestamp)
-    
-    # 处理结果
-    context = f"batch-candles - symbols={symbols}, timeframe={timeframe}"
-    processed_df = process_market_data(df, context)
-    
-    # 将结果转换为字典，键为交易对代码，值为数据列表（当有多个bar时）
-    result_dict = {}
-    if not processed_df.empty and 'code' in processed_df.columns:
-        # 按交易对代码分组
-        for symbol, group in processed_df.groupby('code'):
-            # 转换为字典列表
-            result_dict[symbol] = group.to_dict(orient='records')
-    
-    logger.info(f"返回batch-candles响应: 包含{len(result_dict)}个交易对代码的数据")
-    return result_dict
 
 @router.post("/refresh-cache")
 def refresh_market_cache(symbol: str = Query(None, description="可选的交易对代码，不提供则刷新所有缓存")):
@@ -774,18 +633,18 @@ def batch_update_codes(batch_data: dict, request: Request = None):
 def delete_candles_cache(symbol: str = Query(..., description="市场代码，如BTC/USDT"), 
                          timeframe: str = Query("1m", description="时间间隔，如1m, 15m, 1h, 1d"),
                          limit: int = Query(None, ge=1, description="查询的记录条数，如果为None则匹配所有limit值"),
-                         start: str = Query(None, description="开始时间，如果为None则不按时间范围清除"),
-                         end: str = Query(None, description="结束时间，如果为None则不按时间范围清除")):
+                         startTime: str = Query(None, description="开始时间，如果为None则不按时间范围清除"),
+                         endTime: str = Query(None, description="结束时间，如果为None则不按时间范围清除")):
     """
     清除特定K线查询的缓存
     
     支持清除基于时间范围的查询缓存或基于limit的查询缓存
     如果同时提供了时间范围和limit，则优先按时间范围清除
     """
-    logger.info(f"接收到清除K线缓存请求: symbol={symbol}, timeframe={timeframe}, limit={limit}, start={start}, end={end}")
+    logger.info(f"接收到清除K线缓存请求: symbol={symbol}, timeframe={timeframe}, limit={limit}, startTime={startTime}, endTime={endTime}")
     
     # 调用清除缓存的服务函数
-    success = clear_candles_cache(symbol, timeframe, limit, start, end)
+    success = clear_candles_cache(symbol, timeframe, limit, startTime, endTime)
     
     if success:
         logger.info(f"成功清除K线缓存: symbol={symbol}, timeframe={timeframe}")

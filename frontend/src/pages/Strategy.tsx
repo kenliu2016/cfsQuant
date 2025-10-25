@@ -270,11 +270,11 @@ export default function StrategyPage(){
     try {
       setIsBacktesting(true)
       const v = await form.validateFields()
-      // 将code, start, end, interval封装成Dict类型的params
+      // 将symbol, startTime, endTime, timeframe封装成Dict类型的params
       const params = {
         symbol: v.symbol,
-        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
-        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
+        startTime: v.range[0].toISOString(),
+        endTime: v.range[1].toISOString(),
         timeframe: v.timeframe // 使用用户选择的时间间隔
       }
       // 最终payload只提交封装后的params和strategy

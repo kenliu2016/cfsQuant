@@ -938,9 +938,9 @@ def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
     return decorator
 
 # 行情数据特定的缓存键生成函数
-def get_market_data_key(symbol: str, start: str, end: str, timeframe: str = '1m') -> str:
+def get_market_data_key(symbol: str, startTime: str, endTime: str, timeframe: str = '1m') -> str:
     """生成行情数据的缓存键"""
-    return f"market:{symbol}:{timeframe}:{start}:{end}"
+    return f"market:{symbol}:{timeframe}:{startTime}:{endTime}"
 
 # 清除特定代码的行情数据缓存
 def clear_market_data_cache(symbol: str = None) -> None:
@@ -951,15 +951,15 @@ def clear_market_data_cache(symbol: str = None) -> None:
         CacheService.clear("market:*")
 
 # 批量设置行情数据缓存
-def set_market_data_cache(symbol: str, start: str, end: str, data: Any, timeframe: str = '1m', expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
+def set_market_data_cache(symbol: str, startTime: str, endTime: str, data: Any, timeframe: str = '1m', expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
     """设置行情数据缓存"""
-    key = get_market_data_key(symbol, start, end, timeframe)
+    key = get_market_data_key(symbol, startTime, endTime, timeframe)
     CacheService.set(key, data, expire_time)
 
 # 获取行情数据缓存
-def get_market_data_cache(symbol: str, start: str, end: str, timeframe: str = '1m') -> Optional[Any]:
+def get_market_data_cache(symbol: str, startTime: str, endTime: str, timeframe: str = '1m') -> Optional[Any]:
     """获取行情数据缓存"""
-    key = get_market_data_key(symbol, start, end, timeframe)
+    key = get_market_data_key(symbol, startTime, endTime, timeframe)
     return CacheService.get(key)
 
 # 异步版本的缓存装饰器

@@ -14,7 +14,7 @@ class BacktestRequest(BaseModel):
     strategy: str
     params: Dict[str, Any] = Field(
         ..., 
-        example={"symbol": "BTCUSDT", "start": "2023-01-01", "end": "2023-01-02", "timeframe": "1m"}
+        example={"symbol": "BTCUSDT", "startTime": "2023-01-01", "endTime": "2023-01-02", "timeframe": "1m"}
     )
 
     @validator('params')
@@ -23,22 +23,22 @@ class BacktestRequest(BaseModel):
         if 'symbol' not in v:
             raise ValueError(f"Missing required field in params: 'symbol' is required")
         
-        # 检查时间范围字段，支持'start'/'end'和'start_time'/'end_time'
-        has_valid_start = 'start' in v or 'start_time' in v
-        has_valid_end = 'end' in v or 'end_time' in v
+        # 检查时间范围字段，支持'startTime'/'endTime'和'start_time'/'end_time'
+        has_valid_start = 'startTime' in v or 'start_time' in v
+        has_valid_end = 'endTime' in v or 'end_time' in v
         
         if not (has_valid_start and has_valid_end):
-            raise ValueError(f"Missing required field in params: either 'start'/'end' or 'start_time'/'end_time' is required")
+            raise ValueError(f"Missing required field in params: either 'startTime'/'endTime' or 'start_time'/'end_time' is required")
         
         # 检查timeframe字段
         if 'timeframe' not in v:
             raise ValueError(f"Missing required field in params: timeframe")
         
-        # 如果只有start_time/end_time，将其复制到start/end，确保后续代码能正常工作
-        if 'start_time' in v and 'start' not in v:
-            v['start'] = v['start_time']
-        if 'end_time' in v and 'end' not in v:
-            v['end'] = v['end_time']
+        # 如果只有start_time/end_time，将其复制到startTime/endTime，确保后续代码能正常工作
+        if 'start_time' in v and 'startTime' not in v:
+            v['startTime'] = v['start_time']
+        if 'end_time' in v and 'endTime' not in v:
+            v['endTime'] = v['end_time']
             
         return v
 class BacktestSignal(BaseModel):

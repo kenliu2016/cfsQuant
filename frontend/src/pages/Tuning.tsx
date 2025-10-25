@@ -180,8 +180,8 @@ export default function Tuning() {
         params: paramsGrid,
         params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
         symbol: v.symbol, // 使用symbol字段提交
-        start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
-        end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), 
+        startTime: v.range[0].toISOString(), 
+        endTime: v.range[1].toISOString(), 
         timeframe: v.timeframe
       };
       

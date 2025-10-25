@@ -279,6 +279,7 @@ def update_market_codes_active_status():
                 SET active = true, updated_at = now()
                 FROM market_crypto_listings mcl
                 WHERE mc.basecurrency = mcl.symbol
+                AND mc.quotecurrency = 'USDT'
                 AND mcl.data_timestamp >= NOW() - INTERVAL '24 hours'
             """)
             

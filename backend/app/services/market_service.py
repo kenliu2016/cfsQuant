@@ -59,59 +59,7 @@ class DateTimeParser:
         
         return datetime.now()
 
-class KlineAggregator:
-    """K线数据聚合优化器"""
-    
-    @staticmethod
-    def aggregate_kline_data(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-        """优化的K线数据聚合"""
-        if df.empty:
-            return df
-            
-        required_columns = ['datetime', 'code', 'open', 'high', 'low', 'close', 'volume']
-        if not all(col in df.columns for col in required_columns):
-            raise ValueError(f"DataFrame必须包含以下列: {required_columns}")
-        
-        # 确保datetime列是datetime类型
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        
-        # 优化：使用numpy进行聚合计算
-        def aggregate_group(group):
-            # 添加空组检查，防止KeyError和IndexError
-            if group.empty:
-                return pd.Series({
-                    'open': None,
-                    'high': None,
-                    'low': None,
-                    'close': None,
-                    'volume': 0
-                })
-            return pd.Series({
-                'open': group['open'].iloc[0],
-                'high': group['high'].max(),
-                'low': group['low'].min(),
-                'close': group['close'].iloc[-1],
-                'volume': group['volume'].sum()
-            })
-        
-        # 设置resample规则
-        freq = timeframe.lower().replace('m', 'min').replace('M', 'ME')
-        
-        # 使用groupby和transform进行向量化操作
-        result_dfs = []
-        for symbol, group in df.groupby('symbol'):
-            # 确保group不为空再进行操作
-            if not group.empty:
-                group = group.set_index('datetime')
-                resampled = group.resample(freq).apply(aggregate_group).dropna()
-                if not resampled.empty:
-                    resampled['symbol'] = symbol
-                    result_dfs.append(resampled.reset_index())
-            
-        return pd.concat(result_dfs, ignore_index=True) if result_dfs else pd.DataFrame(columns=required_columns)
 
-# 替换原有的aggregate_kline_data函数
-aggregate_kline_data = KlineAggregator.aggregate_kline_data
 
 class MarketDataService:
     """市场数据服务类"""
@@ -120,7 +68,7 @@ class MarketDataService:
         self.datetime_parser = DateTimeParser()
         self.logger = logger
         
-    def get_market_exchanges(self, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
+    def get_market_exchanges(self, active: bool = True) -> pd.DataFrame:
         """
         获取所有可用的交易所列表
         
@@ -131,7 +79,6 @@ class MarketDataService:
             交易所列表的DataFrame
         """
         try:
-            tenant = tenant_id or get_current_tenant()
             sql = """
             SELECT DISTINCT exchange FROM market_codes
             WHERE 1=1
@@ -139,18 +86,17 @@ class MarketDataService:
 
             if active:
                 sql += " AND active = TRUE"
-            sql += " AND tenant_id = :tenant_id"
 
             sql += " ORDER BY exchange"
 
-            df = fetch_df(sql, tenant_id=tenant)
+            df = fetch_df(sql)
             self.logger.info(f"获取交易所列表成功，共{len(df)}条记录")
             return df
         except Exception as e:
             self.logger.error(f"获取交易所列表失败: {e}")
             return pd.DataFrame(columns=['exchange'])
             
-    def get_market_codes(self, exchange: str = None, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
+    def get_market_codes(self, exchange: str = None, active: bool = True) -> pd.DataFrame:
         """
         获取市场代码列表，可以按交易所过滤
         
@@ -162,15 +108,12 @@ class MarketDataService:
             市场代码列表的DataFrame，包含symbol, exchange, active等字段
         """
         try:
-            tenant = tenant_id or get_current_tenant()
             sql = """
             SELECT symbol, exchange, active FROM market_codes
             WHERE 1=1
             """
 
             params = {}
-            params['tenant_id'] = tenant
-            sql += " AND tenant_id = :tenant_id"
 
             if exchange:
                 sql += " AND exchange = :exchange"
@@ -189,14 +132,14 @@ class MarketDataService:
             return pd.DataFrame(columns=['symbol', 'exchange', 'active'])
         
         
-    def _prepare_query_params(self, start: Union[str, datetime], 
-                            end: Union[str, datetime]) -> Tuple[datetime, datetime]:
+    def _prepare_query_params(self, startTime: Union[str, datetime], 
+                            endTime: Union[str, datetime]) -> Tuple[datetime, datetime]:
         """准备查询参数"""
-        start_dt = self.datetime_parser.parse_datetime(start)
-        end_dt = self.datetime_parser.parse_datetime(end)
+        start_dt = self.datetime_parser.parse_datetime(startTime)
+        end_dt = self.datetime_parser.parse_datetime(endTime)
         return start_dt, end_dt
     
-    def get_candles(self, symbol: str, start: str, end: str, 
+    def get_candles(self, symbol: str, startTime: str, endTime: str, 
                     timeframe: str = "1m", page: Optional[int] = None, 
                     page_size: Optional[int] = None, exchange: str = "binance") -> Union[Tuple[pd.DataFrame, Dict], 
                                                             Tuple[pd.DataFrame, int, Dict]]:
@@ -207,11 +150,11 @@ class MarketDataService:
         """
         try:
             # 参数验证和准备
-            if not symbol or not start or not end:
-                query_params = {"symbol": symbol, "start": start, "end": end, "timeframe": timeframe, "exchange": exchange}
+            if not symbol or not startTime or not endTime:
+                query_params = {"symbol": symbol, "startTime": startTime, "endTime": endTime, "timeframe": timeframe, "exchange": exchange}
                 return (pd.DataFrame(), query_params) if page is None else (pd.DataFrame(), 0, query_params)
             
-            start_dt, end_dt = self._prepare_query_params(start, end)
+            start_dt, end_dt = self._prepare_query_params(startTime, endTime)
             
             # 根据timeframe确定对应的表或视图名
             timeframe_mapping = {
@@ -238,24 +181,24 @@ class MarketDataService:
             sql = f"""
             SELECT {time_field} as datetime, symbol, open, high, low, close, volume
             FROM {table_name}
-            WHERE symbol = :symbol AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
+            WHERE symbol = :symbol AND exchange = :exchange AND {time_field} BETWEEN :startTime AND :endTime
             ORDER BY {time_field}
             """
             
             # 不使用分页时
             if page is None or page_size is None:
                 try:
-                    df = fetch_df(sql, symbol=symbol, exchange=exchange, start=start_dt, end=end_dt)
+                    df = fetch_df(sql, symbol=symbol, exchange=exchange, startTime=start_dt, endTime=end_dt)
                     
                     # 不再需要代码层面的聚合，直接返回数据
                     # 创建查询参数dict
-                    query_params = {"symbol": symbol, "start": start, "end": end, "timeframe": timeframe, "exchange": exchange}
+                    query_params = {"symbol": symbol, "startTime": startTime, "endTime": endTime, "timeframe": timeframe, "exchange": exchange}
                     return df, query_params
                 except Exception as e:
                     # 其他异常处理
                     self.logger.error(f"获取K线数据失败: {str(e)}", exc_info=True)
                     # 创建查询参数dict
-                    query_params = {"symbol": symbol, "start": start, "end": end, "timeframe": timeframe, "exchange": exchange}
+                    query_params = {"symbol": symbol, "startTime": startTime, "endTime": endTime, "timeframe": timeframe, "exchange": exchange}
                     return (pd.DataFrame(), query_params) if page is None else (pd.DataFrame(), 0, query_params)
             
             # 使用分页时
@@ -269,294 +212,29 @@ class MarketDataService:
             count_sql = f"""
             SELECT COUNT(*) as count
             FROM {table_name}
-            WHERE symbol = :symbol AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
+            WHERE symbol = :symbol AND exchange = :exchange AND {time_field} BETWEEN :startTime AND :endTime
             """
             
             # 获取分页数据的SQL
             paginated_sql = sql + " LIMIT :limit OFFSET :offset"
             
             # 执行查询
-            df = fetch_df(paginated_sql, symbol=symbol, exchange=exchange, start=start_dt, end=end_dt, limit=page_size, offset=offset)
-            count_df = fetch_df(count_sql, symbol=symbol, exchange=exchange, start=start_dt, end=end_dt)
+            df = fetch_df(paginated_sql, symbol=symbol, exchange=exchange, startTime=start_dt, endTime=end_dt, limit=page_size, offset=offset)
+            count_df = fetch_df(count_sql, symbol=symbol, exchange=exchange, startTime=start_dt, endTime=end_dt)
             total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
             
             # 不再需要代码层面的聚合，直接返回数据
             # 创建查询参数dict
-            query_params = {"symbol": symbol, "start": start, "end": end, "timeframe": timeframe, "exchange": exchange}
+            query_params = {"symbol": symbol, "startTime": startTime, "endTime": endTime, "timeframe": timeframe, "exchange": exchange}
             print("使用分页查询参数:", query_params)
 
             return df, total_count, query_params
         except Exception as e:
             self.logger.error(f"获取分页K线数据失败: {str(e)}", exc_info=True)
             # 创建查询参数dict
-            query_params = {"symbol": symbol, "start": start, "end": end, "timeframe": timeframe, "exchange": exchange}
+            query_params = {"symbol": symbol, "startTime": startTime, "endTime": endTime, "timeframe": timeframe, "exchange": exchange}
             return pd.DataFrame(), 0, query_params
 
-
-@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_daily_candles(symbol: str, start: str, end: str, timeframe: str = "1D", page: int = None, page_size: int = None, exchange: str = "binance"):
-    """
-    获取日线数据，支持不同周期聚合，使用缓存装饰器优化性能
-    缓存过期时间：5分钟
-    
-    Args:
-        symbol: 股票代码
-        start: 开始时间
-        end: 结束时间
-        timeframe: 时间间隔，支持1D(日),1W(周),1M(月)
-        page: 页码，从1开始，不提供则返回全部数据
-        page_size: 每页数据量，不提供则返回全部数据
-        exchange: 交易所，默认值为binance
-    
-    Returns:
-        分页数据时返回元组 (数据, 总条数)，否则返回数据
-    """
-    # 参数验证
-    if not symbol:
-        return pd.DataFrame()
-    
-    # 转换日期时间参数
-    try:
-        if isinstance(start, str):
-            if ' ' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-            else:
-                start_dt = datetime.strptime(start, "%Y-%m-%d")
-        elif isinstance(start, datetime):
-            start_dt = start
-        else:
-            # 如果start不是字符串也不是datetime类型，尝试转换
-            try:
-                start_dt = datetime.fromtimestamp(int(start))
-            except (ValueError, TypeError):
-                start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    except ValueError:
-        start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    
-    try:
-        if isinstance(end, str):
-            if ' ' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
-            else:
-                end_dt = datetime.strptime(end, "%Y-%m-%d")
-        elif isinstance(end, datetime):
-            end_dt = end
-        else:
-            # 如果end不是字符串也不是datetime类型，尝试转换
-            try:
-                end_dt = datetime.fromtimestamp(int(end))
-            except (ValueError, TypeError):
-                end_dt = datetime.now()
-    except ValueError:
-        end_dt = datetime.now()
-    
-    # 根据timeframe选择对应的表名和时间字段
-    timeframe_mapping = {
-        '1d': ('market_ohlcv_1d', 'bucket'),
-        '2d': ('market_ohlcv_2d', 'bucket'),
-        '3d': ('market_ohlcv_3d', 'bucket')
-    }
-    
-    table_name, time_field = timeframe_mapping.get(timeframe, ('market_ohlcv_1d', 'bucket'))
-    
-    # 获取日线数据
-    sql = f"""
-    SELECT 
-        {time_field} as datetime,
-        symbol as code,
-        open,
-        high,
-        low,
-        close,
-        volume
-    FROM {table_name}
-    WHERE symbol = :symbol AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
-    ORDER BY {time_field}
-    """
-    
-    # 不使用分页时
-    if page is None or page_size is None:
-        try:
-            df = fetch_df(sql, symbol=symbol, exchange=exchange, start=start_dt, end=end_dt)
-            return df
-        except Exception as e:
-            logger.error(f"获取日线数据失败: {e}")
-            return pd.DataFrame()
-    
-    # 使用分页时
-    offset = (page - 1) * page_size
-    
-    # 获取总条数的SQL
-    count_sql = f"""
-    SELECT COUNT(*) as count
-    FROM {table_name}
-    WHERE symbol = :symbol AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
-    """
-    
-    # 获取分页数据的SQL
-    paginated_sql = sql + " LIMIT :limit OFFSET :offset"
-    
-    # 执行查询
-    try:
-        df = fetch_df(paginated_sql, symbol=symbol, exchange=exchange, start=start_dt, end=end_dt, limit=page_size, offset=offset)
-        count_df = fetch_df(count_sql, symbol=symbol, exchange=exchange, start=start_dt, end=end_dt)
-        total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
-        
-        return df, total_count
-    except Exception as e:
-        logger.error(f"获取分页日线数据失败: {e}")
-        return pd.DataFrame(), 0
-
-@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_intraday(symbol: str, start: str, end: str, page: int = None, page_size: int = None):
-    """
-    获取分时数据，使用缓存装饰器优化性能
-    缓存过期时间：5分钟
-    
-    Args:
-        symbol: 股票代码
-        start: 开始时间
-        end: 结束时间
-        page: 页码，从1开始，不提供则返回全部数据
-        page_size: 每页数据量，不提供则返回全部数据
-    
-    Returns:
-        分页数据时返回元组 (数据, 总条数)，否则返回数据
-    """
-    # minute bars directly
-    return get_candles(symbol, start, end, '1m', page, page_size)
-
-@cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_batch_candles(symbols: List[str], start: str, end: str, timeframe: str = "1m", page: int = None, page_size: int = None, exchange: str = "binance"):
-    """
-    批量获取K线数据，支持分页，使用缓存装饰器优化性能
-    缓存过期时间：5分钟
-    
-    Args:
-        symbols: 股票代码列表
-        start: 开始时间
-        end: 结束时间
-        timeframe: 时间间隔，支持1m,1h,1d
-        page: 页码，从1开始，不提供则返回全部数据
-        page_size: 每页数据量，不提供则返回全部数据
-        exchange: 交易所，默认值为binance
-    
-    Returns:
-        分页数据时返回元组 (数据, 总条数)，否则返回数据
-    """
-    # 参数验证
-    if not symbols:
-        return pd.DataFrame()
-    
-    # 转换日期时间参数
-    try:
-        if isinstance(start, str):
-            if ' ' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in start:
-                start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-            else:
-                start_dt = datetime.strptime(start, "%Y-%m-%d")
-        elif isinstance(start, datetime):
-            start_dt = start
-        else:
-            # 如果start不是字符串也不是datetime类型，尝试转换
-            try:
-                start_dt = datetime.fromtimestamp(int(start))
-            except (ValueError, TypeError):
-                start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    except ValueError:
-        start_dt = datetime.strptime("2020-01-01", "%Y-%m-%d")
-    
-    try:
-        if isinstance(end, str):
-            if ' ' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
-            elif 'T' in end:
-                end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%S")
-            else:
-                end_dt = datetime.strptime(end, "%Y-%m-%d")
-        elif isinstance(end, datetime):
-            end_dt = end
-        else:
-            # 如果end不是字符串也不是datetime类型，尝试转换
-            try:
-                end_dt = datetime.fromtimestamp(int(end))
-            except (ValueError, TypeError):
-                end_dt = datetime.now()
-    except ValueError:
-        end_dt = datetime.now()
-    
-    # 根据timeframe选择对应的表名和时间字段
-    timeframe_mapping = {
-        '1m': ('market_ohlcv_1m', 'datetime'),
-        '3m': ('market_ohlcv_3m', 'bucket'),
-        '5m': ('market_ohlcv_5m', 'bucket'),
-        '15m': ('market_ohlcv_15m', 'bucket'),
-        '30m': ('market_ohlcv_30m', 'bucket'),
-        '1h': ('market_ohlcv_1h', 'bucket'),
-        '2h': ('market_ohlcv_2h', 'bucket'),
-        '4h': ('market_ohlcv_4h', 'bucket'),
-        '1d': ('market_ohlcv_1d', 'bucket'),
-        '2d': ('market_ohlcv_2d', 'bucket'),
-        '3d': ('market_ohlcv_3d', 'bucket')
-    }
-    
-    table_name, time_field = timeframe_mapping.get(timeframe, ('market_ohlcv_1m', 'datetime'))
-    
-    # 不使用分页时
-    if page is None or page_size is None:
-        try:
-            # 构建SQL查询
-            sql = f"""
-            SELECT {time_field} as datetime, symbol as code, open, high, low, close, volume
-            FROM {table_name}
-            WHERE symbol IN :symbols AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
-            ORDER BY {time_field}
-            """
-            
-            df = fetch_df(sql, symbols=tuple(symbols), exchange=exchange, start=start_dt, end=end_dt)
-            return df
-        except Exception as e:
-            logger.error(f"批量获取K线数据失败: {e}")
-            return pd.DataFrame()
-    
-    # 使用分页时
-    offset = (page - 1) * page_size
-    
-    # 优化：限制最大页面大小，防止单次返回过多数据
-    if page_size > 1000:
-        page_size = 1000
-    
-    # 获取总条数的SQL
-    count_sql = f"""
-    SELECT COUNT(*) as count
-    FROM {table_name}
-    WHERE symbol IN :symbols AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
-    """
-    
-    # 获取分页数据的SQL
-    sql = f"""
-    SELECT {time_field} as datetime, symbol as code, open, high, low, close, volume
-    FROM {table_name}
-    WHERE symbol IN :symbols AND exchange = :exchange AND {time_field} BETWEEN :start AND :end
-    ORDER BY {time_field}
-    LIMIT :limit OFFSET :offset
-    """
-    
-    try:
-        df = fetch_df(sql, symbols=tuple(symbols), exchange=exchange, start=start_dt, end=end_dt, limit=page_size, offset=offset)
-        count_df = fetch_df(count_sql, symbols=tuple(symbols), exchange=exchange, start=start_dt, end=end_dt)
-        total_count = int(count_df['count'].iloc[0]) if not count_df.empty else 0
-        
-        return df, total_count
-    except Exception as e:
-        logger.error(f"批量获取分页K线数据失败: {e}")
-        return pd.DataFrame(), 0
 
 @cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
 def get_latest_candles(symbol: str, timeframe: str = "1m", limit: int = 2, exchange: str = "binance") -> Tuple[pd.DataFrame, Dict]:
@@ -646,168 +324,7 @@ def get_latest_candles(symbol: str, timeframe: str = "1m", limit: int = 2, excha
         query_params = {"symbol": symbol, "timeframe": timeframe, "limit": limit, "exchange": exchange}
         return pd.DataFrame(), query_params
 
-def _handle_special_intervals(df: pd.DataFrame, timeframe: str, symbols: list, limit: int = 1) -> pd.DataFrame:
-    """处理周线和月线的特殊聚合"""
-    if timeframe == "1W":
-        result = _handle_weekly_data_with_df(df.copy(), limit)
-        return result
-    elif timeframe == "1M":
-        result = _handle_monthly_data_with_df(df.copy(), limit)
-        return result
-    return df
 
-def _handle_weekly_data_with_df(df: pd.DataFrame, limit: int) -> pd.DataFrame:
-    """使用传入的日线数据处理周线聚合"""
-    if df.empty:
-        return pd.DataFrame()
-    
-    # 打印前几行数据进行调试
-    logger.debug(f"周线聚合前数据样例:\n{df.head()}")
-    logger.debug(f"周线聚合前数据类型:\n{df.dtypes}")
-    
-    # 确保datetime列是datetime类型
-    if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
-        try:
-            # 先检查是否是字符串类型
-            if pd.api.types.is_object_dtype(df['datetime']):
-                # 尝试多种格式解析
-                formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y/%m/%d %H:%M:%S', '%Y/%m/%d']
-                for fmt in formats:
-                    try:
-                        df['datetime'] = pd.to_datetime(df['datetime'], format=fmt, errors='coerce')
-                        if not df['datetime'].isna().all():
-                            logger.info(f"成功将datetime列转换为datetime类型，使用格式: {fmt}")
-                            break
-                    except:
-                        continue
-            else:
-                # 如果不是字符串，尝试直接转换
-                df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
-                logger.info(f"成功将datetime列转换为datetime类型")
-        except Exception as e:
-            logger.error(f"转换datetime列失败: {e}")
-    
-    # 保存symbol值
-    symbol_value = df['symbol'].iloc[0] if not df['symbol'].empty else None
-    logger.debug(f"保存的symbol值: {symbol_value}")
-    
-    # 创建ISO周列
-    try:
-        df['iso_week'] = df['datetime'].dt.strftime('%G-%V')
-        logger.debug(f"ISO周列创建成功")
-    except Exception as e:
-        logger.error(f"创建ISO周列失败: {e}")
-        # 如果失败，使用一个默认值
-        df['iso_week'] = '2025-01'
-    
-    # 按周分组并聚合
-    try:
-        weekly_df = df.groupby('iso_week').agg({
-            'datetime': 'max',  # 使用每周最后一天作为周线的时间戳
-            'open': 'first',    # 每周第一个开盘价
-            'high': 'max',      # 每周最高价
-            'low': 'min',       # 每周最低价
-            'close': 'last',    # 每周最后收盘价
-            'volume': 'sum'     # 每周总成交量
-        }).reset_index()
-        
-        # 添加code列
-        weekly_df['symbol'] = symbol_value
-        
-        # 按时间倒序排序并限制结果数量
-        weekly_df = weekly_df.sort_values('datetime', ascending=False).head(limit)
-        
-        # 重置索引
-        weekly_df = weekly_df.reset_index(drop=True)
-        
-        logger.info(f"周线聚合成功，结果行数: {len(weekly_df)}")
-        logger.debug(f"周线聚合结果样例:\n{weekly_df.head()}")
-    except Exception as e:
-        logger.error(f"周线聚合失败: {e}")
-        weekly_df = pd.DataFrame()
-    
-    # 记录查询结果
-    if not weekly_df.empty:
-        _log_query_results(weekly_df)
-    
-    return weekly_df
-
-def _handle_monthly_data_with_df(df: pd.DataFrame, limit: int) -> pd.DataFrame:
-    """使用传入的日线数据处理月线聚合"""
-    if df.empty:
-        logger.info("输入数据为空，返回空DataFrame")
-        return pd.DataFrame()
-    
-    # 打印前几行数据进行调试
-    logger.debug(f"月线聚合前数据样例:\n{df.head()}")
-    logger.debug(f"月线聚合前数据类型:\n{df.dtypes}")
-    
-    # 确保datetime列是datetime类型
-    if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
-        try:
-            # 先检查是否是字符串类型
-            if pd.api.types.is_object_dtype(df['datetime']):
-                # 尝试多种格式解析
-                formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y/%m/%d %H:%M:%S', '%Y/%m/%d']
-                for fmt in formats:
-                    try:
-                        df['datetime'] = pd.to_datetime(df['datetime'], format=fmt, errors='coerce')
-                        if not df['datetime'].isna().all():
-                            logger.info(f"成功将datetime列转换为datetime类型，使用格式: {fmt}")
-                            break
-                    except:
-                        continue
-            else:
-                # 如果不是字符串，尝试直接转换
-                df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
-                logger.info(f"成功将datetime列转换为datetime类型")
-        except Exception as e:
-            logger.error(f"转换datetime列失败: {e}")
-    
-    # 保存code值
-    symbol_value = df['symbol'].iloc[0] if not df['symbol'].empty else None
-    logger.debug(f"保存的symbol值: {symbol_value}")
-    
-    # 创建年月列
-    try:
-        df['year_month'] = df['datetime'].dt.strftime('%Y-%m')
-        logger.debug(f"年月列创建成功")
-    except Exception as e:
-        logger.error(f"创建年月列失败: {e}")
-        # 如果失败，使用一个默认值
-        df['year_month'] = '2025-01'
-    
-    # 按月分组并聚合
-    try:
-        monthly_df = df.groupby('year_month').agg({
-            'datetime': 'max',  # 使用每月最后一天作为月线的时间戳
-            'open': 'first',    # 每月第一个开盘价
-            'high': 'max',      # 每月最高价
-            'low': 'min',       # 每月最低价
-            'close': 'last',    # 每月最后收盘价
-            'volume': 'sum'     # 每月总成交量
-        }).reset_index()
-        
-        # 添加code列
-        monthly_df['symbol'] = symbol_value
-        
-        # 按时间倒序排序并限制结果数量
-        monthly_df = monthly_df.sort_values('datetime', ascending=False).head(limit)
-        
-        # 重置索引
-        monthly_df = monthly_df.reset_index(drop=True)
-        
-        logger.info(f"月线聚合成功，结果行数: {len(monthly_df)}")
-        logger.debug(f"月线聚合结果样例:\n{monthly_df.head()}")
-    except Exception as e:
-        logger.error(f"月线聚合失败: {e}")
-        monthly_df = pd.DataFrame()
-    
-    # 记录查询结果
-    if not monthly_df.empty:
-        _log_query_results(monthly_df)
-    
-    return monthly_df
 
 def _log_query_results(df: pd.DataFrame):
     """记录查询结果"""
@@ -870,7 +387,7 @@ def update_market_data_and_refresh_cache(data, table_name, symbol=None):
 market_data_service = MarketDataService()
 
 @cache_dataframe_result(expire_time=DEFAULT_EXPIRE_TIME)
-def get_candles(symbol: str, start: str, end: str, 
+def get_candles(symbol: str, startTime: str, endTime: str, 
                 timeframe: str = "1m", page: Optional[int] = None, 
                 page_size: Optional[int] = None) -> Union[Tuple[pd.DataFrame, Dict], 
                                                         Tuple[pd.DataFrame, int, Dict]]:
@@ -878,7 +395,7 @@ def get_candles(symbol: str, start: str, end: str,
     模块级别的K线数据获取函数
     调用MarketDataService类的get_candles方法
     """
-    return market_data_service.get_candles(symbol, start, end, timeframe, page, page_size)
+    return market_data_service.get_candles(symbol, startTime, endTime, timeframe, page, page_size)
 
 # 添加模块级别的市场代码相关函数
 @cache_dataframe_result(expire_time=LONG_EXPIRE_TIME)

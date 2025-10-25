@@ -888,7 +888,7 @@ class BacktestEngine:
         # 构建结果
         nav_series = pd.Series(nav_list, index=pd.Index(data["datetime"], dtype='datetime64[ns]'))
         
-        # 创建一个新的params字典，确保只包含start_time和end_time，不包含start和end
+        # 创建一个新的params字典，确保只包含startTime和endTime，不包含start和end
         clean_params = params.copy()
         if 'start' in clean_params:
             del clean_params['start']
@@ -896,7 +896,7 @@ class BacktestEngine:
             del clean_params['end']
 
         # 创建BacktestResult对象
-        # 确保start_time和end_time有合理的默认值，避免数据库timestamp字段插入空字符串
+        # 确保startTime和endTime有合理的默认值，避免数据库timestamp字段插入空字符串
         start_time_value = clean_params.get("start_time", "")
         end_time_value = clean_params.get("end_time", "")
         

@@ -60,8 +60,8 @@ def recent_runs(limit: int = 20, page: int = 1, symbol: str = None, strategy: st
         r.run_id, 
         r.strategy, 
         r.symbol, 
-        r.start_time, 
-        r.end_time, 
+        r.start_time as startTime, 
+        r.end_time as endTime, 
         r.initial_capital, 
         r.final_capital, 
         r.created_at,
@@ -142,7 +142,7 @@ def recent_runs(limit: int = 20, page: int = 1, symbol: str = None, strategy: st
     # 处理数据确保可JSON序列化
     if not df.empty:
         # 转换datetime类型为字符串
-        for col in ['start_time', 'end_time', 'created_at']:
+        for col in ['startTime', 'endTime', 'created_at']:
             if col in df.columns:
                 # 转换datetime64类型为字符串
                 if pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -217,7 +217,7 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optio
     # 获取基本回测信息，包含新增的paras字段和所有指标
     access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
     tenant = access['tenant']
-    df_run = fetch_df("""SELECT run_id, strategy, symbol, start_time, end_time, timeframe, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit, created_by
+    df_run = fetch_df("""SELECT run_id, strategy, symbol, start_time as startTime, end_time as endTime, timeframe, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit, created_by
                          FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
     
     # 日志记录查询结果
@@ -229,8 +229,8 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optio
             "run_id": run_id,
             "strategy": "未知策略",
             "symbol": "未知标的",
-            "start_time": "",
-            "end_time": "",
+            "startTime": "",
+            "endTime": "",
             "timeframe": "1m",
             "initial_capital": 0.0,
             "final_capital": 0.0,
@@ -322,7 +322,7 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optio
     run_info = df_run.iloc[0].to_dict()
     
     # 转换datetime类型为字符串
-    for key in ['start_time', 'end_time', 'created_at']:
+    for key in ['startTime', 'endTime', 'created_at']:
         if key in run_info and isinstance(run_info[key], datetime.datetime):
             run_info[key] = run_info[key].isoformat()
         elif key in run_info and run_info[key] is None:
@@ -352,7 +352,7 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optio
                 # 如果不是字典且不是字符串，转换为空字典
                 run_info['paras'] = {}
                 
-            # 清理时间参数，只保留start_time和end_time
+            # 清理时间参数，只保留startTime和endTime
             if 'start' in run_info['paras']:
                 del run_info['paras']['start']
             if 'end' in run_info['paras']:
@@ -611,21 +611,21 @@ def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = N
         # 获取回测运行的基本信息
         access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
         tenant = access['tenant']
-        df_run = fetch_df("""SELECT symbol, timeframe, start_time, end_time FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
+        df_run = fetch_df("""SELECT symbol, timeframe, start_time as startTime, end_time as endTime FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
         if not df_run.empty:
             run_data = df_run.iloc[0]
             symbol = run_data.get('symbol', '')
             timeframe = run_data.get('timeframe', '1m')
-            start_time = run_data.get('start_time', '')
-            end_time = run_data.get('end_time', '')
+            startTime = run_data.get('startTime', '')
+            endTime = run_data.get('endTime', '')
             
-            if code and start_time and end_time:
+            if symbol and startTime and endTime:
 
                 from .market_service import MarketDataService
                 market_service = MarketDataService()
                 
                 # 调用市场服务获取K线数据
-                df_candles, _ = market_service.get_candles(symbol, start_time, end_time, timeframe)
+                df_candles, _ = market_service.get_candles(symbol, startTime, endTime, timeframe)
                 
                 # 再次检查实际数据量
                 if not df_candles.empty and len(df_candles) > limit:

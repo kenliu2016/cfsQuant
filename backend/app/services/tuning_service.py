@@ -34,7 +34,7 @@ enable_memory_optimization = True  # 默认为开启内存优化
 
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
-def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, start_time: str, end_time: str, params_grid: Dict[str, list], timeframe: str = '1m', total: int = 1, tenant_id: str = 'public'):
+def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, startTime: str, endTime: str, params_grid: Dict[str, list], timeframe: str = '1m', total: int = 1, tenant_id: str = 'public'):
     """
     运行参数调优任务
     
@@ -43,8 +43,8 @@ def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, start_t
         task_id: 任务ID
         strategy: 策略名称
         symbol: 交易对代码
-        start_time: 开始时间
-        end_time: 结束时间
+        startTime: 开始时间
+        endTime: 结束时间
         params_grid: 参数网格
         timeframe: K线周期
         total: 总任务数
@@ -117,7 +117,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, start_t
         # 我们需要先实例化服务类
         from .market_service import MarketDataService
         market_service = MarketDataService()
-        candles_result = market_service.get_candles(symbol, start_time, end_time, timeframe)
+        candles_result = market_service.get_candles(symbol, startTime, endTime, timeframe)
         
         # 检查candles_result是否为空或None
         if candles_result is None:
@@ -169,11 +169,11 @@ def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, start_t
             try:
                 p = {k:v for k,v in zip(keys, vals)} if keys else {}
                 # 构建完整的参数对象，包含timeframe
-                # 使用正确的参数名：start_time和end_time，而不是start和end
+                # 使用正确的参数名：startTime和endTime，而不是start和end
                 full_params = {
                     'symbol': symbol,
-                    'start_time': start_time,
-                    'end_time': end_time,
+                    'startTime': startTime,
+                    'endTime': endTime,
                     'timeframe': timeframe,
                     **p
                 }
@@ -321,8 +321,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, start_t
         raise
 
 def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list], timeframe: str = '1m', 
-                      start: str = None, end: str = None, start_time: str = None, end_time: str = None,
-                      params_config: str = None, tenant_id: Optional[str] = None) -> str:
+                      startTime: str = None, endTime: str = None, params_config: str = None, tenant_id: Optional[str] = None) -> str:
     """
     异步启动参数调优任务
     
@@ -331,10 +330,8 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
         symbol: 交易对代码
         params_grid: 参数网格
         timeframe: K线周期
-        start: 开始时间（旧参数名，向后兼容）
-        end: 结束时间（旧参数名，向后兼容）
-        start_time: 开始时间（新参数名）
-        end_time: 结束时间（新参数名）
+        startTime: 开始时间
+        endTime: 结束时间
         params_config: 完整参数配置JSON字符串
         
     Returns:
@@ -343,14 +340,10 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
     task_id = str(uuid.uuid4())
     tenant = tenant_id or get_current_tenant()
     
-    # 处理参数名兼容性，优先使用新参数名
-    if start_time is None and start is not None:
-        start_time = start
-    if end_time is None and end is not None:
-        end_time = end
+
     
     # 确保开始时间和结束时间不为None
-    if start_time is None or end_time is None:
+    if startTime is None or endTime is None:
         raise ValueError("开始时间和结束时间不能为空")
     
     # 计算总任务数
@@ -390,8 +383,8 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
             # 存储交易对代码
             'code': symbol,
             'timeframe': timeframe,
-            'start_time': start_time,  # 保存开始时间
-            'end_time': end_time,      # 保存结束时间
+            'start_time': startTime,  # 保存开始时间
+            'end_time': endTime,      # 保存结束时间
             'params': params_json  # 保存参数网格的JSON字符串
         }
         task_df = pd.DataFrame([task_data])
@@ -405,7 +398,7 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
         logger.info(f"当前实例类型: {'secondary' if IS_SECONDARY_INSTANCE else 'primary'}")
         if IS_SECONDARY_INSTANCE:
             # 在第二套实例上，直接提交任务
-            run_parameter_tuning.delay(task_id, strategy, symbol, start_time, end_time, params_grid, timeframe, total, tenant)
+            run_parameter_tuning.delay(task_id, strategy, symbol, startTime, endTime, params_grid, timeframe, total, tenant)
             logger.info(f"在secondary实例上直接提交调优任务: {task_id}")
         else:
             # 在主实例上，需要将任务转发到第二套实例
@@ -425,8 +418,8 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
                         "task_id": task_id,
                         "strategy": strategy,
                         "symbol": symbol,
-                        "start_time": start_time,
-                        "end_time": end_time,
+                        "startTime": startTime,
+                        "endTime": endTime,
                         "params_grid": params_grid,
                         "timeframe": timeframe,
                         "total": total,
@@ -469,7 +462,7 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
             # 如果所有重试都失败，尝试在本地执行任务
             if not forwarded:
                 logger.warning(f"所有转发尝试都失败，在primary实例上执行调优任务: {task_id}")
-                run_parameter_tuning.delay(task_id, strategy, symbol, start_time, end_time, params_grid, timeframe, total, tenant)
+                run_parameter_tuning.delay(task_id, strategy, symbol, startTime, endTime, params_grid, timeframe, total, tenant)
     except Exception as e:
         # 如果提交失败，更新任务状态为错误
         logger.error(f"提交调优任务失败: {str(e)}")

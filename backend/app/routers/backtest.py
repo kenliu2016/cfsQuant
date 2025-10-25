@@ -11,13 +11,13 @@ async def backtest(req: BacktestRequest, request: Request):
     # 从params中获取所有需要的字段
     # 获取交易对代码
     symbol = req.params.get('symbol')
-    start = req.params['start']
-    end = req.params['end']
+    startTime = req.params['startTime']
+    endTime = req.params['endTime']
     timeframe = req.params['timeframe']
     # 打印完整的回测请求信息
-    # print(f"Backtest request: symbol={symbol}, start={start}, end={end}, timeframe={timeframe}, strategy={req.strategy}")
+    # print(f"Backtest request: symbol={symbol}, startTime={startTime}, endTime={endTime}, timeframe={timeframe}, strategy={req.strategy}")
     # 调用get_candles获取K线数据
-    candles_result = get_candles(symbol, start, end, timeframe)
+    candles_result = get_candles(symbol, startTime, endTime, timeframe)
     
     # 根据返回值类型确定如何获取DataFrame
     if isinstance(candles_result, tuple):
