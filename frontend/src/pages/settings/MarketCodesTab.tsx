@@ -37,7 +37,7 @@ const MarketCodesTab: React.FC = () => {
         params: {
           active: activeFilter === null ? undefined : activeFilter,
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined,
+          symbol: codeFilter || undefined, // 修复为symbol
           page: currentPage,
           page_size: pageSize,
           watch: watchFilter === null ? undefined : watchFilter,
@@ -123,7 +123,7 @@ const MarketCodesTab: React.FC = () => {
       params: {
         active: null, // 获取所有代码，包括非活跃的
         exchange: exchangeFilter || undefined,
-        code: codeFilter || undefined,
+        symbol: codeFilter || undefined, // 修复为symbol
         page: 1,
         page_size: size
       }
@@ -148,7 +148,7 @@ const MarketCodesTab: React.FC = () => {
     setCurrentCode(record);
     editForm.setFieldsValue({
       exchange: record.exchange,
-      symbol: record.symbol,
+      code: record.symbol, // 修复：表单字段名为code，后端数据字段为symbol
       active: record.active,
       watch: record.watch
     });
@@ -158,7 +158,14 @@ const MarketCodesTab: React.FC = () => {
   // 添加交易对
   const handleAdd = async (values: any) => {
     try {
-      await client.post('/api/market/market_codes', values);
+      // 将前端表单中的code字段转换为后端需要的symbol字段
+      const backendData = {
+        exchange: values.exchange,
+        symbol: values.code, // 前端表单使用code，后端需要symbol
+        active: values.active,
+        watch: values.watch
+      };
+      await client.post('/api/market/market_codes', backendData);
       message.success('添加成功');
       setIsAddModalVisible(false);
       setLoading(true);
@@ -166,7 +173,7 @@ const MarketCodesTab: React.FC = () => {
         params: {
           active: null, // 获取所有代码，包括非活跃的
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined,
+          symbol: codeFilter || undefined, // 修复为symbol
           page: currentPage,
           page_size: pageSize
         }
@@ -188,7 +195,12 @@ const MarketCodesTab: React.FC = () => {
       // 使用查询参数而不是路径参数，避免URL路径中的斜杠问题
       const url = `/api/market/market_codes`;
       console.log('Sending PUT request to:', url, 'with params:', { exchange: currentCode.exchange, symbol: currentCode.symbol });
-      const response = await client.put(url, values, {
+      // 将前端表单中的code字段转换为后端需要的symbol字段
+      const backendData = {
+        active: values.active,
+        watch: values.watch
+      };
+      const response = await client.put(url, backendData, {
         params: { exchange: currentCode.exchange, symbol: currentCode.symbol }
       });
       console.log('Update response:', response);
@@ -199,7 +211,7 @@ const MarketCodesTab: React.FC = () => {
         params: {
           active: null, // 获取所有代码，包括非活跃的
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined,
+          symbol: codeFilter || undefined, // 修复为symbol
           page: currentPage,
           page_size: pageSize
         }
@@ -231,7 +243,7 @@ const MarketCodesTab: React.FC = () => {
         params: {
           active: null, // 获取所有代码，包括非活跃的
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined,
+          symbol: codeFilter || undefined, // 修复为symbol
           page: currentPage,
           page_size: pageSize
         }
@@ -265,7 +277,7 @@ const MarketCodesTab: React.FC = () => {
         params: {
           active: null, // 获取所有代码，包括非活跃的
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined,
+          symbol: codeFilter || undefined, // 修复为symbol
           page: currentPage,
           page_size: pageSize
         }
@@ -298,7 +310,7 @@ const MarketCodesTab: React.FC = () => {
         params: {
           active: null, // 获取所有代码，包括非活跃的
           exchange: exchangeFilter || undefined,
-          code: codeFilter || undefined,
+          symbol: codeFilter || undefined, // 修复为symbol
           page: currentPage,
           page_size: pageSize
         }
@@ -322,8 +334,8 @@ const MarketCodesTab: React.FC = () => {
     },
     {
       title: '代码',
-      dataIndex: 'code',
-      key: 'code',
+      dataIndex: 'symbol',
+      key: 'symbol',
     },
     {
       title: '数据接入',

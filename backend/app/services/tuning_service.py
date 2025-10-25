@@ -380,8 +380,8 @@ def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list],
             'total': total,
             'finished': 0,
             'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-            # 存储交易对代码
-            'code': symbol,
+            # 存储交易对代码 - 使用正确的symbol列名
+            'symbol': symbol,
             'timeframe': timeframe,
             'start_time': startTime,  # 保存开始时间
             'end_time': endTime,      # 保存结束时间

@@ -75,8 +75,8 @@ class BacktestResult:
     """回测结果数据类"""
     run_id: str
     symbol: str
-    start_time: str
-    end_time: str
+    startTime: str
+    endTime: str
     strategy: str
     params: Dict[str, Any]
     nav: pd.Series
@@ -419,8 +419,9 @@ class MetricsCalculator:
 class DatabaseManager:
     """数据库管理器"""
     
-    def __init__(self, logger: BacktestLogger):
+    def __init__(self, logger: BacktestLogger, tenant_id: str):
         self.logger = logger
+        self.tenant_id = tenant_id
         self.engine = get_engine()
     
     def save_backtest_results(self, result: BacktestResult, trades: List[TradeRecord], 
@@ -446,14 +447,14 @@ class DatabaseManager:
     def _save_run_record(self, result: BacktestResult, metrics: Dict[str, float]):
         """保存运行记录"""
         # 确保时间戳字段不为空字符串，避免PostgreSQL timestamp字段格式错误
-        start_time_value = result.start_time if result.start_time and result.start_time.strip() else None
-        end_time_value = result.end_time if result.end_time and result.end_time.strip() else None
+        startTimeValue = result.startTime if result.startTime and result.startTime.strip() else None
+        endTimeValue = result.endTime if result.endTime and result.endTime.strip() else None
         
         # 如果时间戳为空，使用当前时间作为默认值
-        if not start_time_value:
-            start_time_value = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        if not end_time_value:
-            end_time_value = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if not startTimeValue:
+            startTimeValue = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if not endTimeValue:
+            endTimeValue = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         run_data = pd.DataFrame([{
             'run_id': result.run_id,
@@ -461,8 +462,8 @@ class DatabaseManager:
             'created_by': result.created_by,
             'strategy': result.strategy,
             'symbol': result.symbol,
-            'start_time': start_time_value,
-            'end_time': end_time_value,
+            'start_time': startTimeValue,
+            'end_time': endTimeValue,
             'timeframe': result.params.get('timeframe', '1m'),
             'initial_capital': result.params.get('E_initial_capital', 100000),
             'final_capital': metrics.get('final_capital'),
@@ -651,7 +652,7 @@ class BacktestEngine:
         )
         
         self.decision_engine = TradingDecisionEngine(params)
-        self.db_manager = DatabaseManager(self.logger)
+        self.db_manager = DatabaseManager(self.logger, self.tenant_id)
     
     def _run_strategy(self, df: pd.DataFrame, params: Dict[str, Any], strategy_name: str) -> Dict[str, Any]:
         """运行策略获取信号"""
@@ -886,34 +887,35 @@ class BacktestEngine:
         )
         
         # 构建结果
-        nav_series = pd.Series(nav_list, index=pd.Index(data["datetime"], dtype='datetime64[ns]'))
-        
-        # 创建一个新的params字典，确保只包含startTime和endTime，不包含start和end
-        clean_params = params.copy()
-        if 'start' in clean_params:
-            del clean_params['start']
-        if 'end' in clean_params:
-            del clean_params['end']
+        # 处理时区问题：如果datetime有时区信息，先转换为UTC再移除时区
+        datetime_index = pd.Index(data["datetime"])
+        if hasattr(datetime_index, 'tz') and datetime_index.tz is not None:
+            datetime_index = datetime_index.tz_convert('UTC').tz_localize(None)
+        nav_series = pd.Series(nav_list, index=datetime_index)
+    
 
         # 创建BacktestResult对象
         # 确保startTime和endTime有合理的默认值，避免数据库timestamp字段插入空字符串
-        start_time_value = clean_params.get("start_time", "")
-        end_time_value = clean_params.get("end_time", "")
+        startTimeValue = params.get("startTime", "")
+        endTimeValue = params.get("endTime", "")
+
         
         # 如果时间戳为空，使用数据的时间范围
-        if not start_time_value and len(data["datetime"]) > 0:
-            start_time_value = data["datetime"][0].strftime('%Y-%m-%d %H:%M:%S')
-        if not end_time_value and len(data["datetime"]) > 0:
-            end_time_value = data["datetime"][-1].strftime('%Y-%m-%d %H:%M:%S')
+        # 检查data中是否存在datetime键且其长度大于0
+        if "datetime" in data and len(data["datetime"]) > 0:
+            if not startTimeValue:
+                startTimeValue = data["datetime"][0].strftime('%Y-%m-%d %H:%M:%S')
+            if not endTimeValue:
+                endTimeValue = data["datetime"][-1].strftime('%Y-%m-%d %H:%M:%S')
         
         
         result = BacktestResult(
             run_id=backtest_id,
             symbol=symbol,
-            start_time=start_time_value,
-            end_time=end_time_value,
+            startTime=startTimeValue,
+            endTime=endTimeValue,
             strategy=strategy_name,
-            params=clean_params,
+            params=params,
             nav=nav_series,
             metrics=metrics,
             signals=executed_signals,
@@ -947,10 +949,10 @@ class BacktestEngine:
         return {
             "run_id": backtest_id,
             "symbol": symbol,
-            "start_time": result.start_time,
-            "end_time": result.end_time,
+            "startTime": result.startTime,
+            "endTime": result.endTime,
             "strategy": strategy_name,
-            "params": clean_params,
+            "params": params,
             "nav": nav_series,
             "metrics": metrics,
             "signals": formatted_signals,  # 使用格式化后的signals

@@ -5,6 +5,7 @@ import { Form, Row, Col, Card, Button, Select, InputNumber, List, Progress, mess
 import { InfoCircleOutlined, SettingOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import SymbolSelector from '../components/SymbolSelector'
+import TimeframeSelector from '../components/TimeframeSelector'
 
 // 定义参数配置类型
 interface ParamConfig {
@@ -175,13 +176,14 @@ export default function Tuning() {
       // 构建完整的参数配置JSON字符串，包含参数值、最大值、最小值、步长等信息
       const fullParamsConfigJSON = JSON.stringify(paramsConfig);
       
-      const payload = { 
+      const payload = {
         strategy: v.strategy, 
         params: paramsGrid,
         params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
         symbol: v.symbol, // 使用symbol字段提交
-        startTime: v.range[0].toISOString(), 
-        endTime: v.range[1].toISOString(), 
+        // 使用dayjs的format方法直接生成本地时间格式，避免时区转换问题
+        startTime: v.range[0].format('YYYY-MM-DDTHH:mm:ss'), 
+        endTime: v.range[1].format('YYYY-MM-DDTHH:mm:ss'), 
         timeframe: v.timeframe
       };
       
@@ -312,7 +314,7 @@ export default function Tuning() {
     <div className="tuning-page">
       <Card title={<div className="card-title"><SettingOutlined className="title-icon" /> 参数寻优</div>} className="main-card">
         <Form form={form} layout="vertical" initialValues={{ 
-          symbol: 'binance-BTC/USDT', 
+          symbol: 'BTC/USDT', 
           range: [dayjs().add(-30, 'day'), dayjs()],
           timeframe: '1m',
           paramsConfig: {} 
@@ -338,18 +340,7 @@ export default function Tuning() {
             </Col>
             <Col xs={24} sm={12} md={6}>
               <Form.Item label="时间间隔" name="timeframe">
-                <Select className="form-select">
-                  <Select.Option value="1m">1分钟</Select.Option>
-                  <Select.Option value="5m">5分钟</Select.Option>
-                  <Select.Option value="15m">15分钟</Select.Option>
-                  <Select.Option value="30m">30分钟</Select.Option>
-                  <Select.Option value="60m">60分钟</Select.Option>
-                  <Select.Option value="1h">1小时</Select.Option>
-                  <Select.Option value="4h">4小时</Select.Option>
-                  <Select.Option value="1D">1天</Select.Option>
-                  <Select.Option value="1W">1周</Select.Option>
-                  <Select.Option value="1M">1月</Select.Option>
-                </Select>
+                <TimeframeSelector className="form-select" />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12} md={6}>

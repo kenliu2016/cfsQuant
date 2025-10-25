@@ -35,11 +35,11 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
         }
       });
       
-      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string }] }
+      // 后端返回的数据结构是 { rows: [{ symbol: string, exchange: string, active: boolean, watch: boolean }] }
       const marketCodes = response.data.rows || [];
       // 将数据转换为前端需要的格式
       return marketCodes.map((item: any) => ({
-        symbol: item.code,
+        symbol: item.symbol,
         exchange: item.exchange,
         name: item.name || '' // 保留name字段用于过滤
       }));
@@ -70,23 +70,7 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
     loadSymbols();
   }, []); // 空依赖数组，只在组件挂载时执行一次
 
-  // 自定义过滤函数
-  const filterOption = (input: string, option?: { label: string; value: string }): boolean => {
-    if (!option) return false;
-    // 根据输入的关键字过滤选项
-    const lowerInput = input.toLowerCase();
-    const lowerLabel = option.label.toLowerCase();
-    
-    // 检查标签是否包含输入的关键字
-    const labelMatch = lowerLabel.includes(lowerInput);
-    
-    // 如果有name属性，也检查name是否包含输入的关键字
-    const symbolInfo = symbols.find(s => s.symbol === option.value);
-    const nameMatch = !!(symbolInfo && symbolInfo.name && 
-                    symbolInfo.name.toLowerCase().includes(lowerInput));
-    
-    return labelMatch || nameMatch;
-  };
+  // 删除未使用的filterOption函数
 
   return (
     <Select
@@ -98,16 +82,26 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
         borderColor: '#4E4E6A',
         ...(otherProps.style || {})
       }}
-      options={symbols.map(s => ({ label: s.symbol, value: s.symbol }))}
+      options={symbols.map(s => ({ 
+        label: s.symbol, 
+        value: s.symbol,
+        name: s.name || ''
+      }))}
       loading={isLoading}
-      placeholder="选择股票"
+      placeholder="选择交易对"
       size="small"
       showSearch={true}
       styles={{
         popup: { root: { backgroundColor: '#FFFFFF', borderColor: '#4E4E6A' } }
       }}
-      optionFilterProp="label"
-      filterOption={filterOption}
+      optionFilterProp="children"
+      filterOption={(input, option) => {
+        if (!option) return false;
+        const lowerInput = input.toLowerCase();
+        const symbolMatch = option.label.toLowerCase().includes(lowerInput);
+        const nameMatch = option.name ? option.name.toLowerCase().includes(lowerInput) : false;
+        return symbolMatch || nameMatch;
+      }}
       {...otherProps}
     />
   );

@@ -38,16 +38,16 @@ async def alist_strategies(tenant_id: Optional[str] = None) -> pd.DataFrame:
     sql = """
     SELECT id, name, description, params::text AS params
     FROM sys_strategies
-    WHERE tenant_id = :tenant_id
+    WHERE created_by = :created_by
     ORDER BY id
     """
 
     try:
         logger.info("从数据库查询租户 %s 的策略列表", tenant)
-        df = await fetch_df_async(sql, tenant_id=tenant)
+        df = await fetch_df_async(sql, created_by=tenant)
         if df.empty:
             # 回退到同步查询以防异步连接池丢失
-            df = fetch_df(sql, tenant_id=tenant)
+            df = fetch_df(sql, created_by=tenant)
         _cached_strategies[cache_key] = df
         _cached_timestamp[cache_key] = current_time
         return df
@@ -73,10 +73,10 @@ def list_strategies(tenant_id: Optional[str] = None) -> pd.DataFrame:
     sql = """
     SELECT id, name, description, params::text AS params
     FROM sys_strategies
-    WHERE tenant_id = :tenant_id
+    WHERE created_by = :created_by
     ORDER BY id
     """
-    df = fetch_df(sql, tenant_id=tenant)
+    df = fetch_df(sql, created_by=tenant)
     _cached_strategies[cache_key] = df
     _cached_timestamp[cache_key] = current_time
     return df
@@ -98,7 +98,7 @@ def load_strategy_code(strategy_name: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
-def save_strategy_code(strategy_name: str, symbol: str, tenant_id: Optional[str] = None):
+def save_strategy_code(strategy_name: str, code: str, tenant_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(code)
@@ -179,9 +179,10 @@ def save_strategy_code(strategy_name: str, symbol: str, tenant_id: Optional[str]
                 engine = get_engine()
                 with engine.connect() as conn:
                     result = conn.execute(
-                        text("UPDATE sys_strategies SET params = :params WHERE name = :name AND tenant_id = :tenant_id"),
+                        text("UPDATE sys_strategies SET params = :params, updated_at = NOW(), updated_by = :updated_by WHERE name = :name AND created_by = :created_by"),
                         {
-                            'tenant_id': tenant,
+                            'created_by': tenant,
+                            'updated_by': tenant,
                             'name': strategy_name,
                             'params': params_json
                         }
@@ -196,8 +197,8 @@ def save_strategy_code(strategy_name: str, symbol: str, tenant_id: Optional[str]
                         # 尝试插入新记录
                         try:
                             conn.execute(
-                                text("INSERT INTO sys_strategies (tenant_id, name, description, params) VALUES (:tenant_id, :name, '', :params)"),
-                                {'tenant_id': tenant, 'name': strategy_name, 'params': params_json}
+                                text("INSERT INTO sys_strategies (created_by, name, description, params, created_at, updated_at, updated_by) VALUES (:created_by, :name, '', :params, NOW(), NOW(), :updated_by)"),
+                                {'created_by': tenant, 'updated_by': tenant, 'name': strategy_name, 'params': params_json}
                             )
                             conn.commit()
                             logger.info(f"成功在数据库中创建策略 [{strategy_name}] 的记录")
@@ -272,9 +273,10 @@ def run(df: pd.DataFrame, params: dict):
         engine = get_engine()
         with engine.connect() as conn:
             conn.execute(
-                text("INSERT INTO sys_strategies (tenant_id, name, description, params) VALUES (:tenant_id, :name, :description, :params)"),
+                text("INSERT INTO sys_strategies (created_by, name, description, params, created_at, updated_at, updated_by) VALUES (:created_by, :name, :description, :params, NOW(), NOW(), :updated_by)"),
                 {
-                    'tenant_id': tenant,
+                    'created_by': tenant,
+                    'updated_by': tenant,
                     'name': strategy_name,
                     'description': description,
                     'params': params_json
@@ -304,8 +306,8 @@ def delete_strategy(strategy_name: str, tenant_id: Optional[str] = None):
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(
-                text("DELETE FROM sys_strategies WHERE name = :name AND tenant_id = :tenant_id"),
-                {'name': strategy_name, 'tenant_id': tenant}
+                text("DELETE FROM sys_strategies WHERE name = :name AND created_by = :created_by"),
+                {'name': strategy_name, 'created_by': tenant}
             )
             conn.commit()
             if result.rowcount > 0:

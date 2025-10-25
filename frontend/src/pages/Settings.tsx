@@ -31,18 +31,18 @@ const Settings: React.FC = () => {
         label: '交易对',
         children: <MarketCodesTab />,
       },
-      {
-        key: 'trading',
-        label: '交易账户',
-        children: <TradingAccountsTab />,
-      },
     ];
-    if (user?.is_admin || user?.is_super_admin) {
-      list.push({ key: 'users', label: '租户用户', children: <TenantUsersTab /> });
-    }
     if (user?.is_super_admin) {
       list.push({ key: 'tenants', label: '租户管理', children: <TenantsTab /> });
     }
+    if (user?.is_admin || user?.is_super_admin) {
+      list.push({ key: 'users', label: '租户用户', children: <TenantUsersTab /> });
+    }
+    list.push({
+      key: 'trading',
+      label: '交易账户',
+      children: <TradingAccountsTab />,
+    });
     return list;
   }, [user]);
 

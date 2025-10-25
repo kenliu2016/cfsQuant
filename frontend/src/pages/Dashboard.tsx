@@ -43,7 +43,7 @@ const Dashboard: React.FC = () => {
   // 加载状态
   const [isLoading, setIsLoading] = useState<boolean>(false);
   // 股票列表
-  const [, setSymbols] = useState<any[]>([]);
+  // const [symbols, setSymbols] = useState<any[]>([]); // 未使用的变量
   // 选中的股票
   const [symbol, setSymbol] = useState<string>('BTC/USDT');
   // 时间周期
@@ -56,8 +56,9 @@ const Dashboard: React.FC = () => {
   // 日历选择器是否有光标激活
   const [isDatePickerFocused, setIsDatePickerFocused] = useState<boolean>(false);
   // 使用useCallback优化onSymbolsLoaded回调，避免触发无限循环
-  const handleSymbolsLoaded = useCallback((_loadedSymbols: any[]) => {
-    // 暂时不更新symbols状态
+  const handleSymbolsLoaded = useCallback(() => {
+    // 更新symbols状态 - 由于symbols状态已被注释，此处也注释掉
+    // setSymbols(loadedSymbols);
   }, []);
   // 定时器引用，用于5秒后自动收起日历选择器
   const datePickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,10 +127,10 @@ const Dashboard: React.FC = () => {
 
 
   const debouncedFetchData = useCallback(
-    debounce(async (startTime?: Date, endTime?: Date) => {
+    debounce(async (startTime?: string | Date, endTime?: string | Date) => {
       await fetchData(startTime, endTime);
-    }, 300),
-    [symbol, timeframe]
+    }, 500),
+    [] // 空依赖数组，确保防抖函数在整个组件生命周期内保持稳定
   );
 
   // 运行策略回测
@@ -195,18 +196,18 @@ const Dashboard: React.FC = () => {
         backtestParams = {
           symbol: symbol,
           timeframe: timeframe,
-          // 使用ISO格式时间字符串，与后端API保持一致
-          startTime: dateRange[0].toISOString(),
-          endTime: dateRange[1].toISOString()
+          // 使用dayjs的format方法直接生成本地时间格式，避免时区转换问题
+          startTime: dateRange[0].format('YYYY-MM-DDTHH:mm:ss'),
+          endTime: dateRange[1].format('YYYY-MM-DDTHH:mm:ss')
         };
       } else {
         // 如果没有选择时间区间，则使用缓存的参数或默认的7天时间范围
         backtestParams = cachedQueryParams || {
           symbol: symbol,
           timeframe: timeframe,
-          // 使用ISO格式时间字符串，与后端API保持一致
-          startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-          endTime: new Date().toISOString()
+          // 使用dayjs的format方法直接生成本地时间格式，避免时区转换问题
+          startTime: dayjs().add(-7, 'day').format('YYYY-MM-DDTHH:mm:ss'),
+          endTime: dayjs().format('YYYY-MM-DDTHH:mm:ss')
         };
       }
       
@@ -308,42 +309,34 @@ const Dashboard: React.FC = () => {
 
   // 加载symbol数据
   // 场景5: 首页加载时 - 组件首次挂载时触发
-  useEffect(() => {
-    const loadSymbols = async () => {
-      try {
-        // 直接设置空数组
-        setSymbols([]);
-        
-        console.warn('No symbols data available');
-      } catch (error) {
-        console.error('Error loading symbols:', error);
-      }
-    };
-    loadSymbols();
-  }, []);
+  // SymbolSelector组件会自动从API获取symbol数据，无需额外加载
   
   // 场景1: symbol选择器变更，场景2: timeframe选择变更 - 当symbol、timeframe或dateRange变化时触发
   useEffect(() => {
     const processData = async () => {
       if (symbol) {
-        // 创建一个内存缓存键，包含dateRange信息
-        const cacheKey = `${symbol}_${timeframe}_${dateRange[0]?.valueOf() || '0'}_${dateRange[1]?.valueOf() || '0'}`;
-        const lastRequestTime = sessionStorage.getItem(`lastRequest_${cacheKey}`);
+        // 创建一个唯一请求标识，包含symbol、timeframe和dateRange信息
+        const requestId = `${symbol}_${timeframe}_${dateRange[0]?.valueOf() || '0'}_${dateRange[1]?.valueOf() || '0'}`;
+        const lastRequestId = sessionStorage.getItem('lastRequestId');
+        const lastRequestTime = sessionStorage.getItem('lastRequestTime');
         const now = Date.now();
         
-        // 如果距离上次请求不足800毫秒，不重复请求（增加节流时间）
-        if (lastRequestTime && now - parseInt(lastRequestTime) < 800) {
+        // 如果与上次请求相同且距离上次请求不足1000毫秒，不重复请求
+        if (lastRequestId === requestId && lastRequestTime && now - parseInt(lastRequestTime) < 1000) {
           return;
         }
         
-        sessionStorage.setItem(`lastRequest_${cacheKey}`, now.toString());
+        // 保存当前请求标识和时间
+        sessionStorage.setItem('lastRequestId', requestId);
+        sessionStorage.setItem('lastRequestTime', now.toString());
         
         // 并行发起fetchData请求 - 强制清除缓存以确保timeframe切换时重新获取数据
         if (dateRange[0] && dateRange[1]) {
           // 清除缓存以确保重新获取数据
           const cacheKey = `candle_data_${symbol}_${timeframe}_${dateRange[0].valueOf()}_${dateRange[1].valueOf()}`;
           sessionStorage.removeItem(cacheKey);
-          debouncedFetchData(dateRange[0].toDate(), dateRange[1].toDate());
+          // 使用dayjs的format方法直接生成本地时间格式，避免时区转换问题
+          debouncedFetchData(dateRange[0].format('YYYY-MM-DDTHH:mm:ss'), dateRange[1].format('YYYY-MM-DDTHH:mm:ss'));
         } else {
           // 清除缓存以确保重新获取数据
           const cacheKey = `candle_data_${symbol}_${timeframe}_0_0`;
@@ -355,13 +348,13 @@ const Dashboard: React.FC = () => {
 
     // 执行处理函数
     processData();
-  }, [timeframe, symbol, dateRange]);
+  }, [timeframe, symbol, dateRange?.[0]?.valueOf(), dateRange?.[1]?.valueOf()]);
 
 
   // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
   // 获取蜡烛图数据 - 添加内存缓存优化
   // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)中被调用
-  const fetchData = async (startTime?: Date, endTime?: Date): Promise<any[]> => {
+  const fetchData = async (startTime?: string | Date, endTime?: string | Date): Promise<any[]> => {
     if (!symbol) return [];
     
     setIsLoading(true);
@@ -374,17 +367,34 @@ const Dashboard: React.FC = () => {
       // 检查是否有指定时间范围
       if (startTime && endTime) {
         // 有时间范围时，按时间范围查询，不使用limit参数
-        // 使用ISO格式时间字符串，与后端API保持一致
-        params.startTime = startTime.toISOString();
-        params.endTime = endTime.toISOString();
+        // 使用本地时间格式，与后端API保持一致（后端已修复时区处理）
+        if (typeof startTime === 'string' && typeof endTime === 'string') {
+          // 如果已经是字符串格式，直接使用
+          params.startTime = startTime;
+          params.endTime = endTime;
+        } else {
+          // 如果是Date对象，使用dayjs转换为本地时间格式字符串
+          params.startTime = dayjs(startTime as Date).format('YYYY-MM-DDTHH:mm:ss');
+          params.endTime = dayjs(endTime as Date).format('YYYY-MM-DDTHH:mm:ss');
+        }
       } else {
         // 没有时间范围时，按limit参数查询最近的记录
-        let limit = 500; // 默认值
+        let limit = 200; // 默认值
+        
+        // 根据timeframe后缀设置不同的limit值
+        if (timeframe.endsWith('m')) {
+          limit = 1000; // 分钟级别，数据量较大
+        } else if (timeframe.endsWith('h')) {
+          limit = 500;  // 小时级别
+        } else if (timeframe.endsWith('d')) {
+          limit = 200;  // 日级别
+        }
+        
         params.limit = limit;
       }
       
       // 创建缓存键
-      const cacheKey = `candle_data_${symbol}_${timeframe}_${startTime ? startTime.getTime() : '0'}_${endTime ? endTime.getTime() : '0'}`;
+      const cacheKey = `candle_data_${symbol}_${timeframe}_${startTime ? (typeof startTime === 'string' ? startTime : startTime.getTime()) : '0'}_${endTime ? (typeof endTime === 'string' ? endTime : endTime.getTime()) : '0'}`;
       
       // 尝试从内存缓存获取数据
       const cachedData = sessionStorage.getItem(cacheKey);
@@ -1113,9 +1123,10 @@ const Dashboard: React.FC = () => {
                     onChange={(dates) => {
                       if (dates && dates[0] && dates[1]) {
                         setDateRange([dates[0], dates[1]]);
-                        fetchData(dates[0].toDate(), dates[1].toDate());
                         // 选择完成后自动收起日历选择器
                         setShowDatePicker(false);
+                        // 注意：不再直接调用fetchData，而是通过useEffect中的逻辑来处理API调用
+                        // 这样可以避免重复调用，因为useEffect会在dateRange更新后自动触发
                       } else {
                         setDateRange([null, null]);
                       }

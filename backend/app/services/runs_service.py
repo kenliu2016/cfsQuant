@@ -29,6 +29,11 @@ def _ensure_run_access(run_id: str, tenant_id: str, current_user: Optional[Dict[
     created_by = None
     if pd.notna(raw_created):
         created_by = str(raw_created)
+    
+    # 特殊处理：如果created_by是00000000-0000-0000-0000-000000000000，允许所有用户访问
+    # if created_by == '00000000-0000-0000-0000-000000000000':
+    #    return {'tenant': tenant, 'created_by': created_by}
+    
     current = current_user or {}
     if current.get('is_super_admin') or current.get('is_admin'):
         return {'tenant': tenant, 'created_by': created_by}
@@ -577,7 +582,7 @@ def get_run_trades(run_id: str, limit: int = 1000, tenant_id: Optional[str] = No
     access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
     tenant = access['tenant']
     df_t = fetch_df("""
-        SELECT run_id, datetime, code, side, trade_type, price, qty, amount, fee, 
+        SELECT run_id, datetime, symbol, side, trade_type, price, qty, amount, fee, 
                realized_pnl, nav, drawdown, avg_price, current_qty, current_avg_price, close_price, current_cash
         FROM backtest_trades
         WHERE run_id = :rid AND tenant_id = :tenant_id
@@ -611,13 +616,13 @@ def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = N
         # 获取回测运行的基本信息
         access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
         tenant = access['tenant']
-        df_run = fetch_df("""SELECT symbol, timeframe, start_time as startTime, end_time as endTime FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
+        df_run = fetch_df("""SELECT symbol, timeframe, start_time as starttime, end_time as endtime FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
         if not df_run.empty:
             run_data = df_run.iloc[0]
-            symbol = run_data.get('symbol', '')
-            timeframe = run_data.get('timeframe', '1m')
-            startTime = run_data.get('startTime', '')
-            endTime = run_data.get('endTime', '')
+            symbol = run_data['symbol'] if 'symbol' in run_data else ''
+            timeframe = run_data['timeframe'] if 'timeframe' in run_data else '1m'
+            startTime = run_data['starttime'] if 'starttime' in run_data else ''
+            endTime = run_data['endtime'] if 'endtime' in run_data else ''
             
             if symbol and startTime and endTime:
 
@@ -644,7 +649,6 @@ def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = N
                         df_candles[col] = df_candles[col].fillna(0)
                         df_candles[col] = df_candles[col].replace([float('inf'), float('-inf')], 0)
                         df_candles[col] = df_candles[col].astype(float)
-                    
                     klines = df_candles.to_dict(orient="records")
         logger.debug(f"成功获取回测K线数据，run_id: {run_id}, 数据点数量: {len(klines)}")
     except Exception as e:

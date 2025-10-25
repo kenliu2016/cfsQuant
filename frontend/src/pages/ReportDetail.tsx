@@ -659,11 +659,11 @@ const ReportDetail: React.FC = () => {
                         </div>
                         <div>
                           <div style={{fontSize: '14px', color: '#666'}}>开始时间</div>
-                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.startTime) || '-'}</div>
+                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.starttime) || '-'}</div>
                         </div>
                         <div>
                           <div style={{fontSize: '14px', color: '#666'}}>结束时间</div>
-                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.endTime) || '-'}</div>
+                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{formatDateTime(currentRunDetail.endtime) || '-'}</div>
                         </div>
                       </div>
                     </Card>
@@ -674,12 +674,14 @@ const ReportDetail: React.FC = () => {
                       <h3 style={{marginBottom: 16, fontSize: '16px', fontWeight: 600, color: '#262626'}}>回测参数</h3>
                       <Card style={{borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)'}}>
                         <div style={{display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, padding: '8px 0'}}>
-                          {Object.entries(currentRunDetail.paras).map(([key, value]) => (
-                            <div key={key}>
-                              <div style={{fontSize: '14px', color: '#666'}}>{key}</div>
-                              <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{value?.toString() || '-'}</div>
-                            </div>
-                          ))}
+                          {Object.entries(currentRunDetail.paras)
+                            .filter(([key]) => !['symbol', 'timeframe', 'startTime', 'endTime'].includes(key))
+                            .map(([key, value]) => (
+                              <div key={key}>
+                                <div style={{fontSize: '14px', color: '#666'}}>{key}</div>
+                                <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{value?.toString() || '-'}</div>
+                              </div>
+                            ))}
                         </div>
                       </Card>
                     </div>

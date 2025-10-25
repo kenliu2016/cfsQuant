@@ -147,6 +147,7 @@ def process_market_data(df, context=""):
 def parse_datetime(dt_str, default=None):
     """
     尝试多种格式解析日期时间字符串，确保不会抛出无法序列化的异常
+    特别注意：正确处理ISO 8601格式的时区信息
     """
     if dt_str is None:
         return default
@@ -208,7 +209,7 @@ def candles(symbol: str = Query(...), startTime: str = Query(None), endTime: str
             logger.error(f"日期时间格式错误: startTime={startTime}, endTime={endTime}")
             raise HTTPException(status_code=400, detail="日期时间格式错误，请使用YYYY-MM-DD HH:MM:SS或YYYY-MM-DDTHH:MM:SS格式")
         
-        result = get_daily_candles(symbol, start_dt, end_dt, timeframe, page, page_size)
+        result = get_candles(symbol, startTime, endTime, timeframe, page, page_size)
     else:
         # 没有时间范围时，按limit参数查询最近的记录
         logger.info(f"没有时间范围参数，按limit查询最近的记录")

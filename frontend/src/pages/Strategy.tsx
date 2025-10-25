@@ -1,11 +1,11 @@
 
-import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col, Select } from 'antd'
-const { Option } = Select
+import { Layout, Tree, Card, Form, Input, DatePicker, Button, message, Modal, Row, Col } from 'antd'
 import { useEffect, useState } from 'react'
 import client from '../api/client'
 import Editor from '@monaco-editor/react'
 import dayjs from 'dayjs'
 import SymbolSelector from '../components/SymbolSelector'
+import TimeframeSelector from '../components/TimeframeSelector'
 import { useTenant } from '../context/TenantContext'
 
 const { Content } = Layout
@@ -179,7 +179,7 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
       <Form 
         form={form} 
         layout="vertical" 
-        initialValues={{ symbol: 'binance-BTC/USDT', range: [dayjs().add(-7,'day'), dayjs()] }}
+        initialValues={{ symbol: 'BTC/USDT', range: [dayjs().add(-7,'day'), dayjs()] }}
         style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -191,18 +191,7 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
             </Col>
             <Col span={12}>
               <Form.Item label="时间间隔" name="timeframe" labelCol={{span:24}} initialValue="1m">
-                <Select style={{width: '100%'}}>
-                  <Option value="1m">1分钟</Option>
-                  <Option value="5m">5分钟</Option>
-                  <Option value="15m">15分钟</Option>
-                  <Option value="30m">30分钟</Option>
-                  <Option value="60m">60分钟</Option>
-                  <Option value="1h">1小时</Option>
-                  <Option value="4h">4小时</Option>
-                  <Option value="1D">1天</Option>
-                  <Option value="1W">1周</Option>
-                  <Option value="1M">1月</Option>
-                </Select>
+                <TimeframeSelector style={{ width: '100%' }} />
               </Form.Item>
             </Col>
           </Row>
@@ -223,7 +212,6 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
 export default function StrategyPage(){
   const [form] = Form.useForm()
   const [current, setCurrent] = useState<any | null>(null)
-  const [symbol, setSymbol] = useState<string>('')
   const [code, setCode] = useState<string>('')
   const [showNew, setShowNew] = useState(false)
   const [newName, setNewName] = useState('')
@@ -239,20 +227,18 @@ export default function StrategyPage(){
     setRefreshTrigger(prev => prev + 1)
   }
 
-
-
-
   const onSelect = async (strategy:any) => {
     if (!strategy) return
     setCurrent(strategy)
     setCodeLoading(true)
     try {
       const codeRes = await client.get(`/api/strategies/${strategy.name}/code`)
-      setSymbol(codeRes.data.symbol || '')
+      // 只设置code
+      setCode(codeRes.data.code || '')
     } catch (error) {
       console.error('加载策略代码失败:', error)
       message.error('加载策略代码失败')
-      setSymbol('')
+      setCode('')
     } finally {
       setCodeLoading(false)
     }
@@ -260,7 +246,9 @@ export default function StrategyPage(){
 
   const onSaveCode = async () => {
     if (!current) return
-    await client.post(`/api/strategies/${current.name}/code`, { symbol: symbol })
+    await client.post(`/api/strategies/${current.name}/code`, { 
+      code: code 
+    })
     message.success('已保存')
     // 触发策略树刷新
     refreshStrategyTree()
@@ -273,8 +261,9 @@ export default function StrategyPage(){
       // 将symbol, startTime, endTime, timeframe封装成Dict类型的params
       const params = {
         symbol: v.symbol,
-        startTime: v.range[0].toISOString(),
-        endTime: v.range[1].toISOString(),
+        // 使用dayjs的format方法直接生成本地时间格式，避免时区转换问题
+        startTime: v.range[0].format('YYYY-MM-DDTHH:mm:ss'),
+        endTime: v.range[1].format('YYYY-MM-DDTHH:mm:ss'),
         timeframe: v.timeframe // 使用用户选择的时间间隔
       }
       // 最终payload只提交封装后的params和strategy
@@ -312,10 +301,10 @@ export default function StrategyPage(){
         setCodeLoading(true)
         try {
           const codeRes = await client.get(`/api/strategies/${newName}/code`)
-          setSymbol(codeRes.data?.symbol || '')
+          setCode(codeRes.data?.code || '')
         } catch (error) {
           console.error('获取策略代码失败:', error)
-          setSymbol('')
+          setCode('')
         } finally {
           setCodeLoading(false)
         }
