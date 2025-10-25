@@ -1,11 +1,9 @@
 import axios from 'axios';
 
-// 添加TypeScript类型定义以解决ImportMeta.env类型错误
+// 扩展 Vite 默认的 ImportMetaEnv 类型，声明项目中使用到的变量
 declare global {
-  interface ImportMeta {
-    env: {
-      VITE_API_BASE_URL?: string;
-    };
+  interface ImportMetaEnv {
+    readonly VITE_API_BASE_URL?: string;
   }
 }
 

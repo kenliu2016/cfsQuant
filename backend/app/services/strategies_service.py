@@ -47,16 +47,16 @@ async def alist_strategies(tenant_id: Optional[str] = None) -> pd.DataFrame:
     sql = """
     SELECT id, name, description, params::text AS params
     FROM sys_strategies
-    WHERE created_by = :created_by
+    WHERE tenant_id = :tenant_id
     ORDER BY id
     """
 
     try:
         logger.info("从数据库查询租户 %s 的策略列表", tenant)
-        df = await fetch_df_async(sql, created_by=tenant)
+        df = await fetch_df_async(sql, tenant_id=tenant)
         if df.empty:
             # 回退到同步查询以防异步连接池丢失
-            df = fetch_df(sql, created_by=tenant)
+            df = fetch_df(sql, tenant_id=tenant)
         _cached_strategies[cache_key] = df
         _cached_timestamp[cache_key] = current_time
         return df
@@ -76,16 +76,16 @@ def list_strategies(tenant_id: Optional[str] = None) -> pd.DataFrame:
     cached_df = _cached_strategies.get(cache_key)
     cached_ts = _cached_timestamp.get(cache_key, 0)
     if cached_df is not None and current_time - cached_ts < CACHE_EXPIRE_TIME:
-        logger.debug("使用租户 %s 的内存缓存策略列表", tenant)
+      #  logger.debug("使用租户 %s 的内存缓存策略列表", tenant)
         return cached_df.copy()
 
     sql = """
     SELECT id, name, description, params::text AS params
     FROM sys_strategies
-    WHERE created_by = :created_by
+    WHERE tenant_id = :tenant_id
     ORDER BY id
     """
-    df = fetch_df(sql, created_by=tenant)
+    df = fetch_df(sql, tenant_id=tenant)
     _cached_strategies[cache_key] = df
     _cached_timestamp[cache_key] = current_time
     return df

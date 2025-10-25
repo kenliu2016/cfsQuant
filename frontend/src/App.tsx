@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Layout, Menu, Button, Space } from 'antd';
 import { MenuFoldOutlined, MenuUnfoldOutlined, LogoutOutlined } from '@ant-design/icons';
 import { Routes, Route, useNavigate, Navigate, useLocation } from 'react-router-dom';
+import Dashboard from './pages/Dashboard';
 import Backtest from './pages/Backtest';
 import Strategy from './pages/Strategy';
 import Tuning from './pages/Tuning';
@@ -27,6 +28,11 @@ const AppLayout: React.FC = () => {
 
   // 定义菜单项
   const menuItems = [
+    {
+      key: 'dashboard',
+      label: 'Dashboard',
+      onClick: () => navigate('/dashboard'),
+    },
     {
       key: 'backtest',
       label: 'Backtest',
@@ -92,7 +98,7 @@ const AppLayout: React.FC = () => {
         <Menu
           theme="dark"
           mode="inline"
-          defaultSelectedKeys={['backtest']}
+          defaultSelectedKeys={['dashboard']}
           items={menuItems}
           style={{
             marginTop: '0px',
@@ -122,6 +128,7 @@ const AppLayout: React.FC = () => {
         </Header>
         <Content style={{ padding: 0, minHeight: 'calc(100vh - 64px)', background: '#0A0A15' }}>
           <Routes>
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/backtest" element={<Backtest />} />
             <Route path="/strategy" element={<Strategy />} />
             <Route path="/tuning" element={<Tuning />} />
@@ -129,7 +136,7 @@ const AppLayout: React.FC = () => {
             <Route path="/reports/:runId" element={<ReportDetail />} />
             <Route path="/progress" element={<Progress />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Backtest />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Content>
       </Layout>
