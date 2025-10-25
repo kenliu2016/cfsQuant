@@ -17,14 +17,14 @@ import json
 DEFAULT_EXPIRE_TIME = 60 * 5  # 5分钟
 
 # 清除特定K线查询的缓存
-def clear_candles_cache(code: str, interval: str = "1m", limit: int = None, 
+def clear_candles_cache(symbol: str, timeframe: str = "1m", limit: int = None,
                        start: str = None, end: str = None) -> bool:
     """
     清除特定K线查询的缓存
     
     Args:
-        code: 市场代码，如"binance-BTC/USDT"
-        interval: 时间间隔，如"1m", "15m", "1h", "1D"等
+        symbol: 市场代码，如"binance-BTC/USDT"
+        timeframe: 时间间隔，如"1m", "15m", "1h", "1D"等
         limit: 查询的记录条数，如果为None则匹配所有limit值的查询
         start: 开始时间，如果为None则匹配所有start值的查询
         end: 结束时间，如果为None则匹配所有end值的查询
@@ -36,19 +36,19 @@ def clear_candles_cache(code: str, interval: str = "1m", limit: int = None,
         if start and end:
             # 清除基于时间范围的查询缓存（get_candles函数）
             # 生成函数调用的缓存键模式
-            key_pattern = _generate_candles_key_pattern("get_candles", code, interval, start, end)
+            key_pattern = _generate_candles_key_pattern("get_candles", symbol, timeframe, start, end)
             logger.info(f"清除基于时间范围的K线缓存，模式: {key_pattern}")
             CacheService.clear(key_pattern)
         elif limit:
             # 清除基于limit的查询缓存（get_latest_candles函数）
             # 生成函数调用的缓存键模式
-            key_pattern = _generate_candles_key_pattern("get_latest_candles", code, interval, limit=limit)
+            key_pattern = _generate_candles_key_pattern("get_latest_candles", symbol, timeframe, limit=limit)
             logger.info(f"清除基于limit的K线缓存，模式: {key_pattern}")
             CacheService.clear(key_pattern)
         else:
             # 清除该代码的所有K线缓存
-            logger.info(f"清除代码 {code} 的所有K线缓存")
-            CacheService.clear(f"market:{code}:*")
+            logger.info(f"清除代码 {symbol} 的所有K线缓存")
+            CacheService.clear(f"market:{symbol}:*")
         
         return True
     except Exception as e:
@@ -56,7 +56,7 @@ def clear_candles_cache(code: str, interval: str = "1m", limit: int = None,
         return False
 
 # 生成K线缓存键模式
-def _generate_candles_key_pattern(func_name: str, code: str, interval: str, start: str = None, 
+def _generate_candles_key_pattern(func_name: str, symbol: str, timeframe: str, start: str = None, 
                                  end: str = None, limit: int = None) -> str:
     """
     生成K线缓存键的匹配模式
@@ -64,29 +64,29 @@ def _generate_candles_key_pattern(func_name: str, code: str, interval: str, star
     """
     # 对于get_latest_candles函数
     if func_name == "get_latest_candles":
-        # 函数签名: get_latest_candles(code, interval="1m", limit=2)
+        # 函数签名: get_latest_candles(symbol, timeframe="1m", limit=2)
         # 缓存键包含这些参数
         if limit is not None:
-            # 生成包含code、interval和limit的键模式
-            return f"*df_{func_name}*{code}*interval={interval}*limit={limit}*"
+            # 生成包含symbol、timeframe和limit的键模式
+            return f"*df_{func_name}*{symbol}*timeframe={timeframe}*limit={limit}*"
         else:
-            # 生成包含code和interval的键模式
-            return f"*df_{func_name}*{code}*interval={interval}*"
+            # 生成包含symbol和timeframe的键模式
+            return f"*df_{func_name}*{symbol}*timeframe={timeframe}*"
     
     # 对于get_candles函数
     elif func_name == "get_candles":
-        # 函数签名: get_candles(code, start, end, interval="1m", page=None, page_size=None)
+        # 函数签名: get_candles(symbol, start, end, timeframe="1m", page=None, page_size=None)
         # 缓存键包含这些参数
         if start and end:
-            # 生成包含code、start、end和interval的键模式
+            # 生成包含symbol、start、end和timeframe的键模式
             # 注意：start和end在缓存键中会被转换为字符串，这里使用通配符匹配
-            return f"*df_{func_name}*{code}*{start}*{end}*interval={interval}*"
+            return f"*df_{func_name}*{symbol}*{start}*{end}*timeframe={timeframe}*"
         else:
-            # 生成包含code和interval的键模式
-            return f"*df_{func_name}*{code}*interval={interval}*"
+            # 生成包含symbol和timeframe的键模式
+            return f"*df_{func_name}*{symbol}*timeframe={timeframe}*"
     
-    # 默认返回包含code的模式
-    return f"*df_{func_name}*{code}*"
+    # 默认返回包含symbol的模式
+    return f"*df_{func_name}*{symbol}*"
 
 # 清除所有K线缓存
 def clear_all_candles_cache() -> bool:
@@ -109,27 +109,26 @@ def clear_all_candles_cache() -> bool:
         return False
 
 # 刷新特定K线数据（清除缓存后强制重新加载）
-def refresh_candles_data(code: str, interval: str = "1m", limit: int = None, 
+def refresh_candles_data(symbol: str, timeframe: str = "1m", limit: int = None,
                         start: str = None, end: str = None) -> bool:
     """
-    刷新特定K线数据（清除缓存后强制重新加载）
+    刷新指定交易对的K线数据缓存
     
     Args:
-        code: 市场代码，如"binance-BTC/USDT"
-        interval: 时间间隔，如"1m", "15m", "1h", "1D"等
-        limit: 查询的记录条数
+        symbol: 交易对代码
+        timeframe: 时间间隔，如"1m", "15m", "1h", "1D"等
+        limit: 限制条数
         start: 开始时间
         end: 结束时间
         
     Returns:
-        bool: 操作是否成功
+        bool: 是否成功刷新
     """
     # 先清除缓存
-    result = clear_candles_cache(code, interval, limit, start, end)
-    
+    result = clear_candles_cache(symbol, timeframe, limit, start, end)
     if result:
-        logger.info(f"成功刷新K线数据缓存: code={code}, interval={interval}")
+        logger.info(f"成功刷新K线数据缓存: symbol={symbol}, timeframe={timeframe}")
     else:
-        logger.error(f"刷新K线数据缓存失败: code={code}, interval={interval}")
+        logger.error(f"刷新K线数据缓存失败: symbol={symbol}, timeframe={timeframe}")
         
     return result

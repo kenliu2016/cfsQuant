@@ -71,22 +71,22 @@ log = logging.getLogger("collect_binance_hotcopy")
 
 # ===================== SQL =====================
 LOAD_SYMBOLS_FULL_SQL = """
-SELECT code
+SELECT symbol
 FROM public.market_codes
 WHERE exchange = $1
   AND quotecurrency = 'USDT'
   AND active = true
-ORDER BY code ASC
+ORDER BY symbol ASC
 """
 
 LOAD_SYMBOLS_SINCE_SQL = """
-SELECT code
+SELECT symbol
 FROM public.market_codes
 WHERE exchange = $1
   AND quotecurrency = 'USDT'
   AND active = true
   AND updated_at >= $2
-ORDER BY code ASC
+ORDER BY symbol ASC
 """
 
 GET_LAST_CLOSE_TS_SQL = """
@@ -138,15 +138,15 @@ def sanitize_symbols(symbols: List[str]) -> List[str]:
         out.append(s)
     return out
 
-def build_streams(symbols: List[str], interval: str) -> List[str]:
+def build_streams(symbols: List[str], timeframe: str) -> List[str]:
     """把符号转成订阅流名，如 'btcusdt@kline_1m'，并去重"""
-    return sorted({f"{s.lower()}@kline_{interval}" for s in sanitize_symbols(symbols)})
+    return sorted({f"{s.lower()}@kline_{timeframe}" for s in sanitize_symbols(symbols)})
 
-def filter_streams_with_whitelist(streams: List[str], whitelist_syms: Set[str], interval: str = INTERVAL) -> List[str]:
+def filter_streams_with_whitelist(streams: List[str], whitelist_syms: Set[str], timeframe: str = INTERVAL) -> List[str]:
     """
-    过滤掉不合法/不在白名单的流；正则基于 interval 动态生成
+    过滤掉不合法/不在白名单的流；正则基于 timeframe 动态生成
     """
-    pat = re.compile(rf'^[a-z0-9]+@kline_{re.escape(interval)}$')
+    pat = re.compile(rf'^[a-z0-9]+@kline_{re.escape(timeframe)}$')
     good, bad = [], []
     for st in streams:
         if not pat.match(st):
@@ -281,7 +281,7 @@ async def load_full_symbols(pool: asyncpg.Pool) -> List[str]:
     # 将symbol转换为大写并用/分隔的形式
     formatted_symbols = []
     for r in rows:
-        symbol_upper = r["code"].upper()
+        symbol_upper = r["symbol"].upper()
         # 假设symbol格式为BASEQUOTE（如BTCUSDT），在倒数4个字符前插入/
         if len(symbol_upper) >= 4:
             symbol_formatted = symbol_upper[:-4] + "/" + symbol_upper[-4:]
@@ -296,7 +296,7 @@ async def load_symbols_since(pool: asyncpg.Pool, since_ts: datetime) -> List[str
     # 将symbol转换为大写并用/分隔的形式
     formatted_symbols = []
     for r in rows:
-        symbol_upper = r["code"].upper()
+        symbol_upper = r["symbol"].upper()
         # 假设symbol格式为BASEQUOTE（如BTCUSDT），在倒数4个字符前插入/
         if len(symbol_upper) >= 4:
             symbol_formatted = symbol_upper[:-4] + "/" + symbol_upper[-4:]
@@ -531,7 +531,7 @@ class Shard:
 
                     streams_all = build_streams(list(my_syms), INTERVAL)
                     if whitelist:
-                        streams = filter_streams_with_whitelist(streams_all, whitelist, interval=INTERVAL)
+                        streams = filter_streams_with_whitelist(streams_all, whitelist, timeframe=INTERVAL)
                     else:
                         log.warning("[shard %d] Whitelist empty; falling back to probing mode (small-batch SUB+ACK).",
                                     self.shard_id)
@@ -634,7 +634,7 @@ class Shard:
                     whitelist = await get_valid_usdt_symbols()
 
                     to_add_streams_all = build_streams(list(to_add_syms), INTERVAL)
-                    to_add_streams = (filter_streams_with_whitelist(to_add_streams_all, whitelist, INTERVAL)
+                    to_add_streams = (filter_streams_with_whitelist(to_add_streams_all, whitelist, timeframe=INTERVAL)
                                       if whitelist else to_add_streams_all)
                     to_del_streams = build_streams(list(to_del_syms), INTERVAL)
 

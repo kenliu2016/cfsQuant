@@ -132,7 +132,7 @@ const Reports = () => {
       const params: any = {
         page: page,
         limit: size,  // 注意：后端API使用limit而不是pageSize
-        code: searchText || undefined,
+        symbol: searchText || undefined,
         strategy: strategySearchText || undefined
         // 后端API不支持isTuningTask参数
       }
@@ -230,7 +230,7 @@ const Reports = () => {
     
     if (searchText) {
       filtered = filtered.filter(run => 
-        run.code.toLowerCase().includes(searchText.toLowerCase())
+        run.symbol.toLowerCase().includes(searchText.toLowerCase())
       );
     }
     
@@ -247,7 +247,7 @@ const Reports = () => {
 
   const columns = [
     { title:'策略', dataIndex:'strategy', key:'strategy' },
-    { title:'标的', dataIndex:'code', key:'code' },
+    { title:'标的', dataIndex:'symbol', key:'symbol' },
     {
       title:'交易次数',
       dataIndex:'trade_count',

@@ -9,15 +9,15 @@ router = APIRouter(prefix="/api", tags=["backtest"], dependencies=[Depends(requi
 async def backtest(req: BacktestRequest, request: Request):
     
     # 从params中获取所有需要的字段
-    # 支持code或excode字段
-    code = req.params.get('code')
+    # 获取交易对代码
+    symbol = req.params.get('symbol')
     start = req.params['start']
     end = req.params['end']
-    interval = req.params['interval']
+    timeframe = req.params['timeframe']
     # 打印完整的回测请求信息
-    # print(f"Backtest request: code={code}, start={start}, end={end}, interval={interval}, strategy={req.strategy}")
+    # print(f"Backtest request: symbol={symbol}, start={start}, end={end}, timeframe={timeframe}, strategy={req.strategy}")
     # 调用get_candles获取K线数据
-    candles_result = get_candles(code, start, end, interval)
+    candles_result = get_candles(symbol, start, end, timeframe)
     
     # 根据返回值类型确定如何获取DataFrame
     if isinstance(candles_result, tuple):

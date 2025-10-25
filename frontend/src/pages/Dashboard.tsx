@@ -33,7 +33,7 @@ interface StrategyBacktestState {
 // 定义市场概览项类型
 interface MarketOverviewItem {
   id: string;
-  code: string;
+  symbol: string;
   price: string | number;
   change: number;
   changePercent: number;
@@ -50,12 +50,11 @@ interface MarketOverviewItem {
         }
       });
       
-      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
+      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string }] }
       const marketCodes = response.data.rows || [];
       // 将数据转换为前端需要的格式
       return marketCodes.map((item: any) => ({
-        code: item.excode,
-        excode: item.excode, 
+        code: item.code,
         exchange: item.exchange
       }));
     } catch (error) {
@@ -68,7 +67,7 @@ interface MarketOverviewItem {
 // 定义MarketOverviewItem接口
 interface MarketOverviewItem {
   id: string;
-  code: string;
+  symbol: string;
   price: number | string;
   change: number;
   changePercent: number;
@@ -179,7 +178,7 @@ const Dashboard: React.FC = () => {
 
   // 防抖版本的数据加载函数
   const debouncedLoadMarketOverview = useCallback(
-    debounce(async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
+    debounce(async (symbolsData: { symbol: string; exchange: string }[]) => {
       await loadMarketOverview(symbolsData);
     }, 300),
     [timeframe]
@@ -253,8 +252,8 @@ const Dashboard: React.FC = () => {
       // 优先使用用户通过日历选择器选择的时间区间
       if (dateRange[0] && dateRange[1]) {
         backtestParams = {
-          code: symbol,
-          interval: timeframe,
+          symbol: symbol,
+          timeframe: timeframe,
           // 使用format方法生成不带时区信息的本地时间字符串，解决时区偏差问题
           start_time: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
           end_time: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
@@ -262,8 +261,8 @@ const Dashboard: React.FC = () => {
       } else {
         // 如果没有选择时间区间，则使用缓存的参数或默认的7天时间范围
         backtestParams = cachedQueryParams || {
-          code: symbol,
-          interval: timeframe,
+          symbol: symbol,
+          timeframe: timeframe,
           // 使用Date对象创建本地时间字符串
           start_time: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleString('zh-CN', {
             year: 'numeric',
@@ -397,7 +396,7 @@ const Dashboard: React.FC = () => {
           await loadMarketOverview(watchlistData);
           // 如果当前没有选中的symbol，则选中第一个
           if (!symbol) {
-            setSymbol(watchlistData[0].code);
+            setSymbol(watchlistData[0].symbol);
           }
         } else {
           console.warn('No watchlist data from API');
@@ -452,7 +451,7 @@ const Dashboard: React.FC = () => {
         if (watchlistData.length > 0) {
           // 如果当前没有选中的symbol，则选中第一个
           if (!symbol) {
-            setSymbol(watchlistData[0].code);
+            setSymbol(watchlistData[0].symbol);
           }
           return watchlistData;
         }
@@ -503,7 +502,7 @@ const Dashboard: React.FC = () => {
   // 当市场概览数据或选中的symbol变化时，更新选中股票的概览数据
   useEffect(() => {
     if (marketOverview.length > 0 && symbol) {
-      const symbolInfo = marketOverview.find(item => item.code === symbol);
+      const symbolInfo = marketOverview.find(item => item.symbol === symbol);
       if (symbolInfo) {
         setSelectedSymbolData(symbolInfo);
       }
@@ -512,10 +511,10 @@ const Dashboard: React.FC = () => {
 
   // 调用API获取市场概览数据 - 使用批量查询优化性能并添加内存缓存
   // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
-  const loadMarketOverview = async (symbolsData: { code: string; excode: string; exchange: string }[]) => {
+  const loadMarketOverview = async (symbolsData: { symbol: string; exchange: string }[]) => {
     try {
       // 只使用API返回的watch=true的symbol，不再添加额外的symbol
-      const codes = symbolsData.map(item => item.code).join(',');
+      const codes = symbolsData.map(item => item.symbol).join(',');
       
       // 创建缓存键
       const cacheKey = `market_overview_${codes}_${timeframe}`;
@@ -581,7 +580,7 @@ const Dashboard: React.FC = () => {
       const response = await client.get('/api/market/batch-candles', {
         params: {
           codes: codes,
-          interval: timeframe,
+          timeframe: timeframe,
           limit: limit,
           timestamp: timestamp
         }
@@ -591,7 +590,7 @@ const Dashboard: React.FC = () => {
       
       // 处理批量数据，为每个股票创建概览信息
       const marketOverviewData: MarketOverviewItem[] = symbolsData.map(item => {
-        const symbolData = batchData[item.code];
+        const symbolData = batchData[item.symbol];
         
         if (symbolData) {
           // 确保数据是数组格式（可能返回多条记录）
@@ -616,8 +615,8 @@ const Dashboard: React.FC = () => {
               const changePercent = ((latestBar.close - previousBar.close) / previousBar.close * 100).toFixed(2);
               
               return {
-                id: item.excode,
-                code: item.excode,
+                id: item.symbol,
+                symbol: item.symbol,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
@@ -631,8 +630,8 @@ const Dashboard: React.FC = () => {
               const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
               
               return {
-                id: item.excode,
-                code: item.excode,
+                id: item.symbol,
+                symbol: item.symbol,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
@@ -647,8 +646,8 @@ const Dashboard: React.FC = () => {
             const changePercent = ((latestBar.close - latestBar.open) / latestBar.open * 100).toFixed(2);
             
             return {
-                id: item.excode,
-                code: item.excode,
+                id: item.symbol,
+                symbol: item.symbol,
                 price: parseFloat(latestBar.close.toFixed(4)), // 保持数值类型并控制精度
                 change: parseFloat(change),
                 changePercent: parseFloat(changePercent),
@@ -659,8 +658,8 @@ const Dashboard: React.FC = () => {
         
         // 如果没有数据或数据无效，返回基本信息
         return {
-          id: item.excode,
-          code: item.excode,
+          id: item.symbol,
+          symbol: item.symbol,
           price: '-',
           change: 0,
           changePercent: 0,
@@ -702,8 +701,8 @@ const Dashboard: React.FC = () => {
     setIsLoading(true);
     try {  
       const params: any = {
-        code: symbol,
-        interval: timeframe
+        symbol: symbol,
+        timeframe: timeframe
       };
       
       // 检查是否有指定时间范围
@@ -1398,29 +1397,29 @@ const Dashboard: React.FC = () => {
           ) : (
             marketOverview.map((item) => (
               <div
-                key={item.code}
+                key={item.symbol}
                 style={{
                   marginBottom: '4px',
                   padding: '12px 8px', // 增加上下padding约17%以实现整体高度增加约10%
-                  backgroundColor: symbol === item.code ? '#3E3E5A' : '#2E2E4A',
+                  backgroundColor: symbol === item.symbol ? '#3E3E5A' : '#2E2E4A',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
-                  borderLeft: symbol === item.code ? '3px solid #165DFF' : '3px solid transparent'
+                  borderLeft: symbol === item.symbol ? '3px solid #165DFF' : '3px solid transparent'
                 }}
-                onClick={() => setSymbol(item.code)}
+                onClick={() => setSymbol(item.symbol)}
                 onMouseEnter={(e) => {
-                  if (symbol !== item.code) {
+                  if (symbol !== item.symbol) {
                     e.currentTarget.style.backgroundColor = '#3E3E5A';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (symbol !== item.code) {
+                  if (symbol !== item.symbol) {
                     e.currentTarget.style.backgroundColor = '#2E2E4A';
                   }
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold', fontFamily: 'monospace' }}>{item.code}</span>
+                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold', fontFamily: 'monospace' }}>{item.symbol}</span>
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     {item.trend === 'up' ? (
                       <ArrowUpOutlined style={{ color: '#52c41a', fontSize: '12px', marginRight: '2px' }} />

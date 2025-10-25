@@ -25,15 +25,15 @@ class TaskTimeoutService:
     def __init__(self):
         self.running = False
         self.thread = None
-        self.interval = 1800  # 默认30分钟检查一次（秒）
+        self.timeframe = 1800  # 默认30分钟检查一次（秒）
         self.timeout_hours = DEFAULT_TUNING_TASK_TIMEOUT  # 默认超时时间
         self.check_table_structure = True  # 是否自动检查表结构
         
-    def start(self, interval=1800, timeout_hours=DEFAULT_TUNING_TASK_TIMEOUT, check_table_structure=True):
+    def start(self, timeframe=1800, timeout_hours=DEFAULT_TUNING_TASK_TIMEOUT, check_table_structure=True):
         """启动任务超时检测服务
         
         Args:
-            interval: 检查间隔（秒），默认为1800秒（30分钟）
+            timeframe: 检查间隔（秒），默认为1800秒（30分钟）
             timeout_hours: 任务超时时间（小时），默认为DEFAULT_TUNING_TASK_TIMEOUT
             check_table_structure: 是否自动检查表结构，默认为True
         """
@@ -42,14 +42,14 @@ class TaskTimeoutService:
             return
             
         # 更新配置
-        self.interval = interval
+        self.timeframe = timeframe
         self.timeout_hours = timeout_hours
         self.check_table_structure = check_table_structure
             
         self.running = True
         self.thread = threading.Thread(target=self._check_loop, daemon=True)
         self.thread.start()
-        logger.info(f"任务超时检测服务已启动，检查间隔：{interval}秒，超时时间：{timeout_hours}小时")
+        logger.info(f"任务超时检测服务已启动，检查间隔：{timeframe}秒，超时时间：{timeout_hours}小时")
         
     def stop(self):
         """停止任务超时检测服务"""
@@ -71,7 +71,7 @@ class TaskTimeoutService:
                 logger.error(f"检查任务超时过程中发生错误: {str(e)}")
             
             # 等待指定的时间间隔
-            for _ in range(self.interval):  # 使用配置的间隔时间
+            for _ in range(self.timeframe):  # 使用配置的间隔时间
                 if not self.running:
                     break
                 time.sleep(1)

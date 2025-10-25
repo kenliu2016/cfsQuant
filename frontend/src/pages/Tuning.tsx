@@ -179,10 +179,10 @@ export default function Tuning() {
         strategy: v.strategy, 
         params: paramsGrid,
         params_config: fullParamsConfigJSON, // 添加完整的参数配置JSON字符串
-        excode: v.code, // 使用excode字段提交
+        symbol: v.symbol, // 使用symbol字段提交
         start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'), 
         end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'), 
-        interval: v.interval
+        timeframe: v.timeframe
       };
       
       const r = await client.post('/api/tuning', payload)
@@ -312,14 +312,14 @@ export default function Tuning() {
     <div className="tuning-page">
       <Card title={<div className="card-title"><SettingOutlined className="title-icon" /> 参数寻优</div>} className="main-card">
         <Form form={form} layout="vertical" initialValues={{ 
-          code: 'binance-BTC/USDT', 
+          symbol: 'binance-BTC/USDT', 
           range: [dayjs().add(-30, 'day'), dayjs()],
-          interval: '1m',
+          timeframe: '1m',
           paramsConfig: {} 
         }}>
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} md={6}>
-              <Form.Item label="标的" name="code" rules={[{required: true}]}>
+              <Form.Item label="标的" name="symbol" rules={[{required: true}]}>
                 <SymbolSelector className="form-select" />
               </Form.Item>
             </Col>
@@ -337,7 +337,7 @@ export default function Tuning() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12} md={6}>
-              <Form.Item label="时间间隔" name="interval">
+              <Form.Item label="时间间隔" name="timeframe">
                 <Select className="form-select">
                   <Select.Option value="1m">1分钟</Select.Option>
                   <Select.Option value="5m">5分钟</Select.Option>

@@ -546,7 +546,7 @@ def execute(query: str, config_path: Optional[str] = None, **kwargs) -> int:
                     if kwargs:
                         result = conn.execute(text(query), kwargs)
                     else:
-                        result = conn.execute(query)
+                        result = conn.execute(text(query))
                     transaction.commit()
                     # 返回受影响的行数，确保返回值始终是一个整数
                     affected_rows = result.rowcount if result.rowcount is not None else 0

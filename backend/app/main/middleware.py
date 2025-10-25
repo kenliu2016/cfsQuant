@@ -63,12 +63,17 @@ async def audit_middleware(request: Request, call_next):
     response = None
     try:
         response = await call_next(request)
-        return response
-    finally:
+        
+        # 在返回响应之前执行审计日志记录
         try:
             path = request.url.path
             if path.startswith("/docs") or path.startswith("/openapi"):
-                return
+                return response
+            
+            # 确保response不为None
+            if response is None:
+                return response
+                
             tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
             user = getattr(request.state, "user", {}) or {}
             role = "super_admin" if user.get("is_super_admin") else "admin" if user.get("is_admin") else "user"
@@ -92,3 +97,9 @@ async def audit_middleware(request: Request, call_next):
             )
         except Exception as exc:
             logger.error("Audit logging failed: %s", exc, exc_info=True)
+        
+        return response
+    except Exception as exc:
+        # 处理调用过程中的异常
+        logger.error("Audit middleware error: %s", exc, exc_info=True)
+        raise

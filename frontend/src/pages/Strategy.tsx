@@ -179,18 +179,18 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
       <Form 
         form={form} 
         layout="vertical" 
-        initialValues={{ code: 'binance-BTC/USDT', range: [dayjs().add(-7,'day'), dayjs()] }}
+        initialValues={{ symbol: 'binance-BTC/USDT', range: [dayjs().add(-7,'day'), dayjs()] }}
         style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <Row gutter={[8, 0]}>
             <Col span={12}>
-              <Form.Item label="标的" name="code" rules={[{required:true}]} labelCol={{span:24}}>
+              <Form.Item label="标的" name="symbol" rules={[{required:true}]} labelCol={{span:24}}>
                 <SymbolSelector style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="时间间隔" name="interval" labelCol={{span:24}} initialValue="1m">
+              <Form.Item label="时间间隔" name="timeframe" labelCol={{span:24}} initialValue="1m">
                 <Select style={{width: '100%'}}>
                   <Option value="1m">1分钟</Option>
                   <Option value="5m">5分钟</Option>
@@ -223,6 +223,7 @@ const UserOperationPanel = ({ form, current, onRun, isBacktesting }: any) => {
 export default function StrategyPage(){
   const [form] = Form.useForm()
   const [current, setCurrent] = useState<any | null>(null)
+  const [symbol, setSymbol] = useState<string>('')
   const [code, setCode] = useState<string>('')
   const [showNew, setShowNew] = useState(false)
   const [newName, setNewName] = useState('')
@@ -247,11 +248,11 @@ export default function StrategyPage(){
     setCodeLoading(true)
     try {
       const codeRes = await client.get(`/api/strategies/${strategy.name}/code`)
-      setCode(codeRes.data.code || '')
+      setSymbol(codeRes.data.symbol || '')
     } catch (error) {
       console.error('加载策略代码失败:', error)
       message.error('加载策略代码失败')
-      setCode('')
+      setSymbol('')
     } finally {
       setCodeLoading(false)
     }
@@ -259,7 +260,7 @@ export default function StrategyPage(){
 
   const onSaveCode = async () => {
     if (!current) return
-    await client.post(`/api/strategies/${current.name}/code`, { code })
+    await client.post(`/api/strategies/${current.name}/code`, { symbol: symbol })
     message.success('已保存')
     // 触发策略树刷新
     refreshStrategyTree()
@@ -271,10 +272,10 @@ export default function StrategyPage(){
       const v = await form.validateFields()
       // 将code, start, end, interval封装成Dict类型的params
       const params = {
-        code: v.code,
+        symbol: v.symbol,
         start_time: v.range[0].format('YYYY-MM-DD HH:mm:ss'),
         end_time: v.range[1].format('YYYY-MM-DD HH:mm:ss'),
-        interval: v.interval // 使用用户选择的时间间隔
+        timeframe: v.timeframe // 使用用户选择的时间间隔
       }
       // 最终payload只提交封装后的params和strategy
       const payload = { params, strategy: current!.name }
@@ -311,10 +312,10 @@ export default function StrategyPage(){
         setCodeLoading(true)
         try {
           const codeRes = await client.get(`/api/strategies/${newName}/code`)
-          setCode(codeRes.data?.code || '')
+          setSymbol(codeRes.data?.symbol || '')
         } catch (error) {
           console.error('获取策略代码失败:', error)
-          setCode('')
+          setSymbol('')
         } finally {
           setCodeLoading(false)
         }

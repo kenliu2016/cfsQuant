@@ -102,7 +102,7 @@ export default function Market() {
       // 日线图不需要额外的时分秒信息
       const res = await client.get('/api/market/daily', {
         params: {
-          code: v.code,
+          symbol: v.symbol,
           start: start.format('YYYY-MM-DD HH:mm:ss'),
           end: end.format('YYYY-MM-DD HH:mm:ss')
         }
@@ -127,7 +127,7 @@ export default function Market() {
       
       const res = await client.get('/api/market/intraday', {
         params: {
-          code: v.code,
+          symbol: v.symbol,
           start: start.format('YYYY-MM-DD HH:mm:ss'),
           end: end.format('YYYY-MM-DD HH:mm:ss')
         }
@@ -156,7 +156,7 @@ export default function Market() {
   // 当时间范围或代码变更时自动重新加载数据
   const handleTimeRangeChange = (changedValues: any) => {
     // 只在时间范围或代码改变时触发重新加载
-    if (changedValues.timeRange || changedValues.code) {
+    if (changedValues.timeRange || changedValues.symbol) {
       if (activeTab === 'daily') {
         debouncedFetchDaily();
       } else if (activeTab === 'rt') {
@@ -544,7 +544,7 @@ export default function Market() {
   return (
     <Card title="Market 行情">
       <Form form={form} layout="inline" onValuesChange={handleTimeRangeChange}>
-        <Form.Item name="code" label="标的" rules={[{required:true}]}>
+        <Form.Item name="symbol" label="标的" rules={[{required:true}]}>
           <SymbolSelector style={{width: 220}} />
         </Form.Item>
         <Form.Item name="timeRange" label="时间范围" rules={[{required:true}]}>

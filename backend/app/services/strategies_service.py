@@ -98,7 +98,7 @@ def load_strategy_code(strategy_name: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
-def save_strategy_code(strategy_name: str, code: str, tenant_id: Optional[str] = None):
+def save_strategy_code(strategy_name: str, symbol: str, tenant_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(code)

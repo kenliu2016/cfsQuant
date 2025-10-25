@@ -31,7 +31,7 @@ def get_exchange(name):
 # ================== 分区工具 ==================
 def ensure_partition(conn, table, target_date):
     """在写入前确保分区存在"""
-    if table in ["market_minute_klines", "market_hour_klines"]:
+    if table in ["market_ohlcv_1m", "market_ohlcv_1h"]:
         month_start = target_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         next_month = (month_start + timedelta(days=32)).replace(day=1)
         partition_name = f"{table}_{month_start.strftime('%Y_%m')}"
@@ -41,7 +41,7 @@ def ensure_partition(conn, table, target_date):
         FOR VALUES FROM ('{month_start.strftime('%Y-%m-%d')}') 
                      TO ('{next_month.strftime('%Y-%m-%d')}')
         """
-    elif table == "market_day_klines":
+    elif table == "market_ohlcv_1d":
         year_start = target_date.replace(month=1, day=1)
         next_year = year_start.replace(year=year_start.year + 1)
         partition_name = f"{table}_{year_start.year}"
@@ -65,7 +65,7 @@ def upsert_ohlcv(exchange, symbol, df, timeframe, conn):
     if df.empty:
         return
 
-    table_map = {"1m": "market_minute_klines", "1h": "market_hour_klines", "1d": "market_day_klines"}
+    table_map = {"1m": "market_ohlcv_1m", "1h": "market_ohlcv_1h", "1d": "market_ohlcv_1d"}
     table = table_map[timeframe]
     # 生成 code 值，格式为 exchange-code
     code = f"{exchange}-{symbol}"
@@ -138,7 +138,7 @@ if __name__ == "__main__":
 
     # 获取活跃交易对
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT exchange, code FROM market_codes WHERE quoteCurrency='USDT' and active=false")
+        cur.execute("SELECT exchange, symbol FROM market_codes WHERE quoteCurrency='USDT' and active=false")
         codes = cur.fetchall()
     logger.info(f"查询到 {len(codes)} 个交易对")
 

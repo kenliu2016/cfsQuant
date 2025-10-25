@@ -29,7 +29,8 @@ app.exception_handler(RequestValidationError)(validation_exception_handler)
 
 # Routes
 app.include_router(health.router)
-app.include_router(market.router)
+app.include_router(market.public_router)  # 公共market接口（先注册，不需要认证）
+app.include_router(market.router)  # 需要认证的market接口
 app.include_router(strategies.router)
 app.include_router(backtest.router)
 app.include_router(runs.router)

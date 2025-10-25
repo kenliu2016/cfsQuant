@@ -651,11 +651,11 @@ const ReportDetail: React.FC = () => {
                         </div>
                         <div>
                           <div style={{fontSize: '14px', color: '#666'}}>交易标的</div>
-                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{currentRunDetail.code || '-'}</div>
+                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{currentRunDetail.symbol || '-'}</div>
                         </div>
                         <div>
-                          <div style={{fontSize: '14px', color: '#666'}}>回测区间</div>
-                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{currentRunDetail.interval || '-'}</div>
+                          <div style={{fontSize: '14px', color: '#666'}}>时间间隔</div>
+                          <div style={{fontSize: '18px', fontWeight: 500, color: '#333'}}>{currentRunDetail.timeframe || '-'}</div>
                         </div>
                         <div>
                           <div style={{fontSize: '14px', color: '#666'}}>开始时间</div>
@@ -850,7 +850,7 @@ const ReportDetail: React.FC = () => {
                         className="transition-all duration-300"
                         columns={[
                           {title: '时间', dataIndex: 'datetime', key: 'datetime', render: formatDateTime, width: 160, ellipsis: false},
-                          {title: '标的', dataIndex: 'code', key: 'code', width: 100},
+                          {title: '标的', dataIndex: 'symbol', key: 'symbol', width: 100},
                           {title: '方向', dataIndex: 'side', key: 'side', width: 80},
                           {title: '交易类型', dataIndex: 'trade_type', key: 'trade_type', width: 100},
                           {title: '交易前均价', dataIndex: 'avg_price', key: 'avg_price', render: (value: number) => formatPrice(value), width: 120},
@@ -884,7 +884,7 @@ const ReportDetail: React.FC = () => {
                           // 准备导出数据
                           const exportData = currentRunTrades.map(trade => ({
                             '时间': formatDateTime(trade.datetime),
-                            '标的': trade.code,
+                            '标的': trade.symbol,
                             '方向': trade.side,
                             '交易类型': trade.trade_type || 'normal',
                             '交易前均价': trade.avg_price ? trade.avg_price.toFixed(Math.min(4, trade.avg_price.toString().split('.')[1]?.length || 0)) : '-',

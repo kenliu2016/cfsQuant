@@ -4,8 +4,7 @@ import type { SelectProps } from 'antd';
 import client from '../api/client';
 
 interface SymbolData {
-  code: string;
-  excode: string;
+  symbol: string;
   exchange: string;
   name?: string;
 }
@@ -36,12 +35,11 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
         }
       });
       
-      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string, excode: string }] }
+      // 假设后端返回的数据结构是 { rows: [{ code: string, exchange: string }] }
       const marketCodes = response.data.rows || [];
       // 将数据转换为前端需要的格式
       return marketCodes.map((item: any) => ({
-        code: item.excode,
-        excode: item.excode, 
+        symbol: item.code,
         exchange: item.exchange,
         name: item.name || '' // 保留name字段用于过滤
       }));
@@ -83,7 +81,7 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
     const labelMatch = lowerLabel.includes(lowerInput);
     
     // 如果有name属性，也检查name是否包含输入的关键字
-    const symbolInfo = symbols.find(s => s.code === option.value);
+    const symbolInfo = symbols.find(s => s.symbol === option.value);
     const nameMatch = !!(symbolInfo && symbolInfo.name && 
                     symbolInfo.name.toLowerCase().includes(lowerInput));
     
@@ -100,7 +98,7 @@ const SymbolSelector: React.FC<SymbolSelectorProps> = ({
         borderColor: '#4E4E6A',
         ...(otherProps.style || {})
       }}
-      options={symbols.map(s => ({ label: s.code, value: s.code }))}
+      options={symbols.map(s => ({ label: s.symbol, value: s.symbol }))}
       loading={isLoading}
       placeholder="选择股票"
       size="small"

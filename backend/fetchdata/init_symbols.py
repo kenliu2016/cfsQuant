@@ -127,10 +127,9 @@ def get_top_symbols(exchange, limit=None):
 @retry_with_backoff(max_retries=3, base_delay=1, max_delay=10)
 def upsert_codes(exchange, symbols):
     sql = """
-    INSERT INTO market_codes (exchange, code, active, excode, baseCurrency, quoteCurrency)
+    INSERT INTO market_codes (exchange, symbol, active, baseCurrency, quoteCurrency)
     VALUES %s
-    ON CONFLICT (exchange, code) DO UPDATE SET 
-        excode = EXCLUDED.excode,
+    ON CONFLICT (exchange, symbol) DO UPDATE SET 
         baseCurrency = EXCLUDED.baseCurrency,
         quoteCurrency = EXCLUDED.quoteCurrency,
         updated_at = timezone('utc', now())
@@ -145,7 +144,7 @@ def upsert_codes(exchange, symbols):
             base_currency = s
             quote_currency = ''
         
-        rows.append((exchange, s, False, f"{exchange}-{s}", base_currency, quote_currency))
+        rows.append((exchange, s, False, base_currency, quote_currency))
     
     with get_connection() as conn, conn.cursor() as cur:
         execute_values(cur, sql, rows)

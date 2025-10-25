@@ -6,8 +6,7 @@ import client from '../../api/client';
 // 定义交易对的接口
 interface MarketCode {
   exchange: string;
-  code: string;
-  excode: string;
+  symbol: string;
   active: boolean;
   watch: boolean;
 }
@@ -149,8 +148,7 @@ const MarketCodesTab: React.FC = () => {
     setCurrentCode(record);
     editForm.setFieldsValue({
       exchange: record.exchange,
-      code: record.code,
-      excode: record.excode,
+      symbol: record.symbol,
       active: record.active,
       watch: record.watch
     });
@@ -189,9 +187,9 @@ const MarketCodesTab: React.FC = () => {
     try {
       // 使用查询参数而不是路径参数，避免URL路径中的斜杠问题
       const url = `/api/market/market_codes`;
-      console.log('Sending PUT request to:', url, 'with params:', { exchange: currentCode.exchange, code: currentCode.code });
+      console.log('Sending PUT request to:', url, 'with params:', { exchange: currentCode.exchange, symbol: currentCode.symbol });
       const response = await client.put(url, values, {
-        params: { exchange: currentCode.exchange, code: currentCode.code }
+        params: { exchange: currentCode.exchange, symbol: currentCode.symbol }
       });
       console.log('Update response:', response);
       message.success('更新成功');
@@ -218,13 +216,13 @@ const MarketCodesTab: React.FC = () => {
   };
 
   // 删除交易对
-  const handleDelete = async (exchange: string, code: string) => {
+  const handleDelete = async (exchange: string, symbol: string) => {
     try {
       // 使用查询参数而不是路径参数，避免URL路径中的斜杠问题
       const url = `/api/market/market_codes`;
-      console.log('Sending DELETE request to:', url, 'with params:', { exchange, code });
+      console.log('Sending DELETE request to:', url, 'with params:', { exchange, symbol });
       const response = await client.delete(url, {
-        params: { exchange, code }
+        params: { exchange, symbol }
       });
       console.log('Delete response:', response);
       message.success('删除成功');
@@ -328,11 +326,6 @@ const MarketCodesTab: React.FC = () => {
       key: 'code',
     },
     {
-      title: '交易所代码',
-      dataIndex: 'excode',
-      key: 'excode',
-    },
-    {
       title: '数据接入',
       dataIndex: 'active',
       key: 'active',
@@ -366,7 +359,7 @@ const MarketCodesTab: React.FC = () => {
           </Button>
           <Popconfirm
             title="确定要删除这个交易对吗？"
-            onConfirm={() => handleDelete(record.exchange, record.code)}
+            onConfirm={() => handleDelete(record.exchange, record.symbol)}
             okText="是"
             cancelText="否"
           >
@@ -507,7 +500,7 @@ const MarketCodesTab: React.FC = () => {
             rowSelection={rowSelection}
             columns={columns}
             dataSource={marketCodes}
-            rowKey={(record) => `${record.exchange}:${record.code}`}
+            rowKey={(record) => `${record.exchange}:${record.symbol}`}
             loading={loading}
             pagination={{
               current: currentPage,
@@ -549,13 +542,7 @@ const MarketCodesTab: React.FC = () => {
           >
             <Input placeholder="请输入代码" />
           </Form.Item>
-          <Form.Item
-            name="excode"
-            label="交易所代码"
-            rules={[{ required: true, message: '请输入交易所代码' }]}
-          >
-            <Input placeholder="请输入交易所代码" />
-          </Form.Item>
+
           <Form.Item name="active" label="数据接入" valuePropName="checked">
             <Checkbox>是否启用数据接入</Checkbox>
           </Form.Item>
@@ -591,9 +578,7 @@ const MarketCodesTab: React.FC = () => {
           <Form.Item name="code" label="代码">
             <Input disabled />
           </Form.Item>
-          <Form.Item name="excode" label="交易所代码">
-            <Input disabled />
-          </Form.Item>
+
           <Form.Item name="active" label="数据接入" valuePropName="checked">
             <Checkbox>是否启用数据接入</Checkbox>
           </Form.Item>

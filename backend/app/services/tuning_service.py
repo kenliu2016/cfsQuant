@@ -34,7 +34,7 @@ enable_memory_optimization = True  # 默认为开启内存优化
 
 
 @celery_app.task(bind=True, name='app.services.tuning_service.run_parameter_tuning', queue='tuning')
-def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_time: str, end_time: str, params_grid: Dict[str, list], interval: str = '1m', total: int = 1, tenant_id: str = 'public'):
+def run_parameter_tuning(self, task_id: str, strategy: str, symbol: str, start_time: str, end_time: str, params_grid: Dict[str, list], timeframe: str = '1m', total: int = 1, tenant_id: str = 'public'):
     """
     运行参数调优任务
     
@@ -42,18 +42,18 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         self: Celery任务实例
         task_id: 任务ID
         strategy: 策略名称
-        code: 交易对代码
+        symbol: 交易对代码
         start_time: 开始时间
         end_time: 结束时间
         params_grid: 参数网格
-        interval: K线周期
+        timeframe: K线周期
         total: 总任务数
         
     Returns:
         Dict: 调优结果
     """
     tenant = tenant_id or get_current_tenant()
-    logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, code={code}, tenant={tenant}")
+    logger.info(f"开始执行调优任务: task_id={task_id}, strategy={strategy}, symbol={symbol}, tenant={tenant}")
     # 记录当前实例类型，确认任务实际在哪里执行
     logger.info(f"任务{task_id}正在{IS_SECONDARY_INSTANCE and 'secondary' or 'primary'}实例上执行")
     
@@ -117,7 +117,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         # 我们需要先实例化服务类
         from .market_service import MarketDataService
         market_service = MarketDataService()
-        candles_result = market_service.get_candles(code, start_time, end_time, interval)
+        candles_result = market_service.get_candles(symbol, start_time, end_time, timeframe)
         
         # 检查candles_result是否为空或None
         if candles_result is None:
@@ -140,7 +140,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         
         # 检查DataFrame是否为空
         if df.empty:
-            raise ValueError(f"获取的K线数据为空，交易对代码: {code}")
+            raise ValueError(f"获取的K线数据为空，交易对代码: {symbol}")
         
         # 内存优化：只保留必要的列
         if enable_memory_optimization and not df.empty:
@@ -168,13 +168,13 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
                 
             try:
                 p = {k:v for k,v in zip(keys, vals)} if keys else {}
-                # 构建完整的参数对象，包含interval
+                # 构建完整的参数对象，包含timeframe
                 # 使用正确的参数名：start_time和end_time，而不是start和end
                 full_params = {
-                    'code': code,
+                    'symbol': symbol,
                     'start_time': start_time,
                     'end_time': end_time,
-                    'interval': interval,
+                    'timeframe': timeframe,
                     **p
                 }
                 
@@ -320,7 +320,7 @@ def run_parameter_tuning(self, task_id: str, strategy: str, code: str, start_tim
         # 重新抛出异常，让Celery记录错误
         raise
 
-def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], interval: str = '1m', 
+def start_tuning_async(strategy: str, symbol: str, params_grid: Dict[str, list], timeframe: str = '1m', 
                       start: str = None, end: str = None, start_time: str = None, end_time: str = None,
                       params_config: str = None, tenant_id: Optional[str] = None) -> str:
     """
@@ -328,9 +328,9 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
     
     Args:
         strategy: 策略名称
-        code: 交易对代码（注意：这里实际上接收的是前端传入的excode值）
+        symbol: 交易对代码
         params_grid: 参数网格
-        interval: K线周期
+        timeframe: K线周期
         start: 开始时间（旧参数名，向后兼容）
         end: 结束时间（旧参数名，向后兼容）
         start_time: 开始时间（新参数名）
@@ -387,9 +387,9 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
             'total': total,
             'finished': 0,
             'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-            # 注意：这里存储的是前端传入的excode值
-            'code': code,
-            'interval': interval,
+            # 存储交易对代码
+            'code': symbol,
+            'timeframe': timeframe,
             'start_time': start_time,  # 保存开始时间
             'end_time': end_time,      # 保存结束时间
             'params': params_json  # 保存参数网格的JSON字符串
@@ -405,7 +405,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
         logger.info(f"当前实例类型: {'secondary' if IS_SECONDARY_INSTANCE else 'primary'}")
         if IS_SECONDARY_INSTANCE:
             # 在第二套实例上，直接提交任务
-            run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total, tenant)
+            run_parameter_tuning.delay(task_id, strategy, symbol, start_time, end_time, params_grid, timeframe, total, tenant)
             logger.info(f"在secondary实例上直接提交调优任务: {task_id}")
         else:
             # 在主实例上，需要将任务转发到第二套实例
@@ -424,11 +424,11 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
                     forward_data = {
                         "task_id": task_id,
                         "strategy": strategy,
-                        "code": code,
+                        "symbol": symbol,
                         "start_time": start_time,
                         "end_time": end_time,
                         "params_grid": params_grid,
-                        "interval": interval,
+                        "timeframe": timeframe,
                         "total": total,
                         "tenant_id": tenant
                     }
@@ -469,7 +469,7 @@ def start_tuning_async(strategy: str, code: str, params_grid: Dict[str, list], i
             # 如果所有重试都失败，尝试在本地执行任务
             if not forwarded:
                 logger.warning(f"所有转发尝试都失败，在primary实例上执行调优任务: {task_id}")
-                run_parameter_tuning.delay(task_id, strategy, code, start_time, end_time, params_grid, interval, total, tenant)
+                run_parameter_tuning.delay(task_id, strategy, symbol, start_time, end_time, params_grid, timeframe, total, tenant)
     except Exception as e:
         # 如果提交失败，更新任务状态为错误
         logger.error(f"提交调优任务失败: {str(e)}")
@@ -496,7 +496,7 @@ def get_all_tuning_tasks(tenant_id: Optional[str] = None) -> List[Dict[str, Any]
     try:
         # 从数据库获取所有任务状态，包括新添加的字段
         tenant = tenant_id or get_current_tenant()
-        query = "SELECT task_id, strategy, status, total, finished, start_time, created_at, error, code, params FROM tuning_tasks WHERE tenant_id = :tenant_id ORDER BY created_at DESC"
+        query = "SELECT task_id, strategy, status, total, finished, start_time, created_at, error, symbol, params FROM tuning_tasks WHERE tenant_id = :tenant_id ORDER BY created_at DESC"
         result = fetch_df(query, tenant_id=tenant)
         
         if result.empty:
@@ -513,9 +513,8 @@ def get_all_tuning_tasks(tenant_id: Optional[str] = None) -> List[Dict[str, Any]
                 'start_time': str(row['start_time']) if pd.notna(row['start_time']) else None,
                 'created_at': str(row['created_at']),
                 'error': row['error'] if pd.notna(row['error']) else None,
-                # 注意：在数据库中存储的code字段实际上是前端传入的excode值
-                'code': row['code'] if pd.notna(row['code']) else '',  # 数据库中存储的是excode值
-                'excode': row['code'] if pd.notna(row['code']) else '',  # 保持与前端一致的excode值
+                # 注意：在数据库中存储的symbol字段是交易对代码
+                'symbol': row['symbol'] if pd.notna(row['symbol']) else '',  # 交易对代码
                 'params': row['params'] if pd.notna(row['params']) else '{}'  # 参数网格JSON字符串
             }
             tasks.append(task_info)
@@ -616,10 +615,10 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
                 }
                 runs.append(run_info)
         
-        # 从tuning_tasks表中获取code值
-        code_query = "SELECT code FROM tuning_tasks WHERE task_id = :task_id AND tenant_id = :tenant_id"
-        code_result = fetch_df(code_query, task_id=task_id, tenant_id=tenant)
-        code_value = code_result['code'].iloc[0] if not code_result.empty else ''
+        # 从tuning_tasks表中获取symbol值
+        symbol_query = "SELECT symbol FROM tuning_tasks WHERE task_id = :task_id AND tenant_id = :tenant_id"
+        symbol_result = fetch_df(symbol_query, task_id=task_id, tenant_id=tenant)
+        symbol_value = symbol_result['symbol'].iloc[0] if not symbol_result.empty else ''
         
         status_info = {
             'task_id': task_id,
@@ -633,8 +632,7 @@ def get_tuning_status(task_id: str, page: Optional[int] = None, page_size: Optio
             'runs_total_count': runs_total_count,
             'page': page,
             'page_size': page_size,
-            'code': code_value,  # 注意：数据库中存储的code字段实际上是前端传入的excode值
-            'excode': code_value  # 保持与前端一致的excode值
+            'symbol': symbol_value  # 交易对代码
         }
         
         # 移除调试日志，避免不必要的日志输出

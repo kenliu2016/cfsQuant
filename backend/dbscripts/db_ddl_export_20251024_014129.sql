@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS public.backtest_reports (
 -- 表: backtest_runs
 CREATE TABLE IF NOT EXISTS public.backtest_runs (
     strategy varchar NOT NULL,
-    code varchar NOT NULL,
+    symbol varchar NOT NULL,
     start_time timestamp NOT NULL,
     end_time timestamp NOT NULL,
     initial_capital float8 NOT NULL,
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS public.backtest_runs (
     final_return float8,
     max_drawdown float8,
     sharpe float8,
-    interval varchar,
+    timeframe varchar,
     win_rate float8,
     trade_count int4,
     total_fee float8,
@@ -147,7 +147,7 @@ COMMENT ON COLUMN public.backtest_runs.total_profit IS '总收益 - 所有交易
 CREATE TABLE IF NOT EXISTS public.backtest_trades (
     run_id varchar NOT NULL,
     datetime timestamp NOT NULL,
-    code varchar NOT NULL,
+    symbol varchar NOT NULL,
     side varchar NOT NULL,
     price numeric NOT NULL,
     qty numeric NOT NULL,
@@ -251,7 +251,7 @@ COMMENT ON COLUMN public.indecator_hmm.probability IS '状态概率';
 -- 表: indecator_vmr
 CREATE TABLE IF NOT EXISTS public.indecator_vmr (
     id int4 NOT NULL,
-    code varchar NOT NULL,
+    symbol varchar NOT NULL,
     timeframe varchar NOT NULL,
     datetime timestamp NOT NULL,
     vmr numeric NOT NULL,
@@ -260,7 +260,7 @@ CREATE TABLE IF NOT EXISTS public.indecator_vmr (
     created_at timestamp DEFAULT now(),
     PRIMARY KEY (id)
 );
-COMMENT ON COLUMN public.indecator_vmr.code IS '交易对代码';
+COMMENT ON COLUMN public.indecator_vmr.symbol IS '交易对代码';
 COMMENT ON COLUMN public.indecator_vmr.timeframe IS '时间周期（如：1h, 4h, 1d等）';
 COMMENT ON COLUMN public.indecator_vmr.datetime IS '指标计算时间点';
 COMMENT ON COLUMN public.indecator_vmr.vmr IS '成交量动量比率值';
@@ -270,7 +270,7 @@ COMMENT ON COLUMN public.indecator_vmr.price_change IS '价格变化';
 -- 表: market_codes
 CREATE TABLE IF NOT EXISTS public.market_codes (
     exchange text NOT NULL,
-    code text NOT NULL,
+    symbol text NOT NULL,
     active bool NOT NULL DEFAULT false,
     excode text NOT NULL DEFAULT 1,
     watch bool NOT NULL DEFAULT false,
@@ -278,7 +278,7 @@ CREATE TABLE IF NOT EXISTS public.market_codes (
     quotecurrency text,
     created_at timestamptz DEFAULT timezone('utc'::text, now()),
     updated_at timestamptz DEFAULT timezone('utc'::text, now()),
-    PRIMARY KEY (exchange, code)
+    PRIMARY KEY (exchange, symbol)
 );
 
 -- 表: market_crypto_listings - 市场加密货币列表数据表
@@ -489,8 +489,8 @@ CREATE TABLE IF NOT EXISTS public.tuning_tasks (
     start_time timestamp,
     timeout timestamp,
     error text,
-    code text,
-    interval text,
+    symbol text,
+    timeframe text,
     end_time timestamp,
     params text,
     tenant_id varchar NOT NULL,
@@ -922,8 +922,8 @@ CREATE INDEX idx_backtest_runs_tenant_created_at ON public.backtest_runs USING b
 -- 索引: idx_backtest_runs_tenant_strategy (表: backtest_runs)
 CREATE INDEX idx_backtest_runs_tenant_strategy ON public.backtest_runs USING btree (tenant_id, strategy, created_at DESC);
 
--- 索引: idx_runs_code (表: backtest_runs)
-CREATE INDEX idx_runs_code ON public.backtest_runs USING btree (code);
+-- 索引: idx_runs_symbol (表: backtest_runs)
+CREATE INDEX idx_runs_symbol ON public.backtest_runs USING btree (symbol);
 
 -- 索引: idx_runs_strategy (表: backtest_runs)
 CREATE INDEX idx_runs_strategy ON public.backtest_runs USING btree (strategy);
@@ -949,8 +949,8 @@ CREATE INDEX indecator_bull_bear_metrics_idx ON public.indecator_bull_bear_metri
 -- 索引: indecator_metrics_idx (表: indecator_bull_bear_metrics)
 CREATE INDEX indecator_metrics_idx ON public.indecator_bull_bear_metrics USING btree (exchange, symbol, datetime);
 
--- 索引: idx_vmr_metrics_code_timeframe_datetime (表: indecator_vmr)
-CREATE INDEX idx_vmr_metrics_code_timeframe_datetime ON public.indecator_vmr USING btree (code, timeframe, datetime);
+-- 索引: idx_vmr_metrics_symbol_timeframe_datetime (表: indecator_vmr)
+CREATE INDEX idx_vmr_metrics_symbol_timeframe_datetime ON public.indecator_vmr USING btree (symbol, timeframe, datetime);
 
 -- 索引: idx_market_crypto_cmc_rank (表: market_crypto_listings)
 CREATE INDEX idx_market_crypto_cmc_rank ON public.market_crypto_listings USING btree (cmc_rank);
@@ -1016,10 +1016,10 @@ CREATE INDEX idx_tuning_results_task ON public.tuning_results USING btree (task_
 CREATE INDEX idx_tuning_results_tenant_task ON public.tuning_results USING btree (tenant_id, task_id, created_at);
 
 -- 索引: idx_tuning_tasks_code (表: tuning_tasks)
-CREATE INDEX idx_tuning_tasks_code ON public.tuning_tasks USING btree (code);
+CREATE INDEX idx_tuning_tasks_symbol ON public.tuning_tasks USING btree (symbol);
 
--- 索引: idx_tuning_tasks_interval (表: tuning_tasks)
-CREATE INDEX idx_tuning_tasks_interval ON public.tuning_tasks USING btree ("interval");
+-- 索引: idx_tuning_tasks_timeframe (表: tuning_tasks)
+CREATE INDEX idx_tuning_tasks_timeframe ON public.tuning_tasks USING btree (timeframe);
 
 -- 索引: idx_tuning_tasks_start_end_time (表: tuning_tasks)
 CREATE INDEX idx_tuning_tasks_start_end_time ON public.tuning_tasks USING btree (start_time, end_time);

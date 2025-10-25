@@ -54,7 +54,7 @@ class TradeRecord:
     """交易记录数据类"""
     run_id: str
     datetime: datetime
-    code: str
+    symbol: str
     side: str
     trade_type: str
     price: float
@@ -74,7 +74,7 @@ class TradeRecord:
 class BacktestResult:
     """回测结果数据类"""
     run_id: str
-    code: str
+    symbol: str
     start_time: str
     end_time: str
     strategy: str
@@ -433,7 +433,7 @@ class DatabaseManager:
                 self._save_trades(trades)
                 backtest_service_logger.info(f"回测ID={result.run_id}: 保存了 {len(trades)} 条交易记录")
             if nav_list:
-                self._save_equity_curve(result.run_id, result.code, nav_list, result.nav.index)
+                self._save_equity_curve(result.run_id, result.symbol, nav_list, result.nav.index)
                 backtest_service_logger.info(f"回测ID={result.run_id}: 保存了净值曲线数据")
             if result.grid_levels:
                 self._save_grid_levels(result.run_id, result.grid_levels)
@@ -460,10 +460,10 @@ class DatabaseManager:
             'tenant_id': self.tenant_id,
             'created_by': result.created_by,
             'strategy': result.strategy,
-            'code': result.code,
+            'symbol': result.symbol,
             'start_time': start_time_value,
             'end_time': end_time_value,
-            'interval': result.params.get('interval', '1m'),
+            'timeframe': result.params.get('timeframe', '1m'),
             'initial_capital': result.params.get('E_initial_capital', 100000),
             'final_capital': metrics.get('final_capital'),
             'final_return': metrics.get('final_return'),
@@ -485,7 +485,7 @@ class DatabaseManager:
             "run_id": trade.run_id,
             "tenant_id": self.tenant_id,
             "datetime": trade.datetime,
-            "code": trade.code,
+            "symbol": trade.symbol,
             "side": trade.side,
             "trade_type": trade.trade_type,
             "price": trade.price,
@@ -506,7 +506,7 @@ class DatabaseManager:
         trades_df.to_sql("backtest_trades", con=self.engine, if_exists="append", index=False)
         self.logger.info(f"成功写入backtest_trades表: {len(trades_df)} 条记录")
     
-    def _save_equity_curve(self, run_id: str, code: str, nav_list: List[float], 
+    def _save_equity_curve(self, run_id: str, symbol: str, nav_list: List[float], 
                           datetime_index: pd.Index):
         """保存净值曲线"""
         equity_df = pd.DataFrame({
@@ -711,8 +711,8 @@ class BacktestEngine:
         # 参数
         fee_rate = float(params.get("E_fee_rate", 0.001))
         base_slippage = float(params.get("E_slippage", 0.0002))
-        # 支持code或excode字段
-        code = params.get("code")
+        # 获取交易对代码
+        symbol = params.get("symbol")
         
         # 回测数据
         data = df.reset_index(drop=True)
@@ -839,7 +839,7 @@ class BacktestEngine:
             trade = TradeRecord(
                 run_id=backtest_id,
                 datetime=dt,
-                code=code,
+                symbol=symbol,
                 side="buy" if delta_qty > 0 else "sell",
                 trade_type=final_signal.signal_type,
                 price=exec_price,
@@ -909,7 +909,7 @@ class BacktestEngine:
         
         result = BacktestResult(
             run_id=backtest_id,
-            code=code,
+            symbol=symbol,
             start_time=start_time_value,
             end_time=end_time_value,
             strategy=strategy_name,
@@ -946,7 +946,7 @@ class BacktestEngine:
         # 直接返回结果
         return {
             "run_id": backtest_id,
-            "code": code,
+            "symbol": symbol,
             "start_time": result.start_time,
             "end_time": result.end_time,
             "strategy": strategy_name,

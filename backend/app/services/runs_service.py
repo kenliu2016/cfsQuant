@@ -36,14 +36,14 @@ def _ensure_run_access(run_id: str, tenant_id: str, current_user: Optional[Dict[
         return {'tenant': tenant, 'created_by': created_by}
     raise PermissionError("forbidden")
 
-def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None) -> dict:
+def recent_runs(limit: int = 20, page: int = 1, symbol: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, tenant_id: Optional[str] = None, current_user: Optional[Dict[str, Any]] = None) -> dict:
     """
     获取回测运行记录，支持分页、过滤和排序，包含最大回撤和夏普率指标
     
     Args:
         limit: 每页记录数
         page: 当前页码
-        code: 标的代码过滤
+        symbol: 标的代码过滤
         strategy: 策略名称过滤
         sortField: 排序字段
         sortOrder: 排序方向 ('ascend' 或 'descend')
@@ -59,7 +59,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     SELECT 
         r.run_id, 
         r.strategy, 
-        r.code, 
+        r.symbol, 
         r.start_time, 
         r.end_time, 
         r.initial_capital, 
@@ -84,9 +84,9 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
     params = {'limit': limit, 'offset': offset, 'tenant_id': tenant}
     filters.append("r.tenant_id = :tenant_id")
     
-    if code:
-        filters.append("r.code = :code")
-        params['code'] = code
+    if symbol:
+        filters.append("r.symbol = :symbol")
+        params['symbol'] = symbol
     
     if strategy:
         filters.append("r.strategy = :strategy")
@@ -109,7 +109,7 @@ def recent_runs(limit: int = 20, page: int = 1, code: str = None, strategy: str 
         'maxDrawdown': 'max_drawdown',
         'sharpe': 'sharpe',
         'strategy': 'r.strategy',
-        'code': 'r.code',
+        'code': 'r.symbol',
         'created_at': 'r.created_at',
         'win_rate': 'r.win_rate',
         'trade_count': 'r.trade_count',
@@ -217,7 +217,7 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optio
     # 获取基本回测信息，包含新增的paras字段和所有指标
     access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
     tenant = access['tenant']
-    df_run = fetch_df("""SELECT run_id, strategy, code, start_time, end_time, interval, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit, created_by
+    df_run = fetch_df("""SELECT run_id, strategy, symbol, start_time, end_time, timeframe, initial_capital, final_capital, created_at, paras, max_drawdown, sharpe, win_rate, trade_count, total_fee, total_profit, created_by
                          FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
     
     # 日志记录查询结果
@@ -228,10 +228,10 @@ def run_detail(run_id: str, tenant_id: Optional[str] = None, current_user: Optio
         default_run_info = {
             "run_id": run_id,
             "strategy": "未知策略",
-            "code": "未知标的",
+            "symbol": "未知标的",
             "start_time": "",
             "end_time": "",
-            "interval": "1m",
+            "timeframe": "1m",
             "initial_capital": 0.0,
             "final_capital": 0.0,
             "created_at": datetime.datetime.now().isoformat(),
@@ -611,11 +611,11 @@ def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = N
         # 获取回测运行的基本信息
         access = _ensure_run_access(run_id, tenant_id or get_current_tenant(), current_user)
         tenant = access['tenant']
-        df_run = fetch_df("""SELECT code, interval, start_time, end_time FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
+        df_run = fetch_df("""SELECT symbol, timeframe, start_time, end_time FROM backtest_runs WHERE run_id=:rid AND tenant_id = :tenant_id""", rid=run_id, tenant_id=tenant)
         if not df_run.empty:
             run_data = df_run.iloc[0]
-            code = run_data.get('code', '')
-            interval = run_data.get('interval', '1m')
+            symbol = run_data.get('symbol', '')
+            timeframe = run_data.get('timeframe', '1m')
             start_time = run_data.get('start_time', '')
             end_time = run_data.get('end_time', '')
             
@@ -625,7 +625,7 @@ def get_run_klines(run_id: str, limit: int = 30000, tenant_id: Optional[str] = N
                 market_service = MarketDataService()
                 
                 # 调用市场服务获取K线数据
-                df_candles, _ = market_service.get_candles(code, start_time, end_time, interval)
+                df_candles, _ = market_service.get_candles(symbol, start_time, end_time, timeframe)
                 
                 # 再次检查实际数据量
                 if not df_candles.empty and len(df_candles) > limit:

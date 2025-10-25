@@ -36,13 +36,13 @@ def convert_numpy_types(data):
     return data
 
 @router.get("/runs")
-async def runs(limit: int = 20, page: int = 1, code: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, request: Request = None):
+async def runs(limit: int = 20, page: int = 1, symbol: str = None, strategy: str = None, sortField: str = None, sortOrder: str = None, request: Request = None):
     tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
     current_user = getattr(request.state, "user", {}) or {}
     result = recent_runs(
         limit=limit,
         page=page,
-        code=code,
+        symbol=symbol,
         strategy=strategy,
         sortField=sortField,
         sortOrder=sortOrder,

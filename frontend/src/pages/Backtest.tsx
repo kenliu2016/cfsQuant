@@ -26,6 +26,7 @@ export default function Backtest() {
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [selected, setSelected] = useState<Strategy | null>(null)
   const [form] = Form.useForm()
+  const [symbol, setSymbol] = useState<string>('')
   const [code, setCode] = useState<string>('')
 
   useEffect(() => {
@@ -40,6 +41,7 @@ export default function Backtest() {
       try {
         // 拉取代码
         const { data } = await client.get(`/strategies/${s.name}/code`)
+        setSymbol(data.symbol || '')
         setCode(data.code || '')
 
         // 处理参数
@@ -51,7 +53,7 @@ export default function Backtest() {
         form.setFieldsValue({
           strategy_id: s.id,
           strategy: s.name,
-          code: '000001.SZ',
+          symbol: '000001.SZ',
           start: dayjs().add(-5, 'day'),
           end: dayjs(),
           ...init,
@@ -65,7 +67,7 @@ export default function Backtest() {
   const onRun = async () => {
     const v = await form.validateFields()
     const { data } = await client.post('/backtest', {
-      code: v.code,
+      symbol: v.symbol,
       start: v.start.format('YYYY-MM-DD HH:mm:ss'),
       end: v.end.format('YYYY-MM-DD HH:mm:ss'),
       strategy: v.strategy,
@@ -76,7 +78,7 @@ export default function Backtest() {
 
   const onSave = async () => {
     if (!selected) return
-    await client.post(`/strategies/${selected.name}/code`, { code })
+    await client.post(`/strategies/${selected.name}/code`, { symbol: symbol })
     message.success('代码已保存')
   }
 
@@ -120,7 +122,7 @@ export default function Backtest() {
                 <Form.Item name="strategy" label="策略代码">
                   <Input disabled />
                 </Form.Item>
-                <Form.Item name="code" label="标的代码" rules={[{ required: true }]}>
+                <Form.Item name="symbol" label="标的代码" rules={[{ required: true }]}>
                   <SymbolSelector />
                 </Form.Item>
                 <Form.Item name="start" label="开始时间" rules={[{ required: true }]}>

@@ -652,15 +652,15 @@ def deserialize_to_dataframe(data: List[Dict]) -> pd.DataFrame:
             # 标记为字符串列，避免后续处理将其识别为数值或日期
             df[col] = df[col].astype(str)
             # 检查并修复特殊字符串列中的NaT值和空值
-            if col == 'code':
+            if col == 'symbol':
                 if 'NaT' in df[col].values or any(pd.isna(df[col])) or any(df[col] == ''):
-                    # 尝试从数据中提取code值（如果有）
-                    valid_codes = df[col][(df[col] != 'NaT') & (df[col] != '')].dropna()
-                    if not valid_codes.empty:
-                        # 使用第一个有效code值填充空值
-                        first_valid_code = valid_codes.iloc[0]
-                        df[col] = df[col].replace({'NaT': first_valid_code, '': first_valid_code})
-                        df[col] = df[col].fillna(first_valid_code)
+                    # 尝试从数据中提取symbol值（如果有）
+                    valid_symbols = df[col][(df[col] != 'NaT') & (df[col] != '')].dropna()
+                    if not valid_symbols.empty:
+                        # 使用第一个有效symbol值填充空值
+                        first_valid_symbol = valid_symbols.iloc[0]
+                        df[col] = df[col].replace({'NaT': first_valid_symbol, '': first_valid_symbol})
+                        df[col] = df[col].fillna(first_valid_symbol)
             else:
                 # 其他特殊字符串列，将'NaT'和空值转换为空字符串
                 df[col] = df[col].replace({'NaT': ''})
@@ -938,28 +938,28 @@ def cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
     return decorator
 
 # 行情数据特定的缓存键生成函数
-def get_market_data_key(code: str, start: str, end: str, interval: str = '1m') -> str:
+def get_market_data_key(symbol: str, start: str, end: str, timeframe: str = '1m') -> str:
     """生成行情数据的缓存键"""
-    return f"market:{code}:{interval}:{start}:{end}"
+    return f"market:{symbol}:{timeframe}:{start}:{end}"
 
 # 清除特定代码的行情数据缓存
-def clear_market_data_cache(code: str = None) -> None:
+def clear_market_data_cache(symbol: str = None) -> None:
     """清除行情数据缓存"""
-    if code:
-        CacheService.clear(f"market:{code}:*")
+    if symbol:
+        CacheService.clear(f"market:{symbol}:*")
     else:
         CacheService.clear("market:*")
 
 # 批量设置行情数据缓存
-def set_market_data_cache(code: str, start: str, end: str, data: Any, interval: str = '1m', expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
+def set_market_data_cache(symbol: str, start: str, end: str, data: Any, timeframe: str = '1m', expire_time: int = DEFAULT_EXPIRE_TIME) -> None:
     """设置行情数据缓存"""
-    key = get_market_data_key(code, start, end, interval)
+    key = get_market_data_key(symbol, start, end, timeframe)
     CacheService.set(key, data, expire_time)
 
 # 获取行情数据缓存
-def get_market_data_cache(code: str, start: str, end: str, interval: str = '1m') -> Optional[Any]:
+def get_market_data_cache(symbol: str, start: str, end: str, timeframe: str = '1m') -> Optional[Any]:
     """获取行情数据缓存"""
-    key = get_market_data_key(code, start, end, interval)
+    key = get_market_data_key(symbol, start, end, timeframe)
     return CacheService.get(key)
 
 # 异步版本的缓存装饰器
@@ -1081,12 +1081,12 @@ def async_cache_dataframe_result(expire_time: int = DEFAULT_EXPIRE_TIME):
     return decorator
 
 # 异步版本的行情数据缓存函数
-async def async_clear_market_data_cache(code: str = None) -> None:
+async def async_clear_market_data_cache(symbol: str = None) -> None:
     """异步清除行情数据缓存"""
     # 简单包装同步方法，使其可以在异步任务中运行
     clear_market_data_cache(code)
 
-async def async_update_market_data_and_refresh_cache(data, table_name, code=None):
+async def async_update_market_data_and_refresh_cache(data, table_name, symbol=None):
     """异步更新市场数据并刷新相关缓存"""
     from common.db import to_sql_async
     

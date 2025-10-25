@@ -33,7 +33,7 @@ interface TuningTask {
   start_time?: string | null
   created_at: string
   error?: string | null
-  code?: string  // 新增：标的代码
+  symbol?: string  // 新增：标的代码
   params?: string  // 新增：参数网格JSON字符串
 }
 
@@ -332,8 +332,8 @@ export default function ProgressPage() {
                         <div className="table-cell table-cell-strategy">
                           <div className="task-strategy">{task.strategy}</div>
                         </div>
-                        <div className="table-cell table-cell-code">
-                          <div className="task-code">{task.code || '-'}</div>
+                        <div className="table-cell table-cell-symbol">
+                          <div className="task-symbol">{task.symbol || '-'}</div>
                         </div>
                         <div className="table-cell table-cell-id">
                           <div className="task-id truncate">{task.task_id}</div>
