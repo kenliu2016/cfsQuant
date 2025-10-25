@@ -1,5 +1,6 @@
 import json
 import time
+import logging
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -12,6 +13,14 @@ from ..main.tenant_context import get_current_tenant
 
 # 使用LoggerFactory替换原有logger
 logger = LoggerFactory.get_logger('strategies_service')
+
+# 添加控制台处理器以显示调试信息
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+logger.setLevel(logging.DEBUG)
 
 STRATEGY_DIR = Path(__file__).resolve().parents[2] / "strategies"
 
@@ -98,14 +107,20 @@ def load_strategy_code(strategy_name: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
-def save_strategy_code(strategy_name: str, code: str, tenant_id: Optional[str] = None):
+def save_strategy_code(strategy_name: str, code: str, tenant_id: Optional[str] = None, user_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(code)
     
     tenant = tenant_id or get_current_tenant()
     
+    # 如果没有提供用户ID，使用默认的UUID值（确保updated_by字段是有效的UUID）
+    if user_id is None:
+        user_id = "00000000-0000-0000-0000-000000000000"
+    
     # 从代码中提取DEFAULT_PARAMS并更新到数据库
+    params_json = "{}"  # 默认参数
+    
     try:
         # 使用更可靠的字符串处理方法提取DEFAULT_PARAMS
         params_start = code.find('DEFAULT_PARAMS = {')
@@ -164,63 +179,189 @@ def save_strategy_code(strategy_name: str, code: str, tenant_id: Optional[str] =
                 
                 try:
                     params_dict = json.loads(json_friendly_str)
+                    params_json = json.dumps(params_dict)
+                    logger.debug(f"解析后的参数: {params_json}")
                 except json.JSONDecodeError:
                     # 如果失败，尝试将单引号替换为双引号后再解析
                     try:
                         params_dict = json.loads(json_friendly_str.replace("'", '"'))
+                        params_json = json.dumps(params_dict)
+                        logger.debug(f"解析后的参数: {params_json}")
                     except json.JSONDecodeError as e:
                         logger.error(f"参数解析失败: {e}, JSON友好格式参数: {json_friendly_str}")
-                        raise
-                
-                params_json = json.dumps(params_dict)
-                logger.debug(f"解析后的参数: {params_json}")
-                
-                # 更新数据库
-                engine = get_engine()
-                with engine.connect() as conn:
-                    result = conn.execute(
-                        text("UPDATE sys_strategies SET params = :params, updated_at = NOW(), updated_by = :updated_by WHERE name = :name AND created_by = :created_by"),
-                        {
-                            'created_by': tenant,
-                            'updated_by': tenant,
-                            'name': strategy_name,
-                            'params': params_json
-                        }
-                    )
-                    conn.commit()
-                    
-                    # 检查是否有记录被更新
-                    if result.rowcount > 0:
-                        logger.info(f"成功更新策略 [{strategy_name}] 的参数到数据库")
-                    else:
-                        logger.warning(f"策略 [{strategy_name}] 在数据库中不存在，无法更新参数")
-                        # 尝试插入新记录
-                        try:
-                            conn.execute(
-                                text("INSERT INTO sys_strategies (created_by, name, description, params, created_at, updated_at, updated_by) VALUES (:created_by, :name, '', :params, NOW(), NOW(), :updated_by)"),
-                                {'created_by': tenant, 'updated_by': tenant, 'name': strategy_name, 'params': params_json}
-                            )
-                            conn.commit()
-                            logger.info(f"成功在数据库中创建策略 [{strategy_name}] 的记录")
-                        except Exception as e:
-                            logger.error(f"创建策略记录失败: {e}")
+                        # 参数解析失败，使用默认参数
+                        params_json = "{}"
             except Exception as e:
-                logger.error(f"提取或更新参数时出错: {e}")
+                logger.error(f"提取参数时出错: {e}")
+                # 参数提取失败，使用默认参数
+                params_json = "{}"
         else:
             logger.warning(f"在策略代码中未找到DEFAULT_PARAMS定义")
     except Exception as e:
         logger.error(f"处理策略参数时出错: {e}")
     
+    # 更新数据库（无论参数提取是否成功）
+    try:
+        logger.debug("开始获取数据库引擎")
+        engine = get_engine()
+        logger.debug(f"数据库引擎获取成功: {type(engine)}")
+        
+        logger.debug("开始建立数据库连接")
+        with engine.connect() as conn:
+            logger.debug(f"开始更新数据库，策略名: {strategy_name}, 租户ID: {tenant}, 用户ID: {user_id}")
+            
+            # 先检查记录是否存在
+            check_result = conn.execute(
+                text("SELECT name, tenant_id, created_by, updated_by, updated_at FROM sys_strategies WHERE name = :name AND tenant_id = :tenant_id"),
+                {'name': strategy_name, 'tenant_id': tenant}
+            ).fetchone()
+            
+            check_dict = None
+            if check_result:
+                # 安全地转换RealDictRow为字典
+                check_dict = {}
+                for key, value in check_result._mapping.items():
+                    check_dict[key] = value
+                logger.debug(f"找到现有记录: {check_dict}")
+            else:
+                logger.debug("未找到现有记录")
+            
+            # 调试参数格式
+            logger.debug(f"UPDATE参数 - tenant_id: {tenant}, updated_by: {user_id}, name: {strategy_name}, params: {params_json}")
+            logger.debug(f"params_json类型: {type(params_json)}, 长度: {len(params_json)}")
+            
+            # 调试参数字典
+            logger.debug("开始创建参数字典")
+            params_dict = {
+                'tenant_id': tenant,
+                'updated_by': user_id,
+                'name': strategy_name,
+                'params': params_json
+            }
+            logger.debug(f"参数字典创建成功: {params_dict}")
+            logger.debug(f"参数字典类型: {type(params_dict)}")
+            
+            # 调试SQL语句
+            logger.debug("开始准备SQL语句")
+            # 临时禁用触发器，执行UPDATE，然后重新启用触发器
+            sql_text = """
+                ALTER TABLE sys_strategies DISABLE TRIGGER trigger_update_sys_strategies_timestamp;
+                UPDATE sys_strategies SET params = :params, updated_at = NOW(), updated_by = :updated_by WHERE name = :name AND tenant_id = :tenant_id;
+                ALTER TABLE sys_strategies ENABLE TRIGGER trigger_update_sys_strategies_timestamp;
+            """
+            logger.debug(f"SQL文本: {sql_text}")
+            
+            # 检查参数名是否匹配
+            import re
+            param_names_in_sql = re.findall(r':(\w+)', sql_text)
+            logger.debug(f"SQL语句中的参数名: {param_names_in_sql}")
+            logger.debug(f"参数字典中的键: {list(params_dict.keys())}")
+            
+            # 检查参数值是否正确
+            logger.debug(f"参数值详情:")
+            logger.debug(f"  - params: {params_json[:100]}...")
+            logger.debug(f"  - updated_by: {user_id}")
+            logger.debug(f"  - name: {strategy_name}")
+            logger.debug(f"  - tenant_id: {tenant}")
+            
+            sql_query = text(sql_text)
+            logger.debug(f"SQL语句准备成功: {sql_query}")
+            logger.debug(f"SQL语句类型: {type(sql_query)}")
+            
+            # 修复参数传递格式问题 - 使用正确的SQLAlchemy参数化查询格式
+            logger.debug("开始执行数据库更新")
+            logger.debug(f"执行SQL: {sql_text}")
+            logger.debug(f"参数: {params_dict}")
+            
+            # 使用print确保调试信息显示
+            print(f"DEBUG: 即将执行UPDATE语句: {sql_text}")
+            print(f"DEBUG: 参数: {params_dict}")
+            print(f"DEBUG: user_id参数值: {user_id}")
+            
+            result = conn.execute(sql_query, params_dict)
+            logger.debug("数据库更新执行成功")
+            logger.debug(f"受影响的行数: {result.rowcount}")
+            
+            print(f"DEBUG: UPDATE执行成功，受影响行数: {result.rowcount}")
+            print(f"DEBUG: 期望的updated_by值: {user_id}")
+            
+            # 立即验证更新是否真的生效
+            immediate_check = conn.execute(
+                text("SELECT updated_by FROM sys_strategies WHERE name = :name AND tenant_id = :tenant_id"),
+                {'name': strategy_name, 'tenant_id': tenant}
+            ).fetchone()
+            if immediate_check:
+                logger.debug(f"立即检查updated_by: {immediate_check[0]}")
+                print(f"DEBUG: 立即检查updated_by: {immediate_check[0]}")
+            
+            conn.commit()
+            
+            # 检查是否有记录被更新
+            if result.rowcount > 0:
+                logger.info(f"成功更新策略 [{strategy_name}] 的参数到数据库，更新了 {result.rowcount} 条记录")
+                
+                # 立即重新查询以获取最新的记录
+                conn.commit()  # 确保事务已提交
+                
+                # 验证更新后的记录
+                updated_record = conn.execute(
+                    text("SELECT name, tenant_id, created_by, updated_by, updated_at FROM sys_strategies WHERE name = :name AND tenant_id = :tenant_id"),
+                    {'name': strategy_name, 'tenant_id': tenant}
+                ).fetchone()
+                
+                if updated_record:
+                    # 安全地转换RealDictRow为字典
+                    updated_dict = {}
+                    for key, value in updated_record._mapping.items():
+                        updated_dict[key] = value
+                    logger.debug(f"更新后记录: {updated_dict}")
+                    
+                    # 检查updated_by字段是否真的更新了
+                    if str(updated_dict.get('updated_by')) == user_id:
+                        logger.debug("✅ updated_by字段已正确更新")
+                    else:
+                        logger.warning(f"❌ updated_by字段未更新，期望: {user_id}, 实际: {updated_dict.get('updated_by')}")
+                        
+                    # 检查updated_at字段是否更新了
+                    old_updated_at = check_dict.get('updated_at') if check_dict else None
+                    new_updated_at = updated_dict.get('updated_at')
+                    if old_updated_at and new_updated_at and new_updated_at > old_updated_at:
+                        logger.debug("✅ updated_at字段已正确更新")
+                    else:
+                        logger.warning(f"❌ updated_at字段可能未更新，旧值: {old_updated_at}, 新值: {new_updated_at}")
+            else:
+                logger.warning(f"策略 [{strategy_name}] 在数据库中不存在，无法更新参数")
+                # 尝试插入新记录
+                try:
+                    conn.execute(
+                        text("INSERT INTO sys_strategies (tenant_id, created_by, name, description, params, created_at, updated_at, updated_by) VALUES (:tenant_id, :created_by, :name, '', :params, NOW(), NOW(), :updated_by)"),
+                        {'tenant_id': tenant, 'created_by': user_id, 'updated_by': user_id, 'name': strategy_name, 'params': params_json}
+                    )
+                    conn.commit()
+                    logger.info(f"成功在数据库中创建策略 [{strategy_name}] 的记录")
+                except Exception as e:
+                    logger.error(f"创建策略记录失败: {e}")
+    except Exception as e:
+        logger.error(f"数据库更新失败: {e}")
+        logger.error(f"错误类型: {type(e)}")
+        logger.error(f"错误详细信息: {str(e)}")
+        import traceback
+        logger.error(f"完整错误堆栈:\n{traceback.format_exc()}")
+    
     clear_strategies_cache(tenant)
     return {"status": "ok", "path": str(file_path)}
 
 
-def create_strategy(strategy_name: str, description: str = "", params: str = "{}", tenant_id: Optional[str] = None):
+def create_strategy(strategy_name: str, description: str = "", params: str = "{}", tenant_id: Optional[str] = None, user_id: Optional[str] = None):
     file_path = STRATEGY_DIR / f"{strategy_name}.py"
     if file_path.exists():
         return {"status":"exists", "path": str(file_path)}
     
     tenant = tenant_id or get_current_tenant()
+    
+    # 如果没有提供用户ID，使用默认的UUID值（确保created_by和updated_by字段是有效的UUID）
+    if user_id is None:
+        user_id = "00000000-0000-0000-0000-000000000000"
     
     # 定义DEFAULT_PARAMS，用于模板和数据库
     default_params = {
@@ -273,10 +414,11 @@ def run(df: pd.DataFrame, params: dict):
         engine = get_engine()
         with engine.connect() as conn:
             conn.execute(
-                text("INSERT INTO sys_strategies (created_by, name, description, params, created_at, updated_at, updated_by) VALUES (:created_by, :name, :description, :params, NOW(), NOW(), :updated_by)"),
+                text("INSERT INTO sys_strategies (tenant_id, created_by, name, description, params, created_at, updated_at, updated_by) VALUES (:tenant_id, :created_by, :name, :description, :params, NOW(), NOW(), :updated_by)"),
                 {
-                    'created_by': tenant,
-                    'updated_by': tenant,
+                    'tenant_id': tenant,
+                    'created_by': user_id,
+                    'updated_by': user_id,
                     'name': strategy_name,
                     'description': description,
                     'params': params_json
@@ -306,8 +448,8 @@ def delete_strategy(strategy_name: str, tenant_id: Optional[str] = None):
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(
-                text("DELETE FROM sys_strategies WHERE name = :name AND created_by = :created_by"),
-                {'name': strategy_name, 'created_by': tenant}
+                text("DELETE FROM sys_strategies WHERE name = :name AND tenant_id = :tenant_id"),
+                {'name': strategy_name, 'tenant_id': tenant}
             )
             conn.commit()
             if result.rowcount > 0:

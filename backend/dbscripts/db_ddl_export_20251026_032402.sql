@@ -1,7 +1,7 @@
 -- 数据库DDL导出
 -- 数据库: quant
 -- 主机: localhost:5432
--- 导出时间: 2025-10-24 01:41:34
+-- 导出时间: 2025-10-26 03:24:07
 -- 导出内容: 表、视图、索引、序列等
 
 SET statement_timeout = 0;
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS public.backtest_metrics (
 CREATE TABLE IF NOT EXISTS public.backtest_orders (
     run_id varchar,
     datetime timestamp,
-    code varchar,
+    symbol varchar,
     side varchar,
     qty float8,
     price float8,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS public.backtest_orders (
 CREATE TABLE IF NOT EXISTS public.backtest_positions (
     run_id varchar,
     datetime timestamp,
-    code varchar,
+    symbol varchar,
     qty float8,
     avg_price float8,
     tenant_id varchar NOT NULL
@@ -237,16 +237,18 @@ CREATE TABLE IF NOT EXISTS public.indecator_hmm (
     exchange varchar NOT NULL,
     symbol varchar NOT NULL,
     datetime timestamp NOT NULL,
-    state int4 NOT NULL,
-    probability numeric NOT NULL,
     created_at timestamp DEFAULT now(),
+    timeframe varchar,
+    state_prob_0 numeric,
+    state_prob_1 numeric,
+    signal varchar,
+    position numeric,
+    updated_at timestamp DEFAULT now(),
     PRIMARY KEY (id)
 );
 COMMENT ON COLUMN public.indecator_hmm.exchange IS '交易所名称';
 COMMENT ON COLUMN public.indecator_hmm.symbol IS '交易对符号';
 COMMENT ON COLUMN public.indecator_hmm.datetime IS '状态识别时间点';
-COMMENT ON COLUMN public.indecator_hmm.state IS 'HMM模型识别的状态编号';
-COMMENT ON COLUMN public.indecator_hmm.probability IS '状态概率';
 
 -- 表: indecator_vmr
 CREATE TABLE IF NOT EXISTS public.indecator_vmr (
@@ -272,7 +274,6 @@ CREATE TABLE IF NOT EXISTS public.market_codes (
     exchange text NOT NULL,
     symbol text NOT NULL,
     active bool NOT NULL DEFAULT false,
-    excode text NOT NULL DEFAULT 1,
     watch bool NOT NULL DEFAULT false,
     basecurrency text,
     quotecurrency text,
@@ -360,26 +361,6 @@ CREATE TABLE IF NOT EXISTS public.market_ohlcv_1m (
 );
 COMMENT ON COLUMN public.market_ohlcv_1m.market_cap IS '市值数据，来源于market_crypto_listings表的market_cap字段';
 
--- 表: market_ohlcv_1m_backup
-CREATE TABLE IF NOT EXISTS public.market_ohlcv_1m_backup (
-    exchange text,
-    symbol text,
-    open_ts timestamptz,
-    close_ts timestamptz,
-    open numeric,
-    high numeric,
-    low numeric,
-    close numeric,
-    volume numeric,
-    quote_volume numeric,
-    taker_buy_volume numeric,
-    taker_buy_qv numeric,
-    number_of_trades int8,
-    is_final bool,
-    market_cap numeric,
-    datetime timestamptz
-);
-
 -- 表: sys_cron_log
 CREATE TABLE IF NOT EXISTS public.sys_cron_log (
     id int4 NOT NULL,
@@ -398,10 +379,13 @@ CREATE TABLE IF NOT EXISTS public.sys_strategies (
     description text,
     params jsonb DEFAULT '{}'::jsonb,
     created_at timestamp DEFAULT now(),
-    tenant_id varchar NOT NULL,
+    created_by uuid,
+    updated_at timestamp DEFAULT now(),
+    updated_by uuid,
+    tenant_id varchar NOT NULL DEFAULT 'default_tenant'::character varying,
     PRIMARY KEY (id),
     UNIQUE (name),
-    UNIQUE (tenant_id, name)
+    UNIQUE (created_by, name)
 );
 
 -- 表: tenant_audit_logs
@@ -922,8 +906,8 @@ CREATE INDEX idx_backtest_runs_tenant_created_at ON public.backtest_runs USING b
 -- 索引: idx_backtest_runs_tenant_strategy (表: backtest_runs)
 CREATE INDEX idx_backtest_runs_tenant_strategy ON public.backtest_runs USING btree (tenant_id, strategy, created_at DESC);
 
--- 索引: idx_runs_symbol (表: backtest_runs)
-CREATE INDEX idx_runs_symbol ON public.backtest_runs USING btree (symbol);
+-- 索引: idx_runs_code (表: backtest_runs)
+CREATE INDEX idx_runs_code ON public.backtest_runs USING btree (symbol);
 
 -- 索引: idx_runs_strategy (表: backtest_runs)
 CREATE INDEX idx_runs_strategy ON public.backtest_runs USING btree (strategy);
@@ -949,8 +933,8 @@ CREATE INDEX indecator_bull_bear_metrics_idx ON public.indecator_bull_bear_metri
 -- 索引: indecator_metrics_idx (表: indecator_bull_bear_metrics)
 CREATE INDEX indecator_metrics_idx ON public.indecator_bull_bear_metrics USING btree (exchange, symbol, datetime);
 
--- 索引: idx_vmr_metrics_symbol_timeframe_datetime (表: indecator_vmr)
-CREATE INDEX idx_vmr_metrics_symbol_timeframe_datetime ON public.indecator_vmr USING btree (symbol, timeframe, datetime);
+-- 索引: idx_vmr_metrics_code_timeframe_datetime (表: indecator_vmr)
+CREATE INDEX idx_vmr_metrics_code_timeframe_datetime ON public.indecator_vmr USING btree (symbol, timeframe, datetime);
 
 -- 索引: idx_market_crypto_cmc_rank (表: market_crypto_listings)
 CREATE INDEX idx_market_crypto_cmc_rank ON public.market_crypto_listings USING btree (cmc_rank);
@@ -1016,10 +1000,10 @@ CREATE INDEX idx_tuning_results_task ON public.tuning_results USING btree (task_
 CREATE INDEX idx_tuning_results_tenant_task ON public.tuning_results USING btree (tenant_id, task_id, created_at);
 
 -- 索引: idx_tuning_tasks_code (表: tuning_tasks)
-CREATE INDEX idx_tuning_tasks_symbol ON public.tuning_tasks USING btree (symbol);
+CREATE INDEX idx_tuning_tasks_code ON public.tuning_tasks USING btree (symbol);
 
--- 索引: idx_tuning_tasks_timeframe (表: tuning_tasks)
-CREATE INDEX idx_tuning_tasks_timeframe ON public.tuning_tasks USING btree (timeframe);
+-- 索引: idx_tuning_tasks_interval (表: tuning_tasks)
+CREATE INDEX idx_tuning_tasks_interval ON public.tuning_tasks USING btree (timeframe);
 
 -- 索引: idx_tuning_tasks_start_end_time (表: tuning_tasks)
 CREATE INDEX idx_tuning_tasks_start_end_time ON public.tuning_tasks USING btree (start_time, end_time);
@@ -1043,6 +1027,9 @@ CREATE TRIGGER ts_cagg_invalidation_trigger AFTER INSERT OR DELETE OR UPDATE ON 
 
 -- 触发器: ts_insert_blocker (表: market_ohlcv_1m)
 CREATE TRIGGER ts_insert_blocker BEFORE INSERT ON public.market_ohlcv_1m FOR EACH ROW EXECUTE FUNCTION _timescaledb_functions.insert_blocker();
+
+-- 触发器: trigger_update_sys_strategies_timestamp (表: sys_strategies)
+CREATE TRIGGER trigger_update_sys_strategies_timestamp BEFORE UPDATE ON public.sys_strategies FOR EACH ROW EXECUTE FUNCTION update_sys_strategies_timestamp();
 
 
 -- === 函数 ===
@@ -1249,6 +1236,8 @@ CREATE TRIGGER ts_insert_blocker BEFORE INSERT ON public.market_ohlcv_1m FOR EAC
 -- 函数: to_uuidv7_boundary (无法获取函数定义)
 
 -- 函数: update_ohlcv_market_cap (无法获取函数定义)
+
+-- 函数: update_sys_strategies_timestamp (无法获取函数定义)
 
 -- 函数: uuid_timestamp (无法获取函数定义)
 
