@@ -24,7 +24,7 @@ const Login: React.FC = () => {
       setErrorMessage(null);
       await login(values.tenant_id, values.email, values.password);
       message.success('登录成功');
-      const target = (location.state as { from?: Location })?.from?.pathname || '/dashboard';
+      const target = (location.state as { from?: Location })?.from?.pathname || '/backtest';
       navigate(target, { replace: true });
     } catch (error: any) {
       const detail = error?.response?.data?.detail || '登录失败，请检查账号和密码';

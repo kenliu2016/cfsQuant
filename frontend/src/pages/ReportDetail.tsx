@@ -180,7 +180,7 @@ const ReportDetail: React.FC = () => {
     }
   };
 
-  // 格式化价格 - 与dashboard保持一致
+  // 格式化价格 - 与backtest保持一致
   const formatPrice = (value: number | undefined | null) => {
     if (value === undefined || value === null) return '-';
     return value.toFixed(Math.min(4, value.toString().split('.')[1]?.length || 0));
@@ -226,7 +226,7 @@ const ReportDetail: React.FC = () => {
     return mergedData;
   }, [currentRunKlineData, currentRunTrades]);
 
-  // 生成K线图配置，完全参考dashboard页面的实现
+  // 生成K线图配置，完全参考backtest页面的实现
   const getKlineOption = useMemo(() => {
     if (!currentRunKlineData || currentRunKlineData.length === 0) return null;
 
@@ -235,7 +235,7 @@ const ReportDetail: React.FC = () => {
     
     // 格式化日期和准备K线数据
     const dates = mergedData.map(item => dayjs(item.datetime).format('MM-DD HH:mm'));
-    // 按照Dashboard页面的格式构建K线数据：[开盘价, 收盘价, 最低价, 最高价]
+    // 按照Backtest页面的格式构建K线数据：[开盘价, 收盘价, 最低价, 最高价]
     const candlestickData = mergedData.map(item => [
       item.open,
       item.close,
@@ -320,7 +320,7 @@ const ReportDetail: React.FC = () => {
     return value.toString();
   };
 
-  // 格式化提示信息，与dashboard保持一致
+  // 格式化提示信息，与backtest保持一致
   const tooltipFormatter = (params: any[]) => {
     if (!params || params.length === 0) return '';
     
@@ -394,9 +394,9 @@ const ReportDetail: React.FC = () => {
       return formatPrice(value);
     };
     
-    // 构建完整的ECharts配置对象，与dashboard完全一致
+    // 构建完整的ECharts配置对象，与backtest完全一致
     return {
-      backgroundColor: '#0F0F1A', // 深色主题背景色，与dashboard一致
+      backgroundColor: '#0F0F1A', // 深色主题背景色，与backtest一致
       tooltip: {
         trigger: 'axis',
         axisPointer: {
@@ -405,10 +405,10 @@ const ReportDetail: React.FC = () => {
             backgroundColor: '#6a7985'
           }
         },
-        backgroundColor: 'rgba(15, 15, 26, 0.8)', // 深色背景，与dashboard一致
+        backgroundColor: 'rgba(15, 15, 26, 0.8)', // 深色背景，与backtest一致
         borderColor: '#4E4E6A',
         textStyle: {
-          color: '#fff' // 白色文本，与dashboard一致
+          color: '#fff' // 白色文本，与backtest一致
         },
         formatter: tooltipFormatter,
         triggerOn: 'mousemove'
@@ -517,7 +517,7 @@ const ReportDetail: React.FC = () => {
           xAxisIndex: 0,
           yAxisIndex: 0,
           itemStyle: {
-            // 按照Dashboard页面的配置方式，使用ECharts标准属性
+            // 按照Backtest页面的配置方式，使用ECharts标准属性
             color: '#52c41a',
             color0: '#ff4d4f',
             borderColor: '#52c41a',
