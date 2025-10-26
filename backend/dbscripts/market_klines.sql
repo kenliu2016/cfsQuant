@@ -56,7 +56,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -88,7 +92,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -120,7 +128,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -152,7 +164,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -184,7 +200,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -216,7 +236,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -248,7 +272,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -280,7 +308,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -312,7 +344,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
@@ -344,7 +380,11 @@ SELECT
   CASE 
     WHEN first(market_cap, open_ts) > 0 THEN sum(quote_volume) / first(market_cap, open_ts)
     ELSE NULL
-  END AS vmr
+  END AS vmr,
+  CASE 
+    WHEN first(open, open_ts) > 0 THEN (last(close, open_ts) - first(open, open_ts)) / first(open, open_ts) * 100
+    ELSE NULL
+  END AS return_pct
 FROM market_ohlcv_1m
 GROUP BY exchange, symbol, bucket
 WITH NO DATA;
