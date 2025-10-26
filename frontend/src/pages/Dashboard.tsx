@@ -1,15 +1,9 @@
-import React, { useMemo, useState } from 'react';
-import {
-  Button,
-  Tag,
-  Segmented,
-  Space,
-  Progress,
-  Tooltip,
-  Table,
-} from 'antd';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Tag, Segmented, Progress, Table, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { SyncOutlined, SettingOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
+import client from '../api/client';
 import styles from './Dashboard.module.css';
 
 type TrendCoin = {
@@ -34,10 +28,28 @@ type CoinTableRow = {
   forecast: number;
 };
 
-const fearGreedStat = {
-  label: 'Fear & Greed',
-  value: '27',
-  accent: '#ff5d73',
+type MarketMetrics = {
+  bullBearScore: number;
+  bullBearPhase: string;
+  bullBearUpdatedAt?: string;
+  fearGreedValue: number;
+  fearGreedClassification?: string;
+  fearGreedUpdatedAt?: string;
+};
+
+type MarketBaseScoreResponse = {
+  bull_bear?: {
+    score?: number;
+    phase?: string;
+    updated_at?: string;
+    exchange?: string;
+    symbol?: string;
+  };
+  fear_greed?: {
+    value?: number;
+    classification?: string;
+    updated_at?: string;
+  };
 };
 
 const strongCoins: TrendCoin[] = [
@@ -93,11 +105,47 @@ const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color })
   );
 };
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const formatTimestamp = (value?: string) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '--');
+
 const Dashboard: React.FC = () => {
   const [marketMode, setMarketMode] = useState<'牛市' | '中性' | '熊市'>('中性');
   const [refreshing, setRefreshing] = useState(false);
-  const biasScore = 0.16;
-  const gaugePercent = ((biasScore + 1) / 2) * 100;
+  const [marketMetrics, setMarketMetrics] = useState<MarketMetrics>({
+    bullBearScore: 0,
+    bullBearPhase: 'Neutral',
+    fearGreedValue: 0,
+  });
+
+  const fetchMarketMetrics = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const response = await client.get<MarketBaseScoreResponse>('/api/market/market-base-score');
+      const payload = response.data ?? {};
+      setMarketMetrics({
+        bullBearScore: Number(payload.bull_bear?.score ?? 0),
+        bullBearPhase: payload.bull_bear?.phase || 'Neutral',
+        bullBearUpdatedAt: payload.bull_bear?.updated_at,
+        fearGreedValue: Number(payload.fear_greed?.value ?? 0),
+        fearGreedClassification: payload.fear_greed?.classification || undefined,
+        fearGreedUpdatedAt: payload.fear_greed?.updated_at,
+      });
+    } catch (error) {
+      console.error('Failed to fetch market base score', error);
+      message.error('获取市场情绪数据失败');
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMarketMetrics();
+  }, [fetchMarketMetrics]);
+
+  const biasScore = marketMetrics.bullBearScore ?? 0;
+  const clampedScore = clamp(biasScore, -7, 7);
+  const gaugePercent = ((clampedScore + 7) / 14) * 100;
+  const fearGreedValue = clamp(marketMetrics.fearGreedValue ?? 0, 0, 100);
 
   const columns: ColumnsType<CoinTableRow> = useMemo(() => [
     {
@@ -168,8 +216,7 @@ const Dashboard: React.FC = () => {
   ], []);
 
   const handleRefresh = () => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 900);
+    fetchMarketMetrics();
   };
 
   const renderTrendList = (items: TrendCoin[], trend: 'bullish' | 'bearish') => (
@@ -236,7 +283,7 @@ const Dashboard: React.FC = () => {
         <div className={styles.sectionHeader}>
           <div>
             <div className={styles.sectionTitle}>Market Bias Score</div>
-            <div className={styles.sectionDescription}>实时市场情绪指标（ 30min ）</div>
+            <div className={styles.sectionDescription}>实时市场情绪指标（computed: weight × features）</div>
           </div>
         </div>
         <div className={styles.gaugeRow}>
@@ -251,22 +298,28 @@ const Dashboard: React.FC = () => {
               }}
               trailColor="#1c1d2d"
               format={() => (
-                <span className={styles.scoreValue}>{biasScore.toFixed(2)}</span>
+                <span className={styles.scoreValue}>{clampedScore.toFixed(2)}</span>
               )}
             />
             <div className={styles.scoreScale}>
-              <span className={styles.scaleLabel}>-1.0（熊市）</span>
-              <span className={styles.scaleLabel}>0.0（中性）</span>
-              <span className={styles.scaleLabel}>+1.0（牛市）</span>
+              <span className={styles.scaleLabel}>-7（熊市）</span>
+              <span className={styles.scaleLabel}>0（中性）</span>
+              <span className={styles.scaleLabel}>+7（牛市）</span>
+            </div>
+            <div className={styles.phaseInfo}>
+              <span className={styles.phaseLabel}>{marketMetrics.bullBearPhase || 'Neutral'}</span>
+              <span className={styles.phaseTime}>{formatTimestamp(marketMetrics.bullBearUpdatedAt)}</span>
             </div>
           </div>
           <div className={`${styles.statCard} ${styles.fearGreedCard}`}>
-            <span className={styles.statLabel}>{fearGreedStat.label}</span>
-            <span className={styles.statValue} style={{ color: fearGreedStat.accent }}>
-              {fearGreedStat.value}
+            <span className={styles.statLabel}>Fear &amp; Greed</span>
+            <span className={styles.statValue} style={{ color: '#ff5d73' }}>
+              {fearGreedValue.toFixed(0)}
             </span>
-            <span className={styles.statSub}>{fearGreedStat.sub}</span>
-            <span className={styles.statMeta}>恐惧与贪婪指数 · 24h</span>
+            <span className={styles.statSub}>{marketMetrics.fearGreedClassification || 'Index'}</span>
+            <span className={styles.statMeta}>
+              更新时间: {formatTimestamp(marketMetrics.fearGreedUpdatedAt)}
+            </span>
           </div>
         </div>
       </section>

@@ -26,8 +26,8 @@ engine = get_engine()
 # === 周期配置 ===
 PERIOD_CONFIGS = {
     'high_frequency': {
-        'tables': ['market_ohlcv_1m', 'market_ohlcv_5m', 'market_ohlcv_15m', 'market_ohlcv_30m'],
-        'description': '高频周期 (1分钟, 5分钟, 15分钟, 30分钟)',
+        'tables': ['market_ohlcv_1m', 'market_ohlcv_3m','market_ohlcv_5m', 'market_ohlcv_15m', 'market_ohlcv_30m'],
+        'description': '高频周期 (1分钟, 3分钟, 5分钟, 15分钟, 30分钟)',
         'data_lookback_days': 7  # 7天数据
     },
     'medium_frequency': {
@@ -36,8 +36,8 @@ PERIOD_CONFIGS = {
         'data_lookback_days': 30  # 30天数据
     },
     'low_frequency': {
-        'tables': ['market_ohlcv_1d', 'market_ohlcv_2d', 'market_ohlcv_3d', 'market_ohlcv_3m'],
-        'description': '低频周期 (1天, 2天, 3天, 3个月)',
+        'tables': ['market_ohlcv_1d', 'market_ohlcv_2d', 'market_ohlcv_3d'],
+        'description': '低频周期 (1天, 2天, 3天)',
         'data_lookback_days': 365  # 1年数据
     }
 }
@@ -46,10 +46,10 @@ PERIOD_CONFIGS = {
 def get_active_usdt_symbols():
     """从market_codes表中获取所有活跃的USDT交易对"""
     query = """
-    SELECT exchange, code 
+    SELECT exchange, symbol 
     FROM market_codes 
     WHERE active = true AND quotecurrency = 'USDT' 
-    ORDER BY exchange, code
+    ORDER BY exchange, symbol
     """
     try:
         df = pd.read_sql(query, engine)
@@ -98,11 +98,59 @@ def load_or_train_hmm(df_returns, model_file):
     try:
         hmm = joblib.load(model_file)
         logger.info(f"加载HMM模型从 {model_file}")
+        
+        # 验证模型质量
+        X = df_returns['returns'].values.reshape(-1,1)
+        try:
+            probs = hmm.predict_proba(X)
+            # 检查状态概率分布是否合理
+            avg_prob_0 = probs[:, 0].mean()
+            avg_prob_1 = probs[:, 1].mean()
+            
+            # 如果状态概率过于极端，重新训练模型
+            if avg_prob_0 > 0.95 or avg_prob_1 > 0.95:
+                logger.warning(f"模型状态概率分布异常 (avg_prob_0={avg_prob_0:.3f}, avg_prob_1={avg_prob_1:.3f})，重新训练模型")
+                raise Exception("模型状态概率分布异常")
+                
+        except Exception as e:
+            logger.warning(f"模型验证失败: {e}，重新训练模型")
+            raise Exception("模型验证失败")
+            
     except:
-        hmm = GaussianHMM(n_components=2, covariance_type='full', n_iter=1000, random_state=42)
-        hmm.fit(df_returns['returns'].values.reshape(-1,1))
+        # 数据预处理：移除极端异常值
+        returns = df_returns['returns'].values
+        q1 = np.percentile(returns, 25)
+        q3 = np.percentile(returns, 75)
+        iqr = q3 - q1
+        lower_bound = q1 - 3 * iqr
+        upper_bound = q3 + 3 * iqr
+        
+        # 过滤异常值
+        filtered_returns = returns[(returns >= lower_bound) & (returns <= upper_bound)]
+        
+        if len(filtered_returns) < 50:
+            logger.warning(f"过滤后数据量不足 ({len(filtered_returns)})，使用原始数据")
+            filtered_returns = returns
+        
+        # 训练新模型 - 改进参数配置
+        hmm = GaussianHMM(
+            n_components=2, 
+            covariance_type='diag',  # 使用对角协方差矩阵，避免过拟合
+            n_iter=1000, 
+            random_state=42,
+            init_params='mc',  # 使用随机初始化
+            tol=1e-6,  # 更严格的收敛阈值
+            min_covar=1e-3  # 最小协方差，避免数值问题
+        )
+        hmm.fit(filtered_returns.reshape(-1,1))
+        
+        # 验证模型收敛性
+        log_likelihood = hmm.score(filtered_returns.reshape(-1,1))
+        logger.info(f"模型训练完成，状态数: {hmm.n_components}, 对数似然: {log_likelihood:.3f}")
+        
+        # 保存模型
         joblib.dump(hmm, model_file)
-        logger.info(f"模型训练完成，状态数: {hmm.n_components}")
+        
     return hmm
 
 # === 生成信号和仓位 ===
@@ -111,19 +159,47 @@ def generate_signal(hmm, df_returns):
     X = df_returns['returns'].values.reshape(-1,1)
     probs = hmm.predict_proba(X)
     latest_prob = probs[-1, 1]  # state=1 为高波动/趋势
-    if latest_prob > 0.6:
-        return "多 (7:3)", 0.7, [1-latest_prob, latest_prob]
-    elif latest_prob < 0.4:
-        return "空 (3:7)", -0.7, [1-latest_prob, latest_prob]
+    
+    # 检查模型收敛性：如果状态概率过于极端，说明模型可能未正确收敛
+    if latest_prob > 0.95 or latest_prob < 0.05:
+        logger.warning(f"HMM状态概率过于极端 ({latest_prob:.3f})，模型可能未正确收敛，返回中性信号")
+        return "中性 (模型异常)", 0.0, [1-latest_prob, latest_prob]
+    
+    # 检查状态概率的稳定性（最近5个时间点的标准差）
+    if len(probs) >= 5:
+        recent_probs = probs[-5:, 1]
+        prob_std = np.std(recent_probs)
+        if prob_std < 0.01:  # 状态概率过于稳定，可能模型失效
+            logger.warning(f"HMM状态概率过于稳定 (std={prob_std:.3f})，返回中性信号")
+            return "中性 (状态稳定)", 0.0, [1-latest_prob, latest_prob]
+    
+    # 使用更合理的阈值，考虑置信度
+    if latest_prob > 0.65:
+        # 强多头信号
+        confidence = min(1.0, (latest_prob - 0.65) / 0.35)  # 0.65-1.0映射到0-1
+        position_weight = 0.3 + confidence * 0.4  # 仓位30%-70%
+        return f"多 ({int(position_weight*100)}%)", position_weight, [1-latest_prob, latest_prob]
+    elif latest_prob < 0.35:
+        # 强空头信号
+        confidence = min(1.0, (0.35 - latest_prob) / 0.35)  # 0.0-0.35映射到0-1
+        position_weight = 0.3 + confidence * 0.4  # 仓位30%-70%
+        return f"空 ({int(position_weight*100)}%)", -position_weight, [1-latest_prob, latest_prob]
+    elif latest_prob > 0.55:
+        # 弱多头信号
+        return "多 (50%)", 0.5, [1-latest_prob, latest_prob]
+    elif latest_prob < 0.45:
+        # 弱空头信号
+        return "空 (50%)", -0.5, [1-latest_prob, latest_prob]
     else:
-        return "中性 (5:5)", 0.0, [1-latest_prob, latest_prob]
+        # 中性信号
+        return "中性", 0.0, [1-latest_prob, latest_prob]
 
 # === 写入 PostgreSQL ===
 def save_signal(exchange, symbol, timeframe, dt, state_prob, signal, position):
     """保存HMM信号到数据库"""
     df = pd.DataFrame([{
         'exchange': exchange,
-        'code': symbol,
+        'symbol': symbol,
         'timeframe': timeframe,
         'datetime': dt,
         'state_prob_0': state_prob[0],
@@ -157,7 +233,7 @@ def run_hmm_for_period(period_type, symbols_limit=None):
     
     for index, row in symbols_df.iterrows():
         exchange = row['exchange']
-        symbol = row['code']
+        symbol = row['symbol']
         processed_count += 1
         
         logger.info(f"处理进度: {processed_count}/{total_symbols} - {exchange} - {symbol}")
@@ -182,7 +258,9 @@ def run_hmm_for_period(period_type, symbols_limit=None):
                     continue
                 
                 # HMM 模型文件名（区分周期），保存到hmmModel目录
-                model_file = os.path.join("hmmModel", f"hmm_model_{symbol.replace('/','_')}_{period_type}_{table}.pkl")
+                # 将表名转换为实际的K线周期值（如'market_ohlcv_1m' -> '1m'）
+                actual_timeframe = table.replace('market_ohlcv_', '')
+                model_file = os.path.join("hmmModel", f"hmm_model_{symbol.replace('/','_')}_{actual_timeframe}.pkl")
                 
                 # 训练或加载 HMM 模型
                 try:
@@ -196,8 +274,10 @@ def run_hmm_for_period(period_type, symbols_limit=None):
                 dt = df_returns.index[-1]
                 
                 # 写入 PostgreSQL
-                save_signal(exchange, symbol, period_type, dt, state_prob, signal, position)
-                logger.info(f"[{period_type}] {table} {exchange} - {symbol} {dt} => 信号: {signal}, 仓位: {position}, 概率: {state_prob[1]:.2f}")
+                # 将表名转换为实际的K线周期值（如'market_ohlcv_1m' -> '1m'）
+                actual_timeframe = table.replace('market_ohlcv_', '')
+                save_signal(exchange, symbol, actual_timeframe, dt, state_prob, signal, position)
+                logger.info(f"[{actual_timeframe}] {exchange} - {symbol} {dt} => 信号: {signal}, 仓位: {position}, 概率: {state_prob[1]:.2f}")
                 
                 success_count += 1
                 logger.info(f"成功处理 {table} {symbol}")

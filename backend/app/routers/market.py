@@ -9,7 +9,15 @@ from common.logger import LoggerFactory
 # 使用项目统一的日志工具
 logger = LoggerFactory.get_logger("routers.market")
 
-from ..services.market_service import get_candles, get_latest_candles, refresh_market_data_cache, get_market_exchanges, get_market_codes, market_data_service
+from ..services.market_service import (
+    get_candles,
+    get_latest_candles,
+    refresh_market_data_cache,
+    get_market_exchanges,
+    get_market_codes,
+    get_market_base_score,
+    market_data_service,
+)
 from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
 from common.db import fetch_df, execute
 from datetime import datetime, timedelta
@@ -671,3 +679,13 @@ def delete_all_candles_cache_endpoint():
     else:
         logger.error("清除所有K线缓存失败")
         raise HTTPException(status_code=500, detail="清除所有K线缓存失败")
+@router.get("/market-base-score")
+def market_base_score_endpoint(exchange: str = Query(None), symbol: str = Query(None)):
+    """
+    获取市场基准情绪指标（牛熊评分 + Fear & Greed）
+    """
+    try:
+        return get_market_base_score(exchange=exchange, symbol=symbol)
+    except Exception as e:
+        logger.error(f"获取市场基准情绪指标失败: {e}")
+        raise HTTPException(status_code=500, detail="failed to fetch market base score")

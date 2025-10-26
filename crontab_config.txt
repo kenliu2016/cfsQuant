@@ -10,8 +10,8 @@
 # 牛熊策略定时任务 - 每30分钟执行一次
 */30 * * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 bull_bear.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/bull_bear.log 2>&1
 
-# 恐惧贪婪指数定时任务 - 每2小时执行一次
-0 */2 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 fear_greed.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/fear_greed.log 2>&1
+# 恐惧贪婪指数定时任务 - 每天08:03分执行
+3 8 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 fear_greed.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/fear_greed.log 2>&1
 
 # HMM定时任务配置
 # 高频周期HMM分析 - 每30分钟执行一次

@@ -200,6 +200,25 @@
   text-align: center;
 }
 
+.phaseInfo {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.phaseLabel {
+  font-size: 16px;
+  font-weight: 600;
+  color: #f2f4ff;
+}
+
+.phaseTime {
+  font-size: 12px;
+  color: #8b92b4;
+}
+
 .statCard {
   background: #131425;
   border-radius: 16px;
@@ -215,6 +234,13 @@
   align-items: center;
   min-height: 180px;
   background: linear-gradient(135deg, rgba(255, 93, 115, 0.2), rgba(255, 93, 115, 0.05));
+}
+
+.fearGreedCard .statLabel,
+.fearGreedCard .statSub,
+.fearGreedCard .statMeta {
+  text-align: center;
+  width: 100%;
 }
 
 .statLabel {

@@ -3,7 +3,7 @@ from common.db import fetch_df
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
-from typing import Optional, Union, Dict, List, Tuple
+from typing import Optional, Union, Dict, List, Tuple, Any
 from functools import lru_cache
 from .cache_service import (
     cache_dataframe_result, 
@@ -67,6 +67,29 @@ class MarketDataService:
     def __init__(self):
         self.datetime_parser = DateTimeParser()
         self.logger = logger
+    
+    @staticmethod
+    def _clamp(value: Union[int, float, None], min_value: float, max_value: float, default: float = 0.0) -> float:
+        """将数值限制在指定范围内"""
+        try:
+            if value is None:
+                return default
+            return max(min_value, min(max_value, float(value)))
+        except (TypeError, ValueError):
+            return default
+    
+    def _format_datetime(self, value: Any) -> Optional[str]:
+        """格式化日期时间为ISO字符串"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, pd.Timestamp):
+                dt = value.to_pydatetime()
+            else:
+                dt = self.datetime_parser.parse_datetime(value)
+            return dt.replace(microsecond=0).isoformat()
+        except Exception:
+            return None
         
     def get_market_exchanges(self, active: bool = True) -> pd.DataFrame:
         """
@@ -130,6 +153,71 @@ class MarketDataService:
         except Exception as e:
             self.logger.error(f"获取市场代码列表失败: {e}")
             return pd.DataFrame(columns=['symbol', 'exchange', 'active'])
+    
+    def get_market_base_score(self, exchange: Optional[str] = None, symbol: Optional[str] = None) -> Dict[str, Any]:
+        """
+        获取市场情绪相关指标（牛熊分数 + Fear & Greed）
+        """
+        bull_sql = """
+            SELECT exchange, symbol, datetime, score, phase
+            FROM indecator_bull_bear
+            WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        if exchange:
+            bull_sql += " AND exchange = :exchange"
+            params["exchange"] = exchange
+        if symbol:
+            bull_sql += " AND symbol = :symbol"
+            params["symbol"] = symbol
+        bull_sql += " ORDER BY datetime DESC LIMIT 1"
+        
+        try:
+            bull_df = fetch_df(bull_sql, **params) if params else fetch_df(bull_sql)
+        except Exception as e:
+            self.logger.error(f"查询牛熊指标失败: {e}")
+            bull_df = pd.DataFrame()
+        
+        bull_data = {
+            "score": 0.0,
+            "phase": "Neutral",
+            "updated_at": None
+        }
+        if not bull_df.empty:
+            row = bull_df.iloc[0]
+            bull_data["score"] = self._clamp(row.get("score"), -7, 7, 0.0)
+            bull_data["phase"] = row.get("phase") or "Neutral"
+            bull_data["updated_at"] = self._format_datetime(row.get("datetime"))
+            bull_data["exchange"] = row.get("exchange")
+            bull_data["symbol"] = row.get("symbol")
+        
+        fear_sql = """
+            SELECT datetime, value, value_classification
+            FROM indecator_fear_greed
+            ORDER BY datetime DESC
+            LIMIT 1
+        """
+        try:
+            fear_df = fetch_df(fear_sql)
+        except Exception as e:
+            self.logger.error(f"查询恐惧贪婪指数失败: {e}")
+            fear_df = pd.DataFrame()
+        
+        fear_data = {
+            "value": 0.0,
+            "classification": None,
+            "updated_at": None
+        }
+        if not fear_df.empty:
+            row = fear_df.iloc[0]
+            fear_data["value"] = self._clamp(row.get("value"), 0, 100, 0.0)
+            fear_data["classification"] = row.get("value_classification")
+            fear_data["updated_at"] = self._format_datetime(row.get("datetime"))
+        
+        return {
+            "bull_bear": bull_data,
+            "fear_greed": fear_data
+        }
         
         
     def _prepare_query_params(self, startTime: Union[str, datetime], 
@@ -411,3 +499,9 @@ def get_market_codes(exchange: str = None, active: bool = True, tenant_id: Optio
     模块级别的获取市场代码列表函数
     """
     return market_data_service.get_market_codes(exchange, active, tenant_id)
+
+def get_market_base_score(exchange: Optional[str] = None, symbol: Optional[str] = None) -> Dict[str, Any]:
+    """
+    获取市场基准情绪指标
+    """
+    return market_data_service.get_market_base_score(exchange=exchange, symbol=symbol)
