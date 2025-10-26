@@ -25,3 +25,13 @@
 
 # 全周期HMM分析 - 每周日凌晨2点执行
 0 2 * * 0 cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 hmm_full_cycle.py >> /Users/aaronkliu/Documents/project/cfsQuant/logs/hmm_full_cycle.log 2>&1
+
+# VE指标定时任务配置
+# 高频周期VE指标计算 - 每30分钟执行一次
+*/30 * * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 ve_schedule.py --period high_frequency >> /Users/aaronkliu/Documents/project/cfsQuant/logs/ve_high_frequency.log 2>&1
+
+# 中频周期VE指标计算 - 每2小时执行一次
+0 */2 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 ve_schedule.py --period medium_frequency >> /Users/aaronkliu/Documents/project/cfsQuant/logs/ve_medium_frequency.log 2>&1
+
+# 低频周期VE指标计算 - 每天凌晨0:30执行
+30 0 * * * cd /Users/aaronkliu/Documents/project/cfsQuant/backend/indecator && /Users/aaronkliu/.pyenv/versions/3.9.23/bin/python3 ve_schedule.py --period low_frequency >> /Users/aaronkliu/Documents/project/cfsQuant/logs/ve_low_frequency.log 2>&1
