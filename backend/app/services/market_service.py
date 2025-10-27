@@ -91,12 +91,13 @@ class MarketDataService:
         except Exception:
             return None
         
-    def get_market_exchanges(self, active: bool = True) -> pd.DataFrame:
+    def get_market_exchanges(self, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
         """
         获取所有可用的交易所列表
         
         Args:
             active: 是否只获取活跃的交易所
+            tenant_id: 租户ID，为None时使用默认租户
             
         Returns:
             交易所列表的DataFrame
@@ -119,13 +120,14 @@ class MarketDataService:
             self.logger.error(f"获取交易所列表失败: {e}")
             return pd.DataFrame(columns=['exchange'])
             
-    def get_market_codes(self, exchange: str = None, active: bool = True) -> pd.DataFrame:
+    def get_market_codes(self, exchange: str = None, active: bool = True, tenant_id: Optional[str] = None) -> pd.DataFrame:
         """
         获取市场代码列表，可以按交易所过滤
         
         Args:
             exchange: 交易所代码，不提供则获取所有
             active: 是否只获取活跃的代码
+            tenant_id: 租户ID，为None时使用默认租户
             
         Returns:
             市场代码列表的DataFrame，包含symbol, exchange, active等字段
@@ -505,3 +507,536 @@ def get_market_base_score(exchange: Optional[str] = None, symbol: Optional[str] 
     获取市场基准情绪指标
     """
     return market_data_service.get_market_base_score(exchange=exchange, symbol=symbol)
+
+
+@cache_dataframe_result(expire_time=300)  # 5分钟缓存
+def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
+    """
+    获取增强版强势/弱势币种数据（包含24小时价格曲线）
+    
+    Returns:
+        包含强势币种和弱势币种列表的字典
+    """
+    try:
+        # 获取所有币种列表
+        market_data_service = MarketDataService()
+        symbols_df = market_data_service.get_market_codes()
+        if symbols_df.empty:
+            return {"strong_coins": [], "weak_coins": []}
+        
+        symbols = symbols_df['symbol'].tolist()
+        
+        # 获取当前时间和24小时前的时间
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=24)
+        
+        # 将datetime对象转换为字符串格式
+        end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
+        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 计算24小时前的时间范围（前后1小时）
+        start_time_minus_1h = (start_time - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+        start_time_plus_1h = (start_time + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 批量查询所有币种的24小时数据
+        # 使用命名参数格式
+        sql = """
+        WITH latest_data AS (
+            -- 获取每个币种的最新数据（当前时间）
+            SELECT 
+                symbol, 
+                close as current_close,
+                market_cap as current_market_cap
+            FROM (
+                SELECT 
+                    symbol, close, market_cap, bucket,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
+                FROM market_ohlcv_1h
+                WHERE symbol = ANY(:symbols) 
+                    AND bucket <= :end_time
+            ) ranked
+            WHERE rn = 1
+        ),
+        past_data AS (
+            -- 获取每个币种24小时前的数据
+            SELECT 
+                symbol, 
+                open as past_open,
+                market_cap as past_market_cap
+            FROM (
+                SELECT 
+                    symbol, open, market_cap, bucket,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ABS(EXTRACT(EPOCH FROM (bucket - :start_time))) ASC) as rn
+                FROM market_ohlcv_1h
+                WHERE symbol = ANY(:symbols2) 
+                    AND bucket >= :start_time_minus_1h
+                    AND bucket <= :start_time_plus_1h
+            ) ranked
+            WHERE rn = 1
+        ),
+        volume_data AS (
+            -- 计算24小时内总成交量
+            SELECT 
+                symbol,
+                SUM(quote_volume) as total_quote_volume
+            FROM market_ohlcv_1h
+            WHERE symbol = ANY(:symbols3) 
+                AND bucket >= :start_time
+                AND bucket <= :end_time
+            GROUP BY symbol
+        )
+        SELECT 
+            l.symbol,
+            l.current_close,
+            p.past_open,
+            p.past_market_cap,
+            v.total_quote_volume,
+            -- 计算涨幅：(当前收盘价 - 24小时前开盘价) / 24小时前开盘价 * 100
+            CASE 
+                WHEN p.past_open > 0 THEN ROUND(((l.current_close - p.past_open) / p.past_open * 100), 2)
+                ELSE 0.0
+            END as gain_24h,
+            -- 计算VMR：24小时总成交量 / 期初市值 * 100
+            CASE 
+                WHEN p.past_market_cap > 0 THEN ROUND((v.total_quote_volume / p.past_market_cap * 100), 3)
+                ELSE 0.0
+            END as vmr
+        FROM latest_data l
+        LEFT JOIN past_data p ON l.symbol = p.symbol
+        LEFT JOIN volume_data v ON l.symbol = v.symbol
+        WHERE l.current_close IS NOT NULL 
+            AND p.past_open IS NOT NULL
+            AND v.total_quote_volume IS NOT NULL
+        """
+        
+        # 使用命名参数调用fetch_df
+        df = fetch_df(sql, 
+                     symbols=symbols, 
+                     end_time=end_time_str,
+                     start_time=start_time_str,
+                     start_time_minus_1h=start_time_minus_1h,
+                     start_time_plus_1h=start_time_plus_1h,
+                     symbols2=symbols,
+                     symbols3=symbols)
+        
+        if df.empty:
+            return {"strong_coins": [], "weak_coins": []}
+        
+        # 获取每个币种的24小时价格数据用于绘制曲线图
+        hourly_sql = """
+        SELECT 
+            symbol,
+            bucket,
+            close,
+            quote_volume
+        FROM market_ohlcv_1h
+        WHERE symbol = ANY(:symbols4) 
+            AND bucket >= :start_time
+            AND bucket <= :end_time
+        ORDER BY symbol, bucket
+        """
+        
+        hourly_df = fetch_df(hourly_sql, 
+                            symbols4=symbols, 
+                            start_time=start_time_str, 
+                            end_time=end_time_str)
+        hourly_data = {}
+        if not hourly_df.empty:
+            for symbol in symbols:
+                symbol_data = hourly_df[hourly_df['symbol'] == symbol]
+                hourly_data_list = []
+                for _, row in symbol_data.iterrows():
+                    hourly_data_list.append({
+                        'close': float(row['close']) if row['close'] is not None else 0.0,
+                        'quote_volume': float(row['quote_volume']) if row['quote_volume'] is not None else 0.0,
+                        'timestamp': row['bucket'].isoformat() if hasattr(row['bucket'], 'isoformat') else str(row['bucket'])
+                    })
+                hourly_data[symbol] = hourly_data_list
+        
+        # 处理计算结果
+        coins_data = []
+        for _, row in df.iterrows():
+            symbol = row['symbol']
+            gain_24h = float(row['gain_24h']) if row['gain_24h'] is not None else 0.0
+            vmr = float(row['vmr']) if row['vmr'] is not None else 0.0
+            
+            # 获取该币种的24小时价格数据
+            symbol_hourly_data = hourly_data.get(symbol, [])
+            
+            coins_data.append({
+                'symbol': symbol,
+                'vmr': vmr,
+                'gain_24h': gain_24h,
+                'hourly_data': symbol_hourly_data
+            })
+        
+        # 按24小时涨幅降序排序
+        coins_sorted_by_gain = sorted(coins_data, key=lambda x: x['gain_24h'], reverse=True)
+        
+        # 前10为强势币，最后10为弱势币
+        strong_coins = coins_sorted_by_gain[:10]
+        weak_coins = coins_sorted_by_gain[-10:]  # 取最后10名作为弱势币
+        
+        return {
+            "strong_coins": strong_coins,
+            "weak_coins": weak_coins
+        }
+        
+    except Exception as e:
+        logger.error(f"获取增强版强势/弱势币种数据失败: {e}")
+        return {"strong_coins": [], "weak_coins": []}
+
+
+def _get_vmr_value(symbol: str, timeframe: str) -> float:
+    """
+    获取指定币种和时间框架的VMR值
+    
+    Args:
+        symbol: 币种代码
+        timeframe: 时间框架（15m, 1h, 1d）
+        
+    Returns:
+        VMR值，如果获取失败返回0.0
+    """
+    try:
+        # 根据时间框架确定对应的表名
+        table_mapping = {
+            '15m': 'market_ohlcv_15m',
+            '1h': 'market_ohlcv_1h',
+            '1d': 'market_ohlcv_1d'
+        }
+        
+        table_name = table_mapping.get(timeframe)
+        if not table_name:
+            return 0.0
+        
+        # 查询最新的VMR值
+        sql = f"""
+        SELECT vmr 
+        FROM {table_name} 
+        WHERE symbol = :symbol 
+        ORDER BY bucket DESC 
+        LIMIT 1
+        """
+        
+        df = fetch_df(sql, symbol=symbol)
+        if not df.empty and 'vmr' in df.columns:
+            return float(df.iloc[0]['vmr'])
+        else:
+            return 0.0
+            
+    except Exception as e:
+        logger.error(f"获取{symbol}的{timeframe} VMR值失败: {e}")
+        return 0.0
+
+
+def _get_batch_vmr_values(self, symbols: List[str], timeframes: List[str]) -> Dict[str, float]:
+    """
+    批量获取多个币种在不同时间周期的VMR值
+    
+    Args:
+        symbols: 币种代码列表
+        timeframes: 时间周期列表
+        
+    Returns:
+        包含各币种VMR值的字典
+    """
+    try:
+        vmr_data = {}
+        
+        for timeframe in timeframes:
+            # 根据时间周期确定时间范围
+            if timeframe == '1h':
+                hours = 1
+            elif timeframe == '4h':
+                hours = 4
+            elif timeframe == '24h':
+                hours = 24
+            else:
+                continue
+                
+            # 获取当前时间和指定小时前的时间
+            from datetime import datetime, timedelta
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=hours)
+            
+            # 将datetime对象转换为字符串格式
+            end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
+            start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 批量查询所有币种的VMR数据，使用命名参数格式
+            sql = """
+            WITH latest_data AS (
+                -- 获取每个币种的最新数据（当前时间）
+                SELECT 
+                    symbol, 
+                    market_cap as current_market_cap
+                FROM (
+                    SELECT 
+                        symbol, market_cap, bucket,
+                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
+                    FROM market_ohlcv_1h
+                    WHERE symbol = ANY(:symbols1) 
+                        AND bucket <= :end_time1
+                ) ranked
+                WHERE rn = 1
+            ),
+            past_data AS (
+                -- 获取每个币种指定小时前的数据
+                SELECT 
+                    symbol, 
+                    market_cap as past_market_cap
+                FROM (
+                    SELECT 
+                        symbol, market_cap, bucket,
+                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ABS(EXTRACT(EPOCH FROM (bucket - :start_time1::timestamp))) ASC) as rn
+                    FROM market_ohlcv_1h
+                    WHERE symbol = ANY(:symbols2) 
+                        AND bucket >= :start_time1::timestamp - INTERVAL '1 hour'
+                        AND bucket <= :start_time1::timestamp + INTERVAL '1 hour'
+                ) ranked
+                WHERE rn = 1
+            ),
+            volume_data AS (
+                -- 计算指定小时内总成交量
+                SELECT 
+                    symbol,
+                    SUM(quote_volume) as total_quote_volume
+                FROM market_ohlcv_1h
+                WHERE symbol = ANY(:symbols3) 
+                    AND bucket >= :start_time2::timestamp
+                    AND bucket <= :end_time2::timestamp
+                GROUP BY symbol
+            )
+            SELECT 
+                l.symbol,
+                p.past_market_cap,
+                v.total_quote_volume,
+                -- 计算VMR：指定小时内总成交量 / 期初市值 * 100
+                CASE 
+                    WHEN p.past_market_cap > 0 THEN ROUND((v.total_quote_volume / p.past_market_cap * 100), 4)
+                    ELSE 0.0
+                END as vmr
+            FROM latest_data l
+            LEFT JOIN past_data p ON l.symbol = p.symbol
+            LEFT JOIN volume_data v ON l.symbol = v.symbol
+            WHERE p.past_market_cap IS NOT NULL 
+                AND v.total_quote_volume IS NOT NULL
+            """
+            
+            # 使用命名参数调用fetch_df
+            df = fetch_df(sql, 
+                         symbols1=symbols, 
+                         end_time1=end_time_str,
+                         symbols2=symbols,
+                         start_time1=start_time_str,
+                         start_time2=start_time_str,
+                         end_time2=end_time_str,
+                         symbols3=symbols)
+            
+            if not df.empty:
+                for _, row in df.iterrows():
+                    symbol = row['symbol']
+                    vmr_value = float(row['vmr']) if row['vmr'] is not None else 0.0
+                    vmr_data[f"{symbol}_{timeframe}"] = vmr_value
+        
+        return vmr_data
+        
+    except Exception as e:
+        logger.error(f"批量获取VMR值失败: {e}")
+        return {}
+
+
+def _get_batch_24h_gains(symbols: List[str]) -> Dict[str, float]:
+    """
+    批量计算多个币种的24小时涨幅（优化性能）
+    
+    Args:
+        symbols: 币种代码列表
+        
+    Returns:
+        包含各币种24小时涨幅的字典
+    """
+    try:
+        if not symbols:
+            return {}
+        
+        # 获取所有币种列表
+        symbols = self.get_market_codes()
+        if not symbols:
+            return {"strong_coins": [], "weak_coins": []}
+        
+        # 获取当前时间和24小时前的时间
+        from datetime import datetime, timedelta
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=24)
+        
+        # 将datetime对象转换为字符串格式
+        end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
+        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 批量查询所有币种的24小时数据，使用命名参数格式
+        sql = """
+        WITH latest_data AS (
+            -- 获取每个币种的最新数据（当前时间）
+            SELECT 
+                symbol, 
+                close as current_close,
+                market_cap as current_market_cap,
+                bucket as current_time
+            FROM (
+                SELECT 
+                    symbol, close, market_cap, bucket,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
+                FROM market_ohlcv_1h
+                WHERE symbol = ANY(:symbols1) 
+                    AND bucket <= :end_time1
+            ) ranked
+            WHERE rn = 1
+        ),
+        past_data AS (
+            -- 获取每个币种24小时前的数据
+            SELECT 
+                symbol, 
+                open as past_open,
+                market_cap as past_market_cap,
+                bucket as past_time
+            FROM (
+                SELECT 
+                    symbol, open, market_cap, bucket,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ABS(EXTRACT(EPOCH FROM (bucket - :start_time1::timestamp))) ASC) as rn
+                FROM market_ohlcv_1h
+                WHERE symbol = ANY(:symbols2) 
+                    AND bucket >= :start_time1::timestamp - INTERVAL '1 hour'
+                    AND bucket <= :start_time1::timestamp + INTERVAL '1 hour'
+            ) ranked
+            WHERE rn = 1
+        ),
+        volume_data AS (
+            -- 计算24小时内总成交量
+            SELECT 
+                symbol,
+                SUM(quote_volume) as total_quote_volume
+            FROM market_ohlcv_1h
+            WHERE symbol = ANY(:symbols3) 
+                AND bucket >= :start_time2::timestamp
+                AND bucket <= :end_time2::timestamp
+            GROUP BY symbol
+        ),
+        hourly_data AS (
+            -- 获取24小时内每个小时的数据用于绘制曲线图
+            SELECT 
+                symbol,
+                bucket,
+                close,
+                quote_volume
+            FROM market_ohlcv_1h
+            WHERE symbol = ANY(:symbols4) 
+                AND bucket >= :start_time3::timestamp
+                AND bucket <= :end_time3::timestamp
+            ORDER BY symbol, bucket
+        )
+        SELECT 
+            l.symbol,
+            l.current_close,
+            l.current_market_cap,
+            p.past_open,
+            p.past_market_cap,
+            v.total_quote_volume,
+            -- 计算VMR：24小时内总成交量 / 期初市值 * 100
+            CASE 
+                WHEN p.past_market_cap > 0 THEN ROUND((v.total_quote_volume / p.past_market_cap * 100), 4)
+                ELSE 0.0
+            END as vmr_24h,
+            -- 计算涨幅：(当前收盘价 - 24小时前开盘价) / 24小时前开盘价 * 100
+            CASE 
+                WHEN p.past_open > 0 THEN ROUND(((l.current_close - p.past_open) / p.past_open * 100), 2)
+                ELSE 0.0
+            END as gain_24h
+        FROM latest_data l
+        LEFT JOIN past_data p ON l.symbol = p.symbol
+        LEFT JOIN volume_data v ON l.symbol = v.symbol
+        WHERE l.current_close IS NOT NULL 
+            AND p.past_open IS NOT NULL
+            AND v.total_quote_volume IS NOT NULL
+        """
+        
+        # 使用命名参数调用fetch_df
+        df = fetch_df(sql, 
+                     symbols1=symbols, 
+                     end_time1=end_time_str,
+                     symbols2=symbols,
+                     start_time1=start_time_str,
+                     symbols3=symbols,
+                     start_time2=start_time_str,
+                     end_time2=end_time_str,
+                     symbols4=symbols,
+                     start_time3=start_time_str,
+                     end_time3=end_time_str)
+        
+        if df.empty:
+            return {"strong_coins": [], "weak_coins": []}
+        
+        # 获取每个币种的24小时价格数据用于绘制曲线图
+        hourly_sql = """
+        SELECT 
+            symbol,
+            bucket,
+            close,
+            quote_volume
+        FROM market_ohlcv_1h
+        WHERE symbol = ANY(:symbols5) 
+            AND bucket >= :start_time4::timestamp
+            AND bucket <= :end_time4::timestamp
+        ORDER BY symbol, bucket
+        """
+        
+        hourly_df = fetch_df(hourly_sql, 
+                           symbols5=symbols, 
+                           start_time4=start_time_str, 
+                           end_time4=end_time_str)
+        hourly_data = {}
+        if not hourly_df.empty:
+            for symbol in symbols:
+                symbol_data = hourly_df[hourly_df['symbol'] == symbol]
+                hourly_data_list = []
+                for _, row in symbol_data.iterrows():
+                    hourly_data_list.append({
+                        'close': float(row['close']) if row['close'] is not None else 0.0,
+                        'quote_volume': float(row['quote_volume']) if row['quote_volume'] is not None else 0.0,
+                        'timestamp': row['bucket'].isoformat() if hasattr(row['bucket'], 'isoformat') else str(row['bucket'])
+                    })
+                hourly_data[symbol] = hourly_data_list
+        
+        # 处理计算结果
+        coins_data = []
+        for _, row in df.iterrows():
+            symbol = row['symbol']
+            vmr_24h = float(row['vmr_24h']) if row['vmr_24h'] is not None else 0.0
+            gain_24h = float(row['gain_24h']) if row['gain_24h'] is not None else 0.0
+            
+            # 获取该币种的24小时价格数据
+            symbol_hourly_data = hourly_data.get(symbol, [])
+            
+            coins_data.append({
+                'symbol': symbol,
+                'vmr': vmr_24h,  # 使用24小时VMR作为总分数
+                'gain_24h': gain_24h,
+                'hourly_data': symbol_hourly_data
+            })
+        
+        # 按24小时涨幅降序排序
+        coins_sorted_by_gain = sorted(coins_data, key=lambda x: x['gain_24h'], reverse=True)
+        
+        # 前10为强势币，后10为弱势币
+        strong_coins = coins_sorted_by_gain[:10]
+        weak_coins = coins_sorted_by_gain[10:20]  # 取第11-20名作为弱势币
+        
+        return {
+            "strong_coins": strong_coins,
+            "weak_coins": weak_coins
+        }
+        
+    except Exception as e:
+        logger.error(f"获取增强版强势/弱势币种数据失败: {e}")
+        return {"strong_coins": [], "weak_coins": []}

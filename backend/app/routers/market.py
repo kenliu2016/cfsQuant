@@ -16,6 +16,8 @@ from ..services.market_service import (
     get_market_exchanges,
     get_market_codes,
     get_market_base_score,
+    get_strong_weak_coins,
+    get_strong_weak_coins_enhanced,
     market_data_service,
 )
 from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
@@ -689,3 +691,56 @@ def market_base_score_endpoint(exchange: str = Query(None), symbol: str = Query(
     except Exception as e:
         logger.error(f"获取市场基准情绪指标失败: {e}")
         raise HTTPException(status_code=500, detail="failed to fetch market base score")
+
+
+@public_router.get("/strong-weak-coins")
+def get_strong_weak_coins_endpoint():
+    """
+    获取强势币种和弱势币种列表
+    
+    返回包含强势币种（前10）和弱势币种（后10）的列表
+    基于VMR总分数（15m:0.1, 1h:0.3, 1d:0.6加权平均）和24小时综合涨幅排序
+    """
+    try:
+        # 调用服务层方法获取强势/弱势币种数据
+        result = get_strong_weak_coins()
+        
+        logger.info(f"成功获取强势/弱势币种数据: 强势币种{len(result.get('strong_coins', []))}个, 弱势币种{len(result.get('weak_coins', []))}个")
+        
+        return {
+            "success": True,
+            "data": result,
+            "message": "获取强势/弱势币种数据成功"
+        }
+    except Exception as e:
+        logger.error(f"获取强势/弱势币种数据失败: {e}")
+        raise HTTPException(status_code=500, detail="获取强势/弱势币种数据失败")
+
+
+@public_router.get("/strong-weak-coins-enhanced")
+def get_strong_weak_coins_enhanced_endpoint():
+    """
+    获取强势币种和弱势币种列表（增强版本）
+    
+    计算规则：
+    1. 从market_ohlcv_1h视图获取最近24小时数据
+    2. VMR = 24小时内总成交量（quoteVolume总和）/ 期初市值（24小时前的market_cap）* 100
+    3. 涨幅 = (当前收盘价 - 24小时前开盘价) / 24小时前开盘价 * 100
+    4. 返回每个币种的24小时内每个小时的收盘价和quoteVolume，用于绘制曲线图
+    
+    返回包含强势币种（前10）和弱势币种（后10）的列表
+    """
+    try:
+        # 调用服务层方法获取增强版强势/弱势币种数据
+        result = get_strong_weak_coins_enhanced()
+        
+        logger.info(f"成功获取增强版强势/弱势币种数据: 强势币种{len(result.get('strong_coins', []))}个, 弱势币种{len(result.get('weak_coins', []))}个")
+        
+        return {
+            "success": True,
+            "data": result,
+            "message": "获取增强版强势/弱势币种数据成功"
+        }
+    except Exception as e:
+        logger.error(f"获取增强版强势/弱势币种数据失败: {e}")
+        raise HTTPException(status_code=500, detail="获取增强版强势/弱势币种数据失败")

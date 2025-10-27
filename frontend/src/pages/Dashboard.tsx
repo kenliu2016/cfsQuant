@@ -15,6 +15,44 @@ type TrendCoin = {
   spark: number[];
 };
 
+type StrongWeakCoin = {
+  symbol: string;
+  vmr_total_score: number;
+  gain_24h: number;
+  vmr_15m: number;
+  vmr_1h: number;
+  vmr_1d: number;
+};
+
+type EnhancedStrongWeakCoin = {
+  symbol: string;
+  vmr: number;
+  gain_24h: number;
+  hourly_data: {
+    close: number;
+    quote_volume: number;
+    timestamp: string;
+  }[];
+};
+
+type StrongWeakCoinsResponse = {
+  success: boolean;
+  data: {
+    strong_coins: StrongWeakCoin[];
+    weak_coins: StrongWeakCoin[];
+  };
+  message: string;
+};
+
+type EnhancedStrongWeakCoinsResponse = {
+  success: boolean;
+  data: {
+    strong_coins: EnhancedStrongWeakCoin[];
+    weak_coins: EnhancedStrongWeakCoin[];
+  };
+  message: string;
+};
+
 type CoinTableRow = {
   key: string;
   symbol: string;
@@ -116,6 +154,9 @@ const Dashboard: React.FC = () => {
     bullBearPhase: 'Neutral',
     fearGreedValue: 0,
   });
+  const [strongCoins, setStrongCoins] = useState<EnhancedStrongWeakCoin[]>([]);
+  const [weakCoins, setWeakCoins] = useState<EnhancedStrongWeakCoin[]>([]);
+  const [coinsLoading, setCoinsLoading] = useState(false);
 
   const fetchMarketMetrics = useCallback(async () => {
     setRefreshing(true);
@@ -138,9 +179,57 @@ const Dashboard: React.FC = () => {
     }
   }, []);
 
+  const fetchStrongWeakCoins = useCallback(async () => {
+    setCoinsLoading(true);
+    try {
+      // 使用增强版接口
+      const response = await client.get<EnhancedStrongWeakCoinsResponse>('/api/market/strong-weak-coins-enhanced');
+      if (response.data.success) {
+        // 强势币取前5名（1-5）
+        const top5StrongCoins = response.data.data.strong_coins.slice(0, 5);
+        // 弱势币取后5名（倒序排列20-16）
+        const last5WeakCoins = response.data.data.weak_coins.slice(-5).reverse();
+        
+        setStrongCoins(top5StrongCoins || []);
+        setWeakCoins(last5WeakCoins || []);
+      } else {
+        message.error('获取强势/弱势币种数据失败');
+      }
+    } catch (error) {
+      console.error('Failed to fetch strong/weak coins', error);
+      message.error('获取强势/弱势币种数据失败');
+      
+      // 如果增强版接口失败，回退到旧版接口
+      try {
+        const fallbackResponse = await client.get<StrongWeakCoinsResponse>('/api/market/strong-weak-coins');
+        if (fallbackResponse.data.success) {
+          // 转换旧版数据格式到新版格式
+          const convertToEnhancedFormat = (coin: StrongWeakCoin): EnhancedStrongWeakCoin => ({
+            symbol: coin.symbol,
+            vmr: coin.vmr_total_score,
+            gain_24h: coin.gain_24h,
+            hourly_data: [] // 旧版接口没有小时数据
+          });
+          
+          const top5StrongCoins = fallbackResponse.data.data.strong_coins.slice(0, 5).map(convertToEnhancedFormat);
+          const last5WeakCoins = fallbackResponse.data.data.weak_coins.slice(-5).reverse().map(convertToEnhancedFormat);
+          
+          setStrongCoins(top5StrongCoins || []);
+          setWeakCoins(last5WeakCoins || []);
+          message.warning('使用旧版数据接口，曲线图可能显示为直线');
+        }
+      } catch (fallbackError) {
+        console.error('Fallback interface also failed', fallbackError);
+      }
+    } finally {
+      setCoinsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchMarketMetrics();
-  }, [fetchMarketMetrics]);
+    fetchStrongWeakCoins();
+  }, [fetchMarketMetrics, fetchStrongWeakCoins]);
 
   const biasScore = marketMetrics.bullBearScore ?? 0;
   const clampedScore = clamp(biasScore, -7, 7);
@@ -217,45 +306,112 @@ const Dashboard: React.FC = () => {
 
   const handleRefresh = () => {
     fetchMarketMetrics();
+    fetchStrongWeakCoins();
   };
 
-  const renderTrendList = (items: TrendCoin[], trend: 'bullish' | 'bearish') => (
-    <ul className={styles.trendList}>
-      {items.map((coin) => (
-        <li key={coin.symbol} className={styles.trendItem}>
-          <div className={styles.trendSymbol}>
-            <div className={styles.symbolCircle}>{coin.symbol.slice(0, 2)}</div>
-            <div>
-              <div className={styles.symbolLabel}>{coin.symbol}</div>
-              <div className={styles.symbolPair}>{coin.pair}</div>
-            </div>
-          </div>
-          <div>
-            <Sparkline
-              data={coin.spark}
-              color={trend === 'bullish' ? '#34d399' : '#f87171'}
-            />
-            <div className={styles.trendMeta}>
-              <span
-                className={
-                  trend === 'bullish'
-                    ? styles.positiveChange
-                    : styles.negativeChange
-                }
-              >
-                {coin.change24h > 0 ? '+' : ''}
-                {coin.change24h.toFixed(2)}%
-              </span>
-              <span className={styles.vmrLabel}>VMR</span>
-              <span className={styles.vmrValue}>{coin.vmr.toFixed(3)}</span>
-              <span className={styles.vmrLabel}>复合</span>
-              <span className={styles.vmrValue}>{coin.composite.toFixed(3)}</span>
-            </div>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
+  // 将API返回的EnhancedStrongWeakCoin数据转换为前端需要的TrendCoin格式
+  const convertToTrendCoin = (coin: EnhancedStrongWeakCoin): TrendCoin => {
+    // 如果有小时数据，使用真实数据生成sparkline
+    let sparkData: number[];
+    
+    if (coin.hourly_data && coin.hourly_data.length > 0) {
+      // 使用真实的小时收盘价数据
+      sparkData = coin.hourly_data.map(data => data.close);
+      
+      // 如果数据点超过7个，进行采样
+      if (sparkData.length > 7) {
+        const step = Math.floor(sparkData.length / 7);
+        sparkData = sparkData.filter((_, index) => index % step === 0).slice(0, 7);
+      }
+      
+      // 如果数据点不足7个，用最后一个值填充
+      while (sparkData.length < 7) {
+        sparkData.push(sparkData[sparkData.length - 1] || 0);
+      }
+    } else {
+      // 没有小时数据时，生成模拟数据
+      const baseValue = Math.abs(coin.gain_24h) / 10;
+      sparkData = [
+        baseValue * 0.5,
+        baseValue * 0.7,
+        baseValue * 0.9,
+        baseValue * 1.1,
+        baseValue * 1.3,
+        baseValue * 1.5,
+        baseValue * 1.7
+      ];
+    }
+    
+    return {
+      symbol: coin.symbol,
+      pair: `${coin.symbol}-USDT`,
+      change24h: coin.gain_24h,
+      vmr: coin.vmr,
+      composite: coin.vmr, // 使用VMR作为复合分数
+      spark: sparkData
+    };
+  };
+
+  const renderTrendList = (items: EnhancedStrongWeakCoin[], trend: 'bullish' | 'bearish') => {
+    if (coinsLoading) {
+      return (
+        <div className={styles.loadingContainer}>
+          <div className={styles.loadingText}>加载中...</div>
+        </div>
+      );
+    }
+    
+    if (items.length === 0) {
+      return (
+        <div className={styles.emptyContainer}>
+          <div className={styles.emptyText}>暂无数据</div>
+        </div>
+      );
+    }
+    
+    return (
+      <ul className={styles.trendList}>
+        {items.map((coin, index) => {
+          const trendCoin = convertToTrendCoin(coin);
+          return (
+            <li key={coin.symbol} className={styles.trendItem}>
+              <div className={styles.trendSymbol}>
+                <div className={styles.symbolCircle}>{coin.symbol.slice(0, 2)}</div>
+                <div>
+                  <div className={styles.symbolLabel}>{coin.symbol}</div>
+                  <div className={styles.symbolPair}>{`${coin.symbol}-USDT`}</div>
+                  {/* 将复合分数值显示在币名称下方 */}
+                  <div className={styles.compositeScore}>
+                    复合分数: {coin.vmr ? coin.vmr.toFixed(3) : '0.000'}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Sparkline
+                  data={trendCoin.spark}
+                  color={trend === 'bullish' ? '#34d399' : '#f87171'}
+                />
+                <div className={styles.trendMeta}>
+                  <span
+                    className={
+                      trend === 'bullish'
+                        ? styles.positiveChange
+                        : styles.negativeChange
+                    }
+                  >
+                    {coin.gain_24h > 0 ? '+' : ''}
+                    {coin.gain_24h ? coin.gain_24h.toFixed(2) : '0.00'}%
+                  </span>
+                  <span className={styles.vmrLabel}>VMR</span>
+                  <span className={styles.vmrValue}>{coin.vmr ? coin.vmr.toFixed(3) : '0.000'}</span>
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
 
   return (
     <div className={styles.dashboardPage}>
@@ -329,7 +485,7 @@ const Dashboard: React.FC = () => {
           <div className={styles.trendHeader}>
             <div>
               <div className={styles.sectionTitle}>强势币种</div>
-              <div className={styles.sectionDescription}>多因子评分靠前的币种 · 支持 Top 20</div>
+              <div className={styles.sectionDescription}>基于VMR总分数和24小时涨幅排序 · 显示前5名</div>
             </div>
             <Tag className={`${styles.trendTag} ${styles.bullishTag}`}>稳健</Tag>
           </div>
@@ -363,7 +519,7 @@ const Dashboard: React.FC = () => {
           <div className={styles.trendHeader}>
             <div>
               <div className={styles.sectionTitle}>弱势币种</div>
-              <div className={styles.sectionDescription}>下行动能显著 · 风险敞口警示</div>
+              <div className={styles.sectionDescription}>基于VMR总分数和24小时涨幅排序 · 显示后5名（倒序）</div>
             </div>
             <Tag className={`${styles.trendTag} ${styles.bearishTag}`}>警戒</Tag>
           </div>

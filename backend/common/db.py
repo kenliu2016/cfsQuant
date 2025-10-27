@@ -276,7 +276,8 @@ def fetch_df(query: str, config_path: Optional[str] = None, **kwargs):
                 # 使用SQLAlchemy的text对象来支持命名参数
                 logger.debug(f"执行带参数的SQL查询: {query}")
                 logger.debug(f"SQL参数: {kwargs}")
-                df = pd.read_sql(text(query), conn, params=kwargs)
+                # 修复参数传递方式，避免SQLAlchemy版本兼容性问题
+                df = pd.read_sql(text(query).bindparams(**kwargs), conn)
             else:
                 logger.debug(f"执行SQL查询: {query}")
                 df = pd.read_sql(query, conn)

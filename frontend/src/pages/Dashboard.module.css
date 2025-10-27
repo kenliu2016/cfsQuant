@@ -271,13 +271,19 @@
 
 .bottomGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: 2fr 6fr 2fr; /* 2:6:2 比例 */
   gap: 24px;
   margin-top: 28px;
 }
 
 .trendCard {
   padding-bottom: 12px;
+  min-width: 0; /* 防止内容溢出 */
+}
+
+.tableCard {
+  padding-bottom: 16px;
+  min-width: 0; /* 防止内容溢出 */
 }
 
 .trendHeader {
@@ -323,12 +329,15 @@
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.04);
+  align-items: flex-start; /* 确保整体顶部对齐 */
 }
 
 .trendSymbol {
   display: flex;
   gap: 12px;
-  align-items: center;
+  align-items: flex-start;
+  min-width: 120px;
+  flex-shrink: 0;
 }
 
 .symbolCircle {
@@ -341,30 +350,56 @@
   justify-content: center;
   font-weight: 700;
   color: #8ea5ff;
+  flex-shrink: 0;
 }
 
 .symbolLabel {
   color: #f4f5fb;
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .symbolPair {
   color: #6b7293;
   font-size: 13px;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+/* 优化复合分数样式 */
+.compositeScore {
+  color: #ffb347;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 18px;
+  line-height: 1.2;
+}
+
+/* 右侧图表和指标容器 */
+.trendItem > div:last-child {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-height: 60px;
 }
 
 .sparkline {
   width: 120px;
   height: 40px;
+  flex-shrink: 0;
 }
 
 .trendMeta {
   margin-top: 8px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   font-size: 13px;
   color: #8b92b4;
+  min-height: 20px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .positiveChange {
@@ -470,6 +505,34 @@
   font-weight: 600;
 }
 
+.loadingContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+  color: #8b92b4;
+  font-size: 14px;
+}
+
+.loadingText {
+  color: #8b92b4;
+  font-size: 14px;
+}
+
+.emptyContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+  color: #8b92b4;
+  font-size: 14px;
+}
+
+.emptyText {
+  color: #8b92b4;
+  font-size: 14px;
+}
+
 @media (max-width: 1024px) {
   .metaActions {
     grid-column: span 1;
@@ -478,5 +541,42 @@
 
   .metaRow {
     grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  }
+  
+  /* 小屏幕下改为垂直布局 */
+  .bottomGrid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboardPage {
+    padding: 24px 20px 40px;
+  }
+  
+  .pageHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  
+  .actionGroup {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  
+  .trendItem {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .trendItem > div:last-child {
+    align-items: flex-start;
+    min-height: auto;
+  }
+  
+  .trendMeta {
+    justify-content: flex-start;
   }
 }
