@@ -27,6 +27,7 @@ type StrongWeakCoin = {
 type EnhancedStrongWeakCoin = {
   symbol: string;
   vmr: number;
+  vmr_total?: number; // VMR总分，可选字段
   gain_24h: number;
   hourly_data: {
     close: number;
@@ -346,8 +347,8 @@ const Dashboard: React.FC = () => {
       symbol: coin.symbol,
       pair: `${coin.symbol}-USDT`,
       change24h: coin.gain_24h,
-      vmr: coin.vmr,
-      composite: coin.vmr, // 使用VMR作为复合分数
+      vmr: coin.vmr, // 使用24小时VMR值
+      composite: coin.vmr_total !== undefined ? coin.vmr_total : 0, // 使用VMR总分作为复合分数，如果不存在则使用0
       spark: sparkData
     };
   };
@@ -382,7 +383,7 @@ const Dashboard: React.FC = () => {
                   <div className={styles.symbolPair}>{`${coin.symbol}-USDT`}</div>
                   {/* 将复合分数值显示在币名称下方 */}
                   <div className={styles.compositeScore}>
-                    复合分数: {coin.vmr ? coin.vmr.toFixed(3) : '0.000'}
+                    复合分数: {coin.vmr_total ? coin.vmr_total.toFixed(3) : '0.000'}
                   </div>
                 </div>
               </div>

@@ -16,7 +16,6 @@ from ..services.market_service import (
     get_market_exchanges,
     get_market_codes,
     get_market_base_score,
-    get_strong_weak_coins,
     get_strong_weak_coins_enhanced,
     market_data_service,
 )
@@ -703,7 +702,7 @@ def get_strong_weak_coins_endpoint():
     """
     try:
         # 调用服务层方法获取强势/弱势币种数据
-        result = get_strong_weak_coins()
+        result = get_strong_weak_coins_enhanced()
         
         logger.info(f"成功获取强势/弱势币种数据: 强势币种{len(result.get('strong_coins', []))}个, 弱势币种{len(result.get('weak_coins', []))}个")
         

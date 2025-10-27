@@ -11,7 +11,7 @@ def setup_logger_with_file_handler(
     propagate: bool = False
 ) -> logging.Logger:
     """
-    配置带有文件处理器的日志记录器
+    配置带有文件处理器和控制台处理器的日志记录器
     
     参数:
         logger_name: 日志记录器名称
@@ -46,12 +46,18 @@ def setup_logger_with_file_handler(
     file_handler = logging.FileHandler(log_file_path, mode=mode)
     file_handler.setLevel(log_level)
     
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    
     # 设置日志格式
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
     file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
     
     # 添加处理器到日志记录器
     logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
     
     # 设置是否向上级记录器传递消息
     logger.propagate = propagate
