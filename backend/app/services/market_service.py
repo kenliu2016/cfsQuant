@@ -525,15 +525,6 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
         # 调试信息：函数开始执行
         logger.info("get_strong_weak_coins_enhanced函数开始执行")
         
-        # 获取所有币种列表
-        market_data_service = MarketDataService()
-        symbols_df = market_data_service.get_market_codes()
-        if symbols_df.empty:
-            logger.info("symbols_df为空，直接返回空结果")
-            return {"strong_coins": [], "weak_coins": []}
-        
-        symbols = symbols_df['symbol'].tolist()
-        
         # 获取当前时间和24小时前的时间
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=24)
@@ -541,6 +532,21 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
         # 将datetime对象转换为字符串格式
         end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
         start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 直接查询market_ohlcv_1h表中有数据的币种，避免返回没有数据的币种
+        sql_get_symbols_with_data = """
+        SELECT DISTINCT symbol 
+        FROM market_ohlcv_1h 
+        WHERE bucket >= :start_time AND bucket <= :end_time
+        """
+        
+        symbols_df = fetch_df(sql_get_symbols_with_data, start_time=start_time_str, end_time=end_time_str)
+        if symbols_df.empty:
+            logger.info("最近24小时内没有币种数据，直接返回空结果")
+            return {"strong_coins": [], "weak_coins": []}
+        
+        symbols = symbols_df['symbol'].tolist()
+        logger.info(f"找到{len(symbols)}个在最近24小时内有数据的币种")
         
         # 简化查询逻辑，直接使用market_ohlcv_1h视图获取数据
         sql = """
@@ -681,51 +687,51 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
             print("主查询返回空数据，直接返回空结果")
             return {"strong_coins": [], "weak_coins": []}
         
-        # 获取前20个币种的24小时价格数据用于绘制曲线图
+        # 业务要求：获取前20个币种的24小时价格数据用于绘制曲线图
         top_symbols = df['symbol'].head(20).tolist()
         
         # 调试信息：打印top_symbols
-        logger.info(f"top_symbols数量: {len(top_symbols)}")
+        logger.info(f"需要查询小时数据的币种数量: {len(top_symbols)}")
         if top_symbols:
-            logger.info(f"top_symbols前5个: {top_symbols[:5]}")
+            logger.info(f"前20个币种: {top_symbols}")
         
         # 如果top_symbols为空，直接返回空数据
         if not top_symbols:
-            hourly_data = []
-            logger.info("top_symbols为空，hourly_data设置为空列表")
+            symbol_to_hourly_data = {}
+            logger.info("top_symbols为空，symbol_to_hourly_data设置为空字典")
         else:
-            # 查询每个币种的24小时数据
-            hourly_data = []
+            # 使用批量查询优化性能，一次性查询所有币种的小时数据
+            sql_hourly = """
+            SELECT 
+                symbol,
+                close,
+                quote_volume,
+                bucket as timestamp
+            FROM market_ohlcv_1h
+            WHERE symbol = ANY(:symbols)
+                AND bucket <= :end_time
+                AND bucket >= :start_time
+            ORDER BY symbol, bucket ASC
+            """
+            
+            df_hourly = fetch_df(sql_hourly, 
+                symbols=top_symbols,
+                end_time=end_time_str,
+                start_time=start_time_str
+            )
+            
+            # 调试信息：打印查询结果
+            logger.info(f"批量查询到 {len(df_hourly)} 条小时数据")
+            
+            # 按币种分组处理小时数据
+            symbol_to_hourly_data = {}
             for symbol in top_symbols:
-                # 调试信息：开始查询币种的小时数据
-                logger.info(f"开始查询币种 {symbol} 的小时数据")
+                symbol_data = df_hourly[df_hourly['symbol'] == symbol]
                 
-                # 查询该币种最近24小时的数据
-                sql_hourly = """
-                SELECT 
-                    close,
-                    quote_volume,
-                    bucket as timestamp
-                FROM market_ohlcv_1h
-                WHERE symbol = :symbol
-                    AND bucket <= :end_time
-                    AND bucket >= :start_time
-                ORDER BY bucket ASC
-                """
-                
-                df_hourly = fetch_df(sql_hourly, 
-                    symbol=symbol,
-                    end_time=end_time_str,
-                    start_time=start_time_str
-                )
-                
-                # 调试信息：打印查询结果
-                logger.info(f"币种 {symbol} 查询到 {len(df_hourly)} 条小时数据")
-                
-                if not df_hourly.empty:
-                    # 转换为列表格式，确保有24条数据
+                if not symbol_data.empty:
+                    # 转换为列表格式
                     symbol_hourly_data = []
-                    for _, row in df_hourly.iterrows():
+                    for _, row in symbol_data.iterrows():
                         symbol_hourly_data.append({
                             'close': float(row['close']) if row['close'] is not None else 0.0,
                             'quote_volume': float(row['quote_volume']) if row['quote_volume'] is not None else 0.0,
@@ -740,105 +746,51 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
                     
                     # 只取最近24条数据
                     symbol_hourly_data = symbol_hourly_data[-24:]
-                    hourly_data.append(symbol_hourly_data)
+                    symbol_to_hourly_data[symbol] = symbol_hourly_data
                 else:
-                    # 如果没有数据，创建24条空数据
-                    empty_data = []
-                    for i in range(24):
-                        empty_data.append({
-                            'close': 0.0,
-                            'quote_volume': 0.0,
-                            'timestamp': (start_time + timedelta(hours=i)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                        })
-                    hourly_data.append(empty_data)
+                    # 如果没有数据，跳过该币种，不创建模拟数据
+                    logger.warning(f"币种 {symbol} 在最近24小时内没有小时数据，跳过该币种")
+                    continue
         
         # 处理计算结果
         coins_data = []
-        
-        # 创建symbol到hourly_data的映射
-        symbol_to_hourly_data = {}
-        for i, symbol in enumerate(top_symbols):
-            if i < len(hourly_data):
-                symbol_to_hourly_data[symbol] = hourly_data[i]
-        
-        # 调试信息：打印top_symbols和hourly_data的映射关系
-        logger.info(f"top_symbols数量: {len(top_symbols)}")
-        logger.info(f"hourly_data数量: {len(hourly_data)}")
-        logger.info(f"symbol_to_hourly_data映射数量: {len(symbol_to_hourly_data)}")
         
         # 调试信息：检查df是否为空
         logger.info(f"df行数: {len(df)}")
         logger.info(f"df列名: {df.columns.tolist()}")
         
+        # 只处理那些有实际小时数据的币种
         for _, row in df.iterrows():
             symbol = row['symbol']
+            
+            # 检查该币种是否有实际的小时数据
+            if symbol not in symbol_to_hourly_data:
+                logger.warning(f"币种 {symbol} 没有小时数据，跳过")
+                continue
+                
             gain_24h = float(row['gain_24h']) if row['gain_24h'] is not None else 0.0
             vmr_24h = float(row['vmr_24h']) if row['vmr_24h'] is not None else 0.0
             vmr_total = float(row['vmr_total']) if row['vmr_total'] is not None else 0.0
+            current_close = float(row['current_close']) if row['current_close'] is not None else 0.0
             
             # 获取该币种的24小时价格数据
-            symbol_hourly_data = symbol_to_hourly_data.get(symbol, [])
+            symbol_hourly_data = symbol_to_hourly_data[symbol]
             
-            # 如果币种不在top_symbols中，查询该币种的小时数据
-            if symbol not in symbol_to_hourly_data:
-                # 调试信息：打印币种不在top_symbols中的情况
-                logger.info(f"币种 {symbol} 不在top_symbols中，查询小时数据")
-                
-                # 查询该币种最近24小时的数据
-                sql_hourly = """
-                SELECT 
-                    close,
-                    quote_volume,
-                    bucket as timestamp
-                FROM market_ohlcv_1h
-                WHERE symbol = :symbol
-                    AND bucket <= :end_time
-                    AND bucket >= :start_time
-                ORDER BY bucket ASC
-                """
-                
-                df_hourly = fetch_df(sql_hourly, 
-                    symbol=symbol,
-                    end_time=end_time_str,
-                    start_time=start_time_str
-                )
-                
-                # 调试信息：打印查询结果
-                logger.info(f"币种 {symbol} 查询到 {len(df_hourly)} 条小时数据")
-                
-                if not df_hourly.empty:
-                    # 转换为列表格式，确保有24条数据
-                    symbol_hourly_data = []
-                    for _, row in df_hourly.iterrows():
-                        symbol_hourly_data.append({
-                            'close': float(row['close']) if row['close'] is not None else 0.0,
-                            'quote_volume': float(row['quote_volume']) if row['quote_volume'] is not None else 0.0,
-                            'timestamp': row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp'])
-                        })
-                    
-                    # 如果数据不足24条，用最后一条数据填充
-                    if len(symbol_hourly_data) < 24:
-                        last_data = symbol_hourly_data[-1] if symbol_hourly_data else None
-                        while len(symbol_hourly_data) < 24:
-                            symbol_hourly_data.append(last_data)
-                    
-                    # 只取最近24条数据
-                    symbol_hourly_data = symbol_hourly_data[-24:]
-                else:
-                    # 如果没有数据，创建24条空数据
-                    symbol_hourly_data = []
-                    for i in range(24):
-                        symbol_hourly_data.append({
-                            'close': 0.0,
-                            'quote_volume': 0.0,
-                            'timestamp': (start_time + timedelta(hours=i)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                        })
+            # 确保小时数据不为空
+            if not symbol_hourly_data:
+                logger.warning(f"币种 {symbol} 的小时数据为空，跳过")
+                continue
             
             coins_data.append({
                 'symbol': symbol,
-                'vmr': vmr_24h,  # 使用24小时VMR值
-                'vmr_total': vmr_total,  # 使用VMR总分作为复合分数
+                'name': symbol,  # 使用symbol作为name
+                'price': current_close,  # 使用当前收盘价作为price
                 'gain_24h': gain_24h,
+                'volume_24h': 0.0,  # 暂时设置为0，后续可以从数据中获取
+                'vmr_15m': 0.0,  # 暂时设置为0
+                'vmr_1h': 0.0,  # 暂时设置为0
+                'vmr_1d': 0.0,  # 暂时设置为0
+                'vmr_total': vmr_total,
                 'hourly_data': symbol_hourly_data
             })
         
@@ -848,12 +800,10 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
         # 调试信息：打印排序后的币种涨幅
         logger.info(f"排序后币种数量: {len(coins_sorted_by_gain)}")
         if coins_sorted_by_gain:
-            logger.info(f"前5个强势币: {[coin['symbol'] for coin in coins_sorted_by_gain[:5]]}")
-            logger.info(f"前5个强势币涨幅: {[coin['gain_24h'] for coin in coins_sorted_by_gain[:5]]}")
-            logger.info(f"最后5个弱势币: {[coin['symbol'] for coin in coins_sorted_by_gain[-5:]]}")
-            logger.info(f"最后5个弱势币涨幅: {[coin['gain_24h'] for coin in coins_sorted_by_gain[-5:]]}")
+            logger.info(f"所有币种: {[coin['symbol'] for coin in coins_sorted_by_gain]}")
+            logger.info(f"所有币种涨幅: {[coin['gain_24h'] for coin in coins_sorted_by_gain]}")
         
-        # 前10为强势币，最后10为弱势币
+        # 业务要求：前10为强势币，最后10为弱势币
         strong_coins = coins_sorted_by_gain[:10]
         weak_coins = coins_sorted_by_gain[-10:]  # 取最后10名作为弱势币
         
@@ -869,6 +819,134 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"获取增强版强势/弱势币种数据失败: {e}")
         return {"strong_coins": [], "weak_coins": []}
+
+
+@cache_dataframe_result(expire_time=3600)  # 1小时缓存
+def get_coin_analysis_table() -> List[Dict[str, Any]]:
+    """
+    获取币种分析表数据 - 优化版本
+    
+    优化策略：
+    1. 优先使用物化视图查询，提高性能
+    2. 备用方案：使用窗口函数优化查询
+    3. 添加智能缓存策略
+    4. 支持实时数据和历史数据查询
+    
+    Returns:
+        币种分析表数据列表，包含symbol, market_cap, quoteVolume, vmr, ve字段
+    """
+    try:
+        logger.info("开始获取币种分析表数据（优化版本）")
+        
+        # 首先尝试使用物化视图（如果存在）
+        try:
+            sql_materialized = """
+            SELECT 
+                symbol,
+                market_cap,
+                quote_volume as quoteVolume,
+                vmr,
+                ve
+            FROM coin_analysis_view
+            ORDER BY market_cap DESC
+            LIMIT 200
+            """
+            
+            df = fetch_df(sql_materialized, timeout=5)
+            if not df.empty:
+                logger.info(f"使用物化视图查询成功，共{len(df)}条记录")
+                return _convert_df_to_result_list(df)
+        except Exception as e:
+            logger.warning(f"物化视图查询失败，使用备用查询方案: {e}")
+        
+        # 备用方案：使用窗口函数优化查询
+        sql_fallback = """
+        WITH latest_ohlcv AS (
+            SELECT 
+                symbol,
+                market_cap,
+                quote_volume,
+                vmr,
+                bucket,
+                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
+            FROM market_ohlcv_1d
+            WHERE market_cap > 100000000
+                AND bucket >= NOW() - INTERVAL '7 days'
+        ),
+        latest_ve AS (
+            SELECT 
+                symbol,
+                ve,
+                datetime,
+                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY datetime DESC) as rn
+            FROM indecator_ve
+            WHERE datetime >= NOW() - INTERVAL '7 days'
+        )
+        SELECT 
+            mc.symbol,
+            lo.market_cap,
+            lo.quote_volume as quoteVolume,
+            lo.vmr,
+            lv.ve
+        FROM market_codes mc
+        INNER JOIN latest_ohlcv lo ON mc.symbol = lo.symbol AND lo.rn = 1
+        LEFT JOIN latest_ve lv ON mc.symbol = lv.symbol AND lv.rn = 1
+        WHERE mc.active = true
+            AND mc.quotecurrency = 'USDT'
+        ORDER BY lo.market_cap DESC
+        LIMIT 200
+        """
+        
+        df = fetch_df(sql_fallback)
+        logger.info(f"备用查询方案结果：共{len(df)}条记录")
+        
+        return _convert_df_to_result_list(df)
+        
+    except Exception as e:
+        logger.error(f"获取币种分析表数据失败: {e}")
+        return []
+
+
+def _convert_df_to_result_list(df) -> List[Dict[str, Any]]:
+    """
+    将DataFrame转换为结果列表的辅助函数
+    
+    Args:
+        df: 查询结果的DataFrame
+        
+    Returns:
+        转换后的字典列表
+    """
+    result_list = []
+    for _, row in df.iterrows():
+        # 调试：打印DataFrame的列名
+        logger.info(f"DataFrame列名: {list(df.columns)}")
+        
+        # 安全地获取列值，处理可能的列名变化
+        symbol = row['symbol'] if 'symbol' in df.columns else ''
+        market_cap = float(row['market_cap']) if 'market_cap' in df.columns and row['market_cap'] is not None else 0.0
+        
+        # 处理quoteVolume列名（可能为quoteVolume或quote_volume）
+        if 'quoteVolume' in df.columns:
+            quote_volume = float(row['quoteVolume']) if row['quoteVolume'] is not None else 0.0
+        elif 'quote_volume' in df.columns:
+            quote_volume = float(row['quote_volume']) if row['quote_volume'] is not None else 0.0
+        else:
+            quote_volume = 0.0
+            
+        vmr = float(row['vmr']) if 'vmr' in df.columns and row['vmr'] is not None else 0.0
+        ve = float(row['ve']) if 've' in df.columns and row['ve'] is not None else 0.0
+        
+        result_list.append({
+            'symbol': symbol,
+            'market_cap': market_cap,
+            'quoteVolume': quote_volume,
+            'vmr': vmr,
+            've': ve
+        })
+    
+    logger.info(f"数据转换成功，共{len(result_list)}条记录")
+    return result_list
 
 
 def _get_vmr_value(symbol: str, timeframe: str) -> float:
@@ -1186,7 +1264,14 @@ def _get_batch_24h_gains(symbols: List[str]) -> Dict[str, float]:
                            end_time4=end_time_str)
         hourly_data = {}
         if not hourly_df.empty:
-            for symbol in symbols:
+            # 记录调试信息
+            logger.debug(f"hourly_df查询结果: {len(hourly_df)}行数据")
+            logger.debug(f"查询的币种数量: {len(symbols)}")
+            
+            # 确保我们只处理在df中存在的币种
+            valid_symbols = set(df['symbol'].tolist())
+            
+            for symbol in valid_symbols:
                 symbol_data = hourly_df[hourly_df['symbol'] == symbol]
                 hourly_data_list = []
                 for _, row in symbol_data.iterrows():
@@ -1196,6 +1281,9 @@ def _get_batch_24h_gains(symbols: List[str]) -> Dict[str, float]:
                         'timestamp': row['bucket'].isoformat() if hasattr(row['bucket'], 'isoformat') else str(row['bucket'])
                     })
                 hourly_data[symbol] = hourly_data_list
+                logger.debug(f"币种 {symbol} 的hourly_data长度: {len(hourly_data_list)}")
+        else:
+            logger.warning("hourly_df查询结果为空")
         
         # 处理计算结果
         coins_data = []

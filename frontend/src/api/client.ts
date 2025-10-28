@@ -11,7 +11,7 @@ declare global {
 // 然后通过Nginx反向代理转发到后端服务，避免CORS问题
 const client = axios.create({
   baseURL: '', // 空字符串，避免与API路径中的/api重复
-  timeout: 30000, // 增加超时时间，因为大数据量查询可能需要更长时间
+  timeout: 60000, // 增加到60秒超时，因为大数据量查询可能需要更长时间
   headers: {
     'Content-Type': 'application/json',
   },

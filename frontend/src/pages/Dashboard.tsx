@@ -15,15 +15,6 @@ type TrendCoin = {
   spark: number[];
 };
 
-type StrongWeakCoin = {
-  symbol: string;
-  vmr_total_score: number;
-  gain_24h: number;
-  vmr_15m: number;
-  vmr_1h: number;
-  vmr_1d: number;
-};
-
 type EnhancedStrongWeakCoin = {
   symbol: string;
   vmr: number;
@@ -36,20 +27,35 @@ type EnhancedStrongWeakCoin = {
   }[];
 };
 
-type StrongWeakCoinsResponse = {
-  success: boolean;
-  data: {
-    strong_coins: StrongWeakCoin[];
-    weak_coins: StrongWeakCoin[];
-  };
-  message: string;
-};
-
 type EnhancedStrongWeakCoinsResponse = {
   success: boolean;
   data: {
     strong_coins: EnhancedStrongWeakCoin[];
     weak_coins: EnhancedStrongWeakCoin[];
+  };
+  message: string;
+};
+
+type CoinAnalysisTableItem = {
+  symbol: string;
+  market_cap: number;
+  quoteVolume: number;
+  vmr: number;
+  ve: number;
+};
+
+type CoinAnalysisTableResponse = {
+  success: boolean;
+  data: {
+    items: CoinAnalysisTableItem[];
+    pagination: {
+      page: number;
+      page_size: number;
+      total_count: number;
+      total_pages: number;
+      has_previous: boolean;
+      has_next: boolean;
+    };
   };
   message: string;
 };
@@ -103,15 +109,7 @@ const weakCoins: TrendCoin[] = [
   { symbol: 'AXS', pair: 'AXS-USDT', change24h: -2.91, vmr: 0.88, composite: 0.576, spark: [15, 14, 12, 11, 9, 7, 6] },
 ];
 
-const tableData: CoinTableRow[] = [
-  { key: 'CHZ', symbol: 'CHZ', pair: 'CHZ-USDT', marketCap: '$1.80B', volume24h: '$28.87M', vmr: 1.604, l1: 2.9974, ve: 1.072, composite: 1.072, forecast: 2.9566 },
-  { key: 'AXS', symbol: 'AXS', pair: 'AXS-USDT', marketCap: '$2.40B', volume24h: '$21.08M', vmr: 0.878, l1: 2.5404, ve: 0.860, composite: 0.860, forecast: 2.5307 },
-  { key: 'VET', symbol: 'VET', pair: 'VET-USDT', marketCap: '$3.50B', volume24h: '$54.06M', vmr: 1.544, l1: 1.8627, ve: 0.806, composite: 0.806, forecast: 1.6756 },
-  { key: 'GALA', symbol: 'GALA', pair: 'GALA-USDT', marketCap: '$2.10B', volume24h: '$30.73M', vmr: 1.463, l1: 1.2916, ve: 0.718, composite: 0.718, forecast: 1.3064 },
-  { key: 'INJ', symbol: 'INJ', pair: 'INJ-USDT', marketCap: '$6.50B', volume24h: '$106.89M', vmr: 1.645, l1: 0.4783, ve: 0.575, composite: 0.575, forecast: 0.4746 },
-  { key: 'ARB', symbol: 'ARB', pair: 'ARB-USDT', marketCap: '$8.80B', volume24h: '$95.77M', vmr: 1.088, l1: 0.8448, ve: 0.565, composite: 0.565, forecast: 0.8669 },
-  { key: 'UNI', symbol: 'UNI', pair: 'UNI-USDT', marketCap: '$12.00B', volume24h: '$130.67M', vmr: 1.089, l1: 0.5827, ve: 0.505, composite: 0.505, forecast: 0.5695 },
-];
+
 
 const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color }) => {
   const width = 120;
@@ -158,6 +156,16 @@ const Dashboard: React.FC = () => {
   const [strongCoins, setStrongCoins] = useState<EnhancedStrongWeakCoin[]>([]);
   const [weakCoins, setWeakCoins] = useState<EnhancedStrongWeakCoin[]>([]);
   const [coinsLoading, setCoinsLoading] = useState(false);
+  const [coinAnalysisData, setCoinAnalysisData] = useState<CoinAnalysisTableItem[]>([]);
+  const [coinAnalysisLoading, setCoinAnalysisLoading] = useState(false);
+  const [coinAnalysisPagination, setCoinAnalysisPagination] = useState({
+    page: 1,
+    page_size: 10,
+    total_count: 0,
+    total_pages: 0,
+    has_previous: false,
+    has_next: false
+  });
 
   const fetchMarketMetrics = useCallback(async () => {
     setRefreshing(true);
@@ -183,7 +191,6 @@ const Dashboard: React.FC = () => {
   const fetchStrongWeakCoins = useCallback(async () => {
     setCoinsLoading(true);
     try {
-      // 使用增强版接口
       const response = await client.get<EnhancedStrongWeakCoinsResponse>('/api/market/strong-weak-coins-enhanced');
       if (response.data.success) {
         // 强势币取前5名（1-5）
@@ -199,67 +206,65 @@ const Dashboard: React.FC = () => {
     } catch (error) {
       console.error('Failed to fetch strong/weak coins', error);
       message.error('获取强势/弱势币种数据失败');
-      
-      // 如果增强版接口失败，回退到旧版接口
-      try {
-        const fallbackResponse = await client.get<StrongWeakCoinsResponse>('/api/market/strong-weak-coins');
-        if (fallbackResponse.data.success) {
-          // 转换旧版数据格式到新版格式
-          const convertToEnhancedFormat = (coin: StrongWeakCoin): EnhancedStrongWeakCoin => ({
-            symbol: coin.symbol,
-            vmr: coin.vmr_total_score,
-            gain_24h: coin.gain_24h,
-            hourly_data: [] // 旧版接口没有小时数据
-          });
-          
-          const top5StrongCoins = fallbackResponse.data.data.strong_coins.slice(0, 5).map(convertToEnhancedFormat);
-          const last5WeakCoins = fallbackResponse.data.data.weak_coins.slice(-5).reverse().map(convertToEnhancedFormat);
-          
-          setStrongCoins(top5StrongCoins || []);
-          setWeakCoins(last5WeakCoins || []);
-          message.warning('使用旧版数据接口，曲线图可能显示为直线');
-        }
-      } catch (fallbackError) {
-        console.error('Fallback interface also failed', fallbackError);
-      }
     } finally {
       setCoinsLoading(false);
+    }
+  }, []);
+
+  const fetchCoinAnalysisTable = useCallback(async (page: number = 1, pageSize: number = 10) => {
+    setCoinAnalysisLoading(true);
+    try {
+      const response = await client.get<CoinAnalysisTableResponse>('/api/market/coin-analysis-table', {
+        params: { page, page_size: pageSize }
+      });
+      if (response.data.success) {
+        setCoinAnalysisData(response.data.data.items || []);
+        setCoinAnalysisPagination(response.data.data.pagination);
+      } else {
+        message.error('获取币种分析表数据失败');
+      }
+    } catch (error) {
+      console.error('Failed to fetch coin analysis table', error);
+      message.error('获取币种分析表数据失败');
+    } finally {
+      setCoinAnalysisLoading(false);
     }
   }, []);
 
   useEffect(() => {
     fetchMarketMetrics();
     fetchStrongWeakCoins();
-  }, [fetchMarketMetrics, fetchStrongWeakCoins]);
+    fetchCoinAnalysisTable();
+  }, [fetchMarketMetrics, fetchStrongWeakCoins, fetchCoinAnalysisTable]);
 
   const biasScore = marketMetrics.bullBearScore ?? 0;
   const clampedScore = clamp(biasScore, -7, 7);
   const gaugePercent = ((clampedScore + 7) / 14) * 100;
   const fearGreedValue = clamp(marketMetrics.fearGreedValue ?? 0, 0, 100);
 
-  const columns: ColumnsType<CoinTableRow> = useMemo(() => [
+  const columns: ColumnsType<CoinAnalysisTableItem> = useMemo(() => [
     {
       title: '币种',
       dataIndex: 'symbol',
       key: 'symbol',
-      render: (_, record) => (
+      render: (symbol) => (
         <div className={styles.coinCell}>
-          <div className={styles.coinSymbol}>{record.symbol}</div>
-          <div className={styles.coinPair}>{record.pair}</div>
+          <div className={styles.coinSymbol}>{symbol}</div>
+          <div className={styles.coinPair}>{symbol}-USDT</div>
         </div>
       ),
     },
     {
       title: '市值',
-      dataIndex: 'marketCap',
-      key: 'marketCap',
-      render: (value) => <span className={styles.tableValue}>{value}</span>,
+      dataIndex: 'market_cap',
+      key: 'market_cap',
+      render: (value) => <span className={styles.tableValue}>{value.toLocaleString()}</span>,
     },
     {
       title: '24h 成交量',
-      dataIndex: 'volume24h',
-      key: 'volume24h',
-      render: (value) => <span className={styles.tableValue}>{value}</span>,
+      dataIndex: 'quoteVolume',
+      key: 'quoteVolume',
+      render: (value) => <span className={styles.tableValue}>{value.toLocaleString()}</span>,
     },
     {
       title: 'VMR ↑',
@@ -268,46 +273,17 @@ const Dashboard: React.FC = () => {
       render: (value) => <span className={styles.tableValue}>{value.toFixed(3)}</span>,
     },
     {
-      title: 'L1 ↑',
-      dataIndex: 'l1',
-      key: 'l1',
-      render: (value) => <span className={styles.tableValue}>{value.toFixed(4)}</span>,
-    },
-    {
       title: 'VE ↑',
       dataIndex: 've',
       key: 've',
       render: (value) => <span className={styles.tableValue}>{value.toFixed(3)}</span>,
-    },
-    {
-      title: '复合分数 ↓',
-      dataIndex: 'composite',
-      key: 'composite',
-      render: (value) => (
-        <span
-          className={
-            value > 0.9
-              ? styles.compositePositive
-              : value > 0.6
-                ? styles.compositeNeutral
-                : styles.compositeNegative
-          }
-        >
-          {value.toFixed(3)}
-        </span>
-      ),
-    },
-    {
-      title: '预测 VE ↑',
-      dataIndex: 'forecast',
-      key: 'forecast',
-      render: (value) => <span className={styles.tableValue}>{value.toFixed(4)}</span>,
     },
   ], []);
 
   const handleRefresh = () => {
     fetchMarketMetrics();
     fetchStrongWeakCoins();
+    fetchCoinAnalysisTable(coinAnalysisPagination.page, coinAnalysisPagination.page_size);
   };
 
   // 将API返回的EnhancedStrongWeakCoin数据转换为前端需要的TrendCoin格式
@@ -330,17 +306,23 @@ const Dashboard: React.FC = () => {
         sparkData.push(sparkData[sparkData.length - 1] || 0);
       }
     } else {
-      // 没有小时数据时，生成模拟数据
-      const baseValue = Math.abs(coin.gain_24h) / 10;
+      // 没有小时数据时，基于24小时涨幅生成有意义的趋势数据
+      const baseValue = 100; // 基准值100
+      const changeRatio = coin.gain_24h || 0; // 24小时涨幅比例
+      
+      // 生成7个数据点，模拟24小时内的价格变化趋势
       sparkData = [
-        baseValue * 0.5,
-        baseValue * 0.7,
-        baseValue * 0.9,
-        baseValue * 1.1,
-        baseValue * 1.3,
-        baseValue * 1.5,
-        baseValue * 1.7
+        baseValue * (1 + changeRatio * 0.1),
+        baseValue * (1 + changeRatio * 0.2),
+        baseValue * (1 + changeRatio * 0.3),
+        baseValue * (1 + changeRatio * 0.5),
+        baseValue * (1 + changeRatio * 0.7),
+        baseValue * (1 + changeRatio * 0.9),
+        baseValue * (1 + changeRatio)
       ];
+      
+      // 确保数据点都是正数
+      sparkData = sparkData.map(value => Math.max(value, 1));
     }
     
     return {
@@ -508,8 +490,18 @@ const Dashboard: React.FC = () => {
           <div className={styles.tableWrapper}>
             <Table
               columns={columns}
-              dataSource={tableData}
-              pagination={false}
+              dataSource={coinAnalysisData.map(item => ({ ...item, key: item.symbol }))}
+              pagination={{
+                current: coinAnalysisPagination.page,
+                pageSize: coinAnalysisPagination.page_size,
+                total: coinAnalysisPagination.total_count,
+                showSizeChanger: false,
+                showQuickJumper: true,
+                onChange: (page, pageSize) => {
+                  fetchCoinAnalysisTable(page, pageSize || coinAnalysisPagination.page_size);
+                },
+              }}
+              loading={coinAnalysisLoading}
               size="small"
               rowClassName={() => styles.tableRow}
             />
