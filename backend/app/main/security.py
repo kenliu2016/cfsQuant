@@ -44,9 +44,27 @@ def create_access_token(subject: str, tenant_id: str, expires_minutes: Optional[
     return encoded_jwt
 
 
-def decode_token(token: str) -> Dict[str, Any]:
+def decode_token(token: str, verify_exp: bool = True) -> Dict[str, Any]:
+    """
+    解码JWT令牌
+    
+    Args:
+        token: JWT令牌字符串
+        verify_exp: 是否验证令牌过期时间，默认为True
+        
+    Returns:
+        解码后的令牌载荷
+        
+    Raises:
+        ValueError: 令牌无效时抛出异常
+    """
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(
+            token, 
+            settings.JWT_SECRET_KEY, 
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": verify_exp}
+        )
         return payload
     except JWTError as exc:
         raise ValueError("Invalid token") from exc

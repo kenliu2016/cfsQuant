@@ -30,8 +30,14 @@ const SHARED_USER_KEY = 'cfsUser_shared';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { tenantId, setTenantId, refreshTenants } = useTenant();
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
+  
+  // 同步初始化认证状态，避免异步加载导致的认证检查时机问题
+  const initialTenantId = tenantId || 'public';
+  const initialToken = window.localStorage.getItem(tokenKey(initialTenantId)) || window.localStorage.getItem(SHARED_TOKEN_KEY);
+  const initialUser = window.localStorage.getItem(userKey(initialTenantId)) || window.localStorage.getItem(SHARED_USER_KEY);
+  
+  const [token, setToken] = useState<string | null>(initialToken);
+  const [user, setUser] = useState<AuthUser | null>(initialUser ? JSON.parse(initialUser) as AuthUser : null);
   const [loading, setLoading] = useState<boolean>(false);
 
   const loadSession = useCallback(
@@ -47,9 +53,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   useEffect(() => {
-    if (tenantId) {
-      loadSession(tenantId);
-    }
+    // 应用启动时尝试加载会话，无论tenantId是否存在
+    const currentTenantId = tenantId || 'public';
+    loadSession(currentTenantId);
   }, [tenantId, loadSession]);
 
   const persistSession = useCallback((tenant: string, newToken: string, newUser: AuthUser) => {
@@ -108,14 +114,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshSession = useCallback(async () => {
     if (!token || !tenantId) return;
     try {
-      const response = await client.get('/api/auth/me');
-      if (response.data?.user) {
-        const refreshedUser: AuthUser = response.data.user;
-        persistSession(tenantId, token, refreshedUser);
+      // 首先尝试刷新令牌
+      const refreshResponse = await client.post('/api/auth/refresh');
+      if (refreshResponse.status === 200) {
+        const newToken: string = refreshResponse.data?.access_token;
+        const refreshedUser: AuthUser = refreshResponse.data?.user;
+        if (newToken && refreshedUser) {
+          persistSession(tenantId, newToken, refreshedUser);
+          console.log('Token refreshed successfully');
+          return;
+        }
       }
-    } catch (error) {
-      // token invalid
-      clearSession(tenantId);
+    } catch (refreshError) {
+      console.log('Token refresh failed, attempting to validate current token...');
+      // 如果刷新失败，尝试使用当前令牌验证用户信息
+      try {
+        const response = await client.get('/api/auth/me');
+        if (response.data?.user) {
+          const refreshedUser: AuthUser = response.data.user;
+          persistSession(tenantId, token, refreshedUser);
+          console.log('Current token is still valid');
+          return;
+        }
+      } catch (meError) {
+        console.log('Current token is invalid, clearing session...');
+        clearSession(tenantId);
+      }
     }
   }, [token, tenantId, persistSession, clearSession]);
 

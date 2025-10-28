@@ -1,9 +1,21 @@
+// ... existing code ...
+
+// 清理未使用的导入
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Tag, Segmented, Progress, Table, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { SyncOutlined, SettingOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import client from '../api/client';
+// import client from '../api/client'; // 删除未使用的导入
+import {
+  getDashboardSummary,
+  getEnhancedStrongWeakCoins,
+  getMarketBaseScore,
+  type StrongWeakCoin,
+  type EnhancedStrongWeakCoin,
+  type CoinAnalysisItem,
+  // type MarketSentiment // 删除未使用的导入
+} from '../api/dashboardOptimized';
 import styles from './Dashboard.module.css';
 
 type TrendCoin = {
@@ -15,63 +27,52 @@ type TrendCoin = {
   spark: number[];
 };
 
-type EnhancedStrongWeakCoin = {
-  symbol: string;
-  vmr: number;
-  vmr_total?: number; // VMR总分，可选字段
-  gain_24h: number;
-  hourly_data: {
-    close: number;
-    quote_volume: number;
-    timestamp: string;
-  }[];
+// 删除重复的类型定义，使用从API导入的EnhancedStrongWeakCoin类型
+
+// 删除未使用的类型定义
+// type EnhancedStrongWeakCoinsResponse = {
+//   success: boolean;
+//   data: {
+//     strong_coins: EnhancedStrongWeakCoin[];
+//     weak_coins: EnhancedStrongWeakCoin[];
+//   };
+//   message: string;
+// };
+
+type CoinAnalysisTableItem = CoinAnalysisItem & {
+  // 为了兼容现有代码，添加别名字段
+  quoteVolume?: number; // 对应volume_24h，改为可选字段
+  ve?: number; // 对应ve_value，改为可选字段
 };
 
-type EnhancedStrongWeakCoinsResponse = {
-  success: boolean;
-  data: {
-    strong_coins: EnhancedStrongWeakCoin[];
-    weak_coins: EnhancedStrongWeakCoin[];
-  };
-  message: string;
-};
+// type CoinAnalysisTableResponse = {
+//   success: boolean;
+//   data: {
+//     items: CoinAnalysisTableItem[];
+//     pagination: {
+//       page: number;
+//       page_size: number;
+//       total_count: number;
+//       total_pages: number;
+//       has_previous: boolean;
+//       has_next: boolean;
+//     };
+//   };
+//   message: string;
+// };
 
-type CoinAnalysisTableItem = {
-  symbol: string;
-  market_cap: number;
-  quoteVolume: number;
-  vmr: number;
-  ve: number;
-};
-
-type CoinAnalysisTableResponse = {
-  success: boolean;
-  data: {
-    items: CoinAnalysisTableItem[];
-    pagination: {
-      page: number;
-      page_size: number;
-      total_count: number;
-      total_pages: number;
-      has_previous: boolean;
-      has_next: boolean;
-    };
-  };
-  message: string;
-};
-
-type CoinTableRow = {
-  key: string;
-  symbol: string;
-  pair: string;
-  marketCap: string;
-  volume24h: string;
-  vmr: number;
-  l1: number;
-  ve: number;
-  composite: number;
-  forecast: number;
-};
+// type CoinTableRow = {
+//   key: string;
+//   symbol: string;
+//   pair: string;
+//   marketCap: string;
+//   volume24h: string;
+//   vmr: number;
+//   l1: number;
+//   ve: number;
+//   composite: number;
+//   forecast: number;
+// };
 
 type MarketMetrics = {
   bullBearScore: number;
@@ -82,32 +83,35 @@ type MarketMetrics = {
   fearGreedUpdatedAt?: string;
 };
 
-type MarketBaseScoreResponse = {
-  bull_bear?: {
-    score?: number;
-    phase?: string;
-    updated_at?: string;
-    exchange?: string;
-    symbol?: string;
-  };
-  fear_greed?: {
-    value?: number;
-    classification?: string;
-    updated_at?: string;
-  };
-};
+// type MarketBaseScoreResponse = {
+//   bull_bear?: {
+//     score?: number;
+//     phase?: string;
+//     updated_at?: string;
+//     exchange?: string;
+//     symbol?: string;
+//   };
+//   fear_greed?: {
+//     value?: number;
+//     classification?: string;
+//     updated_at?: string;
+//   };
+// };
 
-const strongCoins: TrendCoin[] = [
-  { symbol: 'SUI', pair: 'SUI-USDT', change24h: 2.95, vmr: 1.66, composite: 0.469, spark: [4, 7, 9, 8, 12, 18, 22] },
-  { symbol: 'UNI', pair: 'UNI-USDT', change24h: 2.69, vmr: 1.09, composite: 0.505, spark: [9, 11, 10, 12, 13, 15, 17] },
-  { symbol: 'VET', pair: 'VET-USDT', change24h: 1.68, vmr: 1.54, composite: 0.486, spark: [6, 7, 8, 8, 10, 11, 12] },
-];
 
-const weakCoins: TrendCoin[] = [
-  { symbol: 'CHZ', pair: 'CHZ-USDT', change24h: -4.57, vmr: 1.60, composite: 1.072, spark: [18, 16, 14, 11, 9, 6, 4] },
-  { symbol: 'INJ', pair: 'INJ-USDT', change24h: -3.31, vmr: 1.64, composite: 0.575, spark: [17, 15, 12, 10, 8, 6, 5] },
-  { symbol: 'AXS', pair: 'AXS-USDT', change24h: -2.91, vmr: 0.88, composite: 0.576, spark: [15, 14, 12, 11, 9, 7, 6] },
-];
+
+// 删除未使用的变量
+// const strongCoins: TrendCoin[] = [
+//   { symbol: 'SUI', pair: 'SUI-USDT', change24h: 2.95, vmr: 1.66, composite: 0.469, spark: [4, 7, 9, 8, 12, 18, 22] },
+//   { symbol: 'UNI', pair: 'UNI-USDT', change24h: 2.69, vmr: 1.09, composite: 0.505, spark: [9, 11, 10, 12, 13, 15, 17] },
+//   { symbol: 'VET', pair: 'VET-USDT', change24h: 1.68, vmr: 1.54, composite: 0.486, spark: [6, 7, 8, 8, 10, 11, 12] },
+// ];
+
+// const weakCoins: TrendCoin[] = [
+//   { symbol: 'CHZ', pair: 'CHZ-USDT', change24h: -4.57, vmr: 1.60, composite: 1.072, spark: [18, 16, 14, 11, 9, 6, 4] },
+//   { symbol: 'INJ', pair: 'INJ-USDT', change24h: -3.31, vmr: 1.64, composite: 0.575, spark: [17, 15, 12, 10, 8, 6, 5] },
+//   { symbol: 'AXS', pair: 'AXS-USDT', change24h: -2.91, vmr: 0.88, composite: 0.576, spark: [15, 14, 12, 11, 9, 7, 6] },
+// ];
 
 
 
@@ -167,75 +171,66 @@ const Dashboard: React.FC = () => {
     has_next: false
   });
 
-  const fetchMarketMetrics = useCallback(async () => {
+  const fetchDashboardData = useCallback(async () => {
     setRefreshing(true);
+    setCoinsLoading(true);
+    setCoinAnalysisLoading(true);
+    
     try {
-      const response = await client.get<MarketBaseScoreResponse>('/api/market/market-base-score');
-      const payload = response.data ?? {};
+      // 并行获取Dashboard汇总数据、增强版强势弱势币种数据和原始市场情绪数据
+      const [dashboardSummary, enhancedCoinsData, marketBaseScore] = await Promise.all([
+        getDashboardSummary(),
+        getEnhancedStrongWeakCoins(),
+        getMarketBaseScore()
+      ]);
+      
+      // 设置市场情绪数据 - 使用原始数据API获取的数据
       setMarketMetrics({
-        bullBearScore: Number(payload.bull_bear?.score ?? 0),
-        bullBearPhase: payload.bull_bear?.phase || 'Neutral',
-        bullBearUpdatedAt: payload.bull_bear?.updated_at,
-        fearGreedValue: Number(payload.fear_greed?.value ?? 0),
-        fearGreedClassification: payload.fear_greed?.classification || undefined,
-        fearGreedUpdatedAt: payload.fear_greed?.updated_at,
+        bullBearScore: marketBaseScore.bull_bear.score,
+        bullBearPhase: marketBaseScore.bull_bear.phase,
+        bullBearUpdatedAt: marketBaseScore.bull_bear.updated_at,
+        fearGreedValue: marketBaseScore.fear_greed.value,
+        fearGreedClassification: marketBaseScore.fear_greed.classification,
+        fearGreedUpdatedAt: marketBaseScore.fear_greed.updated_at,
       });
+      
+      // 使用增强版API数据设置强势弱势币种数据（包含小时数据用于缩略图）
+      const top5StrongCoins: EnhancedStrongWeakCoin[] = enhancedCoinsData.strong_coins.slice(0, 5);
+      const top5WeakCoins: EnhancedStrongWeakCoin[] = enhancedCoinsData.weak_coins.slice(0, 5);
+      
+      setStrongCoins(top5StrongCoins || []);
+      setWeakCoins(top5WeakCoins || []);
+      
+      // 设置币种分析表数据
+      const tableData: CoinAnalysisTableItem[] = dashboardSummary.coin_analysis.map(coin => ({
+        ...coin,
+        quoteVolume: coin.volume_24h, // 映射volume_24h到quoteVolume
+        ve: coin.ve_value // 映射ve_value到ve
+      }));
+      
+      setCoinAnalysisData(tableData || []);
+      setCoinAnalysisPagination({
+        page: 1,
+        page_size: 10,
+        total_count: dashboardSummary.coin_analysis.length,
+        total_pages: Math.ceil(dashboardSummary.coin_analysis.length / 10),
+        has_previous: false,
+        has_next: dashboardSummary.coin_analysis.length > 10
+      });
+      
     } catch (error) {
-      console.error('Failed to fetch market base score', error);
-      message.error('获取市场情绪数据失败');
+      console.error('Failed to fetch dashboard data', error);
+      message.error('获取Dashboard数据失败');
     } finally {
       setRefreshing(false);
-    }
-  }, []);
-
-  const fetchStrongWeakCoins = useCallback(async () => {
-    setCoinsLoading(true);
-    try {
-      const response = await client.get<EnhancedStrongWeakCoinsResponse>('/api/market/strong-weak-coins-enhanced');
-      if (response.data.success) {
-        // 强势币取前5名（1-5）
-        const top5StrongCoins = response.data.data.strong_coins.slice(0, 5);
-        // 弱势币取后5名（倒序排列20-16）
-        const last5WeakCoins = response.data.data.weak_coins.slice(-5).reverse();
-        
-        setStrongCoins(top5StrongCoins || []);
-        setWeakCoins(last5WeakCoins || []);
-      } else {
-        message.error('获取强势/弱势币种数据失败');
-      }
-    } catch (error) {
-      console.error('Failed to fetch strong/weak coins', error);
-      message.error('获取强势/弱势币种数据失败');
-    } finally {
       setCoinsLoading(false);
-    }
-  }, []);
-
-  const fetchCoinAnalysisTable = useCallback(async (page: number = 1, pageSize: number = 10) => {
-    setCoinAnalysisLoading(true);
-    try {
-      const response = await client.get<CoinAnalysisTableResponse>('/api/market/coin-analysis-table', {
-        params: { page, page_size: pageSize }
-      });
-      if (response.data.success) {
-        setCoinAnalysisData(response.data.data.items || []);
-        setCoinAnalysisPagination(response.data.data.pagination);
-      } else {
-        message.error('获取币种分析表数据失败');
-      }
-    } catch (error) {
-      console.error('Failed to fetch coin analysis table', error);
-      message.error('获取币种分析表数据失败');
-    } finally {
       setCoinAnalysisLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchMarketMetrics();
-    fetchStrongWeakCoins();
-    fetchCoinAnalysisTable();
-  }, [fetchMarketMetrics, fetchStrongWeakCoins, fetchCoinAnalysisTable]);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   const biasScore = marketMetrics.bullBearScore ?? 0;
   const clampedScore = clamp(biasScore, -7, 7);
@@ -262,76 +257,61 @@ const Dashboard: React.FC = () => {
     },
     {
       title: '24h 成交量',
-      dataIndex: 'quoteVolume',
-      key: 'quoteVolume',
+      dataIndex: 'volume_24h',
+      key: 'volume_24h',
       render: (value) => <span className={styles.tableValue}>{value.toLocaleString()}</span>,
     },
     {
       title: 'VMR ↑',
-      dataIndex: 'vmr',
-      key: 'vmr',
-      render: (value) => <span className={styles.tableValue}>{value.toFixed(3)}</span>,
+      dataIndex: 'vmr_total',
+      key: 'vmr_total',
+      render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
     {
       title: 'VE ↑',
-      dataIndex: 've',
-      key: 've',
-      render: (value) => <span className={styles.tableValue}>{value.toFixed(3)}</span>,
+      dataIndex: 've_value',
+      key: 've_value',
+      render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
+    },
+    {
+      title: '复合分数',
+      dataIndex: 'composite_score',
+      key: 'composite_score',
+      render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
   ], []);
 
   const handleRefresh = () => {
-    fetchMarketMetrics();
-    fetchStrongWeakCoins();
-    fetchCoinAnalysisTable(coinAnalysisPagination.page, coinAnalysisPagination.page_size);
+    fetchDashboardData();
   };
 
+  const handleCoinAnalysisTableChange = useCallback((page: number, pageSize: number) => {
+    // 由于使用汇总接口，分页在客户端处理
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const paginatedData = coinAnalysisData.slice(startIndex, endIndex);
+    
+    setCoinAnalysisData(paginatedData);
+    setCoinAnalysisPagination({
+      page,
+      page_size: pageSize,
+      total_count: coinAnalysisData.length,
+      total_pages: Math.ceil(coinAnalysisData.length / pageSize),
+      has_previous: page > 1,
+      has_next: page < Math.ceil(coinAnalysisData.length / pageSize)
+    });
+  }, [coinAnalysisData]);
+
   // 将API返回的EnhancedStrongWeakCoin数据转换为前端需要的TrendCoin格式
+  // 修复convertToTrendCoin函数中的类型错误
   const convertToTrendCoin = (coin: EnhancedStrongWeakCoin): TrendCoin => {
-    // 如果有小时数据，使用真实数据生成sparkline
-    let sparkData: number[];
-    
-    if (coin.hourly_data && coin.hourly_data.length > 0) {
-      // 使用真实的小时收盘价数据
-      sparkData = coin.hourly_data.map(data => data.close);
-      
-      // 如果数据点超过7个，进行采样
-      if (sparkData.length > 7) {
-        const step = Math.floor(sparkData.length / 7);
-        sparkData = sparkData.filter((_, index) => index % step === 0).slice(0, 7);
-      }
-      
-      // 如果数据点不足7个，用最后一个值填充
-      while (sparkData.length < 7) {
-        sparkData.push(sparkData[sparkData.length - 1] || 0);
-      }
-    } else {
-      // 没有小时数据时，基于24小时涨幅生成有意义的趋势数据
-      const baseValue = 100; // 基准值100
-      const changeRatio = coin.gain_24h || 0; // 24小时涨幅比例
-      
-      // 生成7个数据点，模拟24小时内的价格变化趋势
-      sparkData = [
-        baseValue * (1 + changeRatio * 0.1),
-        baseValue * (1 + changeRatio * 0.2),
-        baseValue * (1 + changeRatio * 0.3),
-        baseValue * (1 + changeRatio * 0.5),
-        baseValue * (1 + changeRatio * 0.7),
-        baseValue * (1 + changeRatio * 0.9),
-        baseValue * (1 + changeRatio)
-      ];
-      
-      // 确保数据点都是正数
-      sparkData = sparkData.map(value => Math.max(value, 1));
-    }
-    
     return {
       symbol: coin.symbol,
-      pair: `${coin.symbol}-USDT`,
-      change24h: coin.gain_24h,
-      vmr: coin.vmr, // 使用24小时VMR值
-      composite: coin.vmr_total !== undefined ? coin.vmr_total : 0, // 使用VMR总分作为复合分数，如果不存在则使用0
-      spark: sparkData
+      pair: coin.symbol + '-USDT',
+      change24h: coin.gain_24h || 0, // 处理undefined情况
+      vmr: coin.vmr_total || 0, // 使用vmr_total字段作为VMR值
+      composite: coin.composite_score || 0, // 使用composite_score字段作为复合分数
+      spark: coin.hourly_data ? coin.hourly_data.map(item => item.close) : [coin.current_price || 0] // 使用小时数据作为sparkline
     };
   };
 
@@ -354,7 +334,7 @@ const Dashboard: React.FC = () => {
     
     return (
       <ul className={styles.trendList}>
-        {items.map((coin, index) => {
+        {items.map((coin) => {
           const trendCoin = convertToTrendCoin(coin);
           return (
             <li key={coin.symbol} className={styles.trendItem}>
@@ -365,7 +345,7 @@ const Dashboard: React.FC = () => {
                   <div className={styles.symbolPair}>{`${coin.symbol}-USDT`}</div>
                   {/* 将复合分数值显示在币名称下方 */}
                   <div className={styles.compositeScore}>
-                    复合分数: {coin.vmr_total ? coin.vmr_total.toFixed(3) : '0.000'}
+                    复合分数: {coin.composite_score ? coin.composite_score.toFixed(3) : '0.000'}
                   </div>
                 </div>
               </div>
@@ -382,11 +362,11 @@ const Dashboard: React.FC = () => {
                         : styles.negativeChange
                     }
                   >
-                    {coin.gain_24h > 0 ? '+' : ''}
-                    {coin.gain_24h ? coin.gain_24h.toFixed(2) : '0.00'}%
+                    {coin.gain_24h !== undefined && coin.gain_24h > 0 ? '+' : ''}
+                    {coin.gain_24h !== undefined ? coin.gain_24h.toFixed(2) : '0.00'}%
                   </span>
                   <span className={styles.vmrLabel}>VMR</span>
-                  <span className={styles.vmrValue}>{coin.vmr ? coin.vmr.toFixed(3) : '0.000'}</span>
+                  <span className={styles.vmrValue}>{coin.vmr_total ? coin.vmr_total.toFixed(3) : '0.000'}</span>
                 </div>
               </div>
             </li>
@@ -498,7 +478,7 @@ const Dashboard: React.FC = () => {
                 showSizeChanger: false,
                 showQuickJumper: true,
                 onChange: (page, pageSize) => {
-                  fetchCoinAnalysisTable(page, pageSize || coinAnalysisPagination.page_size);
+                  handleCoinAnalysisTableChange(page, pageSize || coinAnalysisPagination.page_size);
                 },
               }}
               loading={coinAnalysisLoading}

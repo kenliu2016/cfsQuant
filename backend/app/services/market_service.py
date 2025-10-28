@@ -650,6 +650,10 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
                 WHEN p.past_market_cap > 0 THEN ROUND((v.total_quote_volume / p.past_market_cap), 4)
                 ELSE 0.0
             END as vmr_24h,
+            -- 获取各个时间维度的VMR值
+            COALESCE(v15.vmr_15m, 0) as vmr_15m,
+            COALESCE(v1.vmr_1h, 0) as vmr_1h,
+            COALESCE(vd.vmr_1d, 0) as vmr_1d,
             -- 计算VMR总分：15分钟VMR * 0.1 + 1小时VMR * 0.3 + 1天VMR * 0.6
             COALESCE(v15.vmr_15m, 0) * 0.1 + COALESCE(v1.vmr_1h, 0) * 0.3 + COALESCE(vd.vmr_1d, 0) * 0.6 as vmr_total
         FROM latest_data l
@@ -781,16 +785,25 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
                 logger.warning(f"币种 {symbol} 的小时数据为空，跳过")
                 continue
             
+            # 从查询结果中获取实际的VMR值
+            vmr_15m = float(row['vmr_15m']) if 'vmr_15m' in row and row['vmr_15m'] is not None else 0.0
+            vmr_1h = float(row['vmr_1h']) if 'vmr_1h' in row and row['vmr_1h'] is not None else 0.0
+            vmr_1d = float(row['vmr_1d']) if 'vmr_1d' in row and row['vmr_1d'] is not None else 0.0
+            
+            # 计算复合分数：涨幅权重0.6 + VMR总分权重0.4
+            composite_score = (gain_24h * 0.6) + (vmr_total * 0.4)
+            
             coins_data.append({
                 'symbol': symbol,
                 'name': symbol,  # 使用symbol作为name
                 'price': current_close,  # 使用当前收盘价作为price
                 'gain_24h': gain_24h,
-                'volume_24h': 0.0,  # 暂时设置为0，后续可以从数据中获取
-                'vmr_15m': 0.0,  # 暂时设置为0
-                'vmr_1h': 0.0,  # 暂时设置为0
-                'vmr_1d': 0.0,  # 暂时设置为0
+                'volume_24h': float(row['total_quote_volume']) if 'total_quote_volume' in row and row['total_quote_volume'] is not None else 0.0,
+                'vmr_15m': vmr_15m,
+                'vmr_1h': vmr_1h,
+                'vmr_1d': vmr_1d,
                 'vmr_total': vmr_total,
+                'composite_score': composite_score,
                 'hourly_data': symbol_hourly_data
             })
         

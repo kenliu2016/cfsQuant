@@ -73,3 +73,61 @@ async def cleanup_user(request: Request):
     token_ctx = getattr(request.state, "_tenant_token", None)
     if token_ctx is not None:
         reset_tenant(token_ctx)
+
+
+async def require_user_or_refresh_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
+    """
+    允许使用即将过期的令牌进行刷新操作的依赖项
+    
+    Args:
+        request: HTTP请求对象
+        credentials: 认证凭据
+        
+    Returns:
+        用户信息，即使令牌即将过期
+    """
+    token = credentials.credentials if credentials else None
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    
+    try:
+        # 尝试解码令牌，但不检查过期时间
+        payload = decode_token(token, verify_exp=False)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    
+    user_id: str = payload.get("sub")
+    tenant_id: str = payload.get("tenant_id", settings.DEFAULT_TENANT_ID)
+    if not user_id or not tenant_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    
+    user = get_user_by_id(user_id, tenant_id)
+    if not user or not user.get("is_active", True):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive or not found")
+    user.pop("hashed_password", None)
+    effective_tenant_id = tenant_id
+    tenant = get_tenant(tenant_id)
+    if not tenant or tenant.get("is_active") is False:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant disabled")
+
+    if user.get("is_super_admin"):
+        requested_tenant = (
+            request.headers.get("X-Tenant-ID")
+            or request.query_params.get("tenant_id")
+            or request.state.tenant_id
+        )
+        if requested_tenant and requested_tenant != tenant_id:
+            other = get_tenant(requested_tenant)
+            if other and other.get("is_active", True):
+                effective_tenant_id = requested_tenant
+                tenant = other
+
+    user["tenant_id"] = effective_tenant_id
+
+    # Seed tenant context for downstream handlers
+    token_ctx = push_tenant(effective_tenant_id)
+    request.state.tenant_id = effective_tenant_id
+    request.state.user = user
+    request.state.tenant = tenant
+    request.state._tenant_token = token_ctx
+    return user

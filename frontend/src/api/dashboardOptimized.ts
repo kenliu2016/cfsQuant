@@ -1,0 +1,120 @@
+/**
+ * Dashboard优化API服务
+ * 对接后端优化后的高性能Dashboard接口
+ */
+
+import client from './client';
+
+// 增强版强势弱势币种数据结构（包含小时数据用于缩略图）
+export interface EnhancedStrongWeakCoin {
+  symbol: string;
+  current_price: number;
+  gain_24h: number;
+  vmr: number;
+  vmr_total?: number; // 添加vmr_total字段，用于兼容Dashboard.tsx
+  composite_score?: number; // 添加composite_score字段，用于兼容Dashboard.tsx
+  hourly_data?: {
+    close: number;
+    quote_volume: number;
+    timestamp: string;
+  }[];
+}
+
+// 增强版强势弱势币种响应数据结构
+export interface EnhancedStrongWeakCoinsResponse {
+  strong_coins: EnhancedStrongWeakCoin[];
+  weak_coins: EnhancedStrongWeakCoin[];
+}
+
+// 币种分析表数据结构
+export interface CoinAnalysisItem {
+  symbol: string;
+  current_price: number;
+  market_cap: number;
+  volume_24h: number;
+  vmr: number;
+  ve_value: number;
+  actual_volatility: number;
+  composite_score: number;
+  rank: number;
+}
+
+// Dashboard汇总数据结构
+export interface DashboardSummary {
+  strong_coins: EnhancedStrongWeakCoin[];
+  weak_coins: EnhancedStrongWeakCoin[];
+  coin_analysis: CoinAnalysisItem[];
+  market_sentiment: {
+    total_coins: number;
+    rising_coins: number;
+    falling_coins: number;
+    avg_gain_24h: number;
+    bull_bear_score: number;
+    fear_greed_index: number;
+    last_updated: string;
+  };
+  last_updated: string;
+  data_source: string;
+}
+
+/**
+ * 获取Dashboard汇总数据（优化版本）
+ * 一次性返回所有dashboard需要的数据，减少HTTP请求开销
+ */
+export const getDashboardSummary = async (): Promise<DashboardSummary> => {
+  const response = await client.get<DashboardSummary>('/api/v1/dashboard/summary');
+  return response.data;
+};
+
+/**
+ * 获取增强版强势弱势币种数据（包含小时数据用于缩略图）
+ * 使用增强版API接口，返回包含24小时价格曲线数据
+ */
+export const getEnhancedStrongWeakCoins = async (): Promise<EnhancedStrongWeakCoinsResponse> => {
+  const response = await client.get<{
+    success: boolean;
+    data: EnhancedStrongWeakCoinsResponse;
+    message: string;
+  }>('/api/market/strong-weak-coins-enhanced');
+  
+  if (response.data.success) {
+    return response.data.data;
+  } else {
+    throw new Error(response.data.message || '获取增强版强势弱势币种数据失败');
+  }
+};
+
+/**
+ * 获取原始市场基准情绪指标数据
+ * 直接从indecator_bull_bear和indecator_fear_greed表获取数据
+ */
+export const getMarketBaseScore = async (): Promise<{
+  bull_bear: {
+    score: number;
+    phase: string;
+    updated_at?: string;
+    exchange?: string;
+    symbol?: string;
+  };
+  fear_greed: {
+    value: number;
+    classification?: string;
+    updated_at?: string;
+  };
+}> => {
+  const response = await client.get<{
+    bull_bear: {
+      score: number;
+      phase: string;
+      updated_at?: string;
+      exchange?: string;
+      symbol?: string;
+    };
+    fear_greed: {
+      value: number;
+      classification?: string;
+      updated_at?: string;
+    };
+  }>('/api/market/market-base-score');
+  return response.data;
+};

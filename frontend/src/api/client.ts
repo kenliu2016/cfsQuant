@@ -36,18 +36,74 @@ client.interceptors.request.use((config) => {
 
 client.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (typeof window !== 'undefined' && error?.response?.status === 401) {
+      console.log('Received 401 error, attempting token refresh...');
+      
       const tenantId = window.localStorage.getItem('cfsTenantId') || 'public';
-      window.localStorage.removeItem(`cfsToken_${tenantId}`);
-      window.localStorage.removeItem(`cfsUser_${tenantId}`);
-      window.localStorage.removeItem('cfsToken_shared');
-      window.localStorage.removeItem('cfsUser_shared');
-      window.dispatchEvent(new CustomEvent('auth:logout', { detail: { tenantId } }));
+      const originalRequest = error.config;
+      
+      // 检查是否是刷新令牌的请求本身失败，避免无限循环
+      if (originalRequest.url?.includes('/api/auth/refresh')) {
+        console.log('Token refresh request failed, clearing session...');
+        clearSession(tenantId);
+        return Promise.reject(error);
+      }
+      
+      // 检查是否有有效的令牌可以用于刷新
+      const token = window.localStorage.getItem(`cfsToken_${tenantId}`) || window.localStorage.getItem('cfsToken_shared');
+      if (!token) {
+        console.log('No token found, clearing session...');
+        clearSession(tenantId);
+        return Promise.reject(error);
+      }
+      
+      // 检查是否已经尝试过刷新令牌
+      if (!originalRequest._retry) {
+        originalRequest._retry = true;
+        
+        try {
+          console.log('Attempting to refresh token...');
+          const refreshResponse = await client.post('/api/auth/refresh');
+          
+          if (refreshResponse.status === 200) {
+            const newToken = refreshResponse.data.access_token;
+            const user = refreshResponse.data.user;
+            
+            // 保存新的令牌和用户信息
+            window.localStorage.setItem(`cfsToken_${tenantId}`, newToken);
+            window.localStorage.setItem(`cfsUser_${tenantId}`, JSON.stringify(user));
+            
+            // 更新原始请求的Authorization头
+            originalRequest.headers.Authorization = `Bearer ${newToken}`;
+            
+            console.log('Token refreshed successfully, retrying original request...');
+            return client(originalRequest);
+          }
+        } catch (refreshError) {
+          console.log('Token refresh failed, clearing session...');
+          clearSession(tenantId);
+        }
+      }
+      
+      // 如果刷新失败或已经重试过，清除会话
+      clearSession(tenantId);
     }
     return Promise.reject(error);
   },
 )
+
+/**
+ * 清除会话数据
+ * @param tenantId 租户ID
+ */
+function clearSession(tenantId: string): void {
+  window.localStorage.removeItem(`cfsToken_${tenantId}`);
+  window.localStorage.removeItem(`cfsUser_${tenantId}`);
+  window.localStorage.removeItem('cfsToken_shared');
+  window.localStorage.removeItem('cfsUser_shared');
+  window.dispatchEvent(new CustomEvent('auth:logout', { detail: { tenantId } }));
+}
 
 export default client
 
