@@ -124,13 +124,116 @@ const Backtest: React.FC = () => {
     };
   };
 
-
+  // 获取蜡烛图数据 - 添加内存缓存优化
+  const fetchData = useCallback(async (startTime?: string | Date, endTime?: string | Date): Promise<any[]> => {
+    if (!symbol) return [];
+    
+    setIsLoading(true);
+    try {  
+      const params: any = {
+        symbol: symbol,
+        timeframe: timeframe
+      };
+      
+      // 检查是否有指定时间范围
+      if (startTime && endTime) {
+        // 有时间范围时，按时间范围查询，不使用limit参数
+        // 使用本地时间格式，与后端API保持一致（后端已修复时区处理）
+        if (typeof startTime === 'string' && typeof endTime === 'string') {
+          // 如果已经是字符串格式，直接使用
+          params.startTime = startTime;
+          params.endTime = endTime;
+        } else {
+          // 如果是Date对象，使用dayjs转换为本地时间格式字符串
+          params.startTime = dayjs(startTime as Date).format('YYYY-MM-DDTHH:mm:ss');
+          params.endTime = dayjs(endTime as Date).format('YYYY-MM-DDTHH:mm:ss');
+        }
+      } else {
+        // 没有时间范围时，按limit参数查询最近的记录
+        let limit = 200; // 默认值
+        
+        // 根据timeframe后缀设置不同的limit值
+        if (timeframe.endsWith('m')) {
+          limit = 1000; // 分钟级别，数据量较大
+        } else if (timeframe.endsWith('h')) {
+          limit = 500;  // 小时级别
+        } else if (timeframe.endsWith('d')) {
+          limit = 200;  // 日级别
+        }
+        
+        params.limit = limit;
+      }
+      
+      // 创建缓存键
+      const cacheKey = `candle_data_${symbol}_${timeframe}_${startTime ? (typeof startTime === 'string' ? startTime : startTime.getTime()) : '0'}_${endTime ? (typeof endTime === 'string' ? endTime : endTime.getTime()) : '0'}`;
+      
+      // 尝试从内存缓存获取数据
+      const cachedData = sessionStorage.getItem(cacheKey);
+      if (cachedData) {
+        const parsedData = JSON.parse(cachedData);
+        // 检查缓存是否在3秒内有效（K线数据更新频率更高，缓存时间较短）
+        if (Date.now() - parsedData.timestamp < 3000) {
+          if (parsedData.query_params) {
+            setCachedQueryParams(parsedData.query_params);
+          }
+          setCandleData(parsedData.rows);
+          setIsLoading(false);
+          return parsedData.rows; // 返回缓存数据以支持Promise.all
+        }
+      }
+      
+      const response = await client.get('/api/market/candles', { params });
+      // 暂存query_params
+      let updatedQueryParams = response?.data?.query_params || {};
+      if (response && response.data && response.data.rows && response.data.rows.length > 0) {
+        // 提取最小和最大时间
+        const sortedRows = [...response.data.rows].sort((a: any, b: any) => 
+          new Date(a.datetime).getTime() - new Date(b.datetime).getTime()
+        );
+        const minTime = sortedRows[0].datetime;
+        const maxTime = sortedRows[sortedRows.length - 1].datetime;
+        
+        // 更新query_params
+        updatedQueryParams = {
+          ...updatedQueryParams,
+          startTime: minTime,
+          endTime: maxTime
+        };
+      }
+      
+      // 设置更新后的query_params
+      setCachedQueryParams(updatedQueryParams);
+      
+      if (response && response.data && response.data.rows) {
+        const processedData = response.data.rows.map((item: any) => ({
+          ...item,
+          isUp: item.close >= item.open
+        }));
+        setCandleData(processedData);
+        
+        // 保存到内存缓存，使用更新后的query_params
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          query_params: updatedQueryParams,
+          rows: processedData,
+          timestamp: Date.now()
+        }));
+        
+        return processedData; // 返回数据以支持Promise.all
+      }
+      return [];
+    } catch (error) {
+      console.error('获取K线数据失败:', error);
+      return [];
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbol, timeframe, setIsLoading, setCachedQueryParams, setCandleData]);
 
   const debouncedFetchData = useCallback(
     debounce(async (startTime?: string | Date, endTime?: string | Date) => {
       await fetchData(startTime, endTime);
     }, 500),
-    [] // 空依赖数组，确保防抖函数在整个组件生命周期内保持稳定
+    [fetchData] // 添加fetchData依赖，确保symbol变化时使用最新的fetchData函数
   );
 
   // 运行策略回测
@@ -352,111 +455,7 @@ const Backtest: React.FC = () => {
 
 
   // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)、场景5(首页加载时)中被调用
-  // 获取蜡烛图数据 - 添加内存缓存优化
-  // 此函数在场景1(symbol选择器变更)、场景2(timeframe选择变更)、场景3(市场概览刷新)中被调用
-  const fetchData = async (startTime?: string | Date, endTime?: string | Date): Promise<any[]> => {
-    if (!symbol) return [];
-    
-    setIsLoading(true);
-    try {  
-      const params: any = {
-        symbol: symbol,
-        timeframe: timeframe
-      };
-      
-      // 检查是否有指定时间范围
-      if (startTime && endTime) {
-        // 有时间范围时，按时间范围查询，不使用limit参数
-        // 使用本地时间格式，与后端API保持一致（后端已修复时区处理）
-        if (typeof startTime === 'string' && typeof endTime === 'string') {
-          // 如果已经是字符串格式，直接使用
-          params.startTime = startTime;
-          params.endTime = endTime;
-        } else {
-          // 如果是Date对象，使用dayjs转换为本地时间格式字符串
-          params.startTime = dayjs(startTime as Date).format('YYYY-MM-DDTHH:mm:ss');
-          params.endTime = dayjs(endTime as Date).format('YYYY-MM-DDTHH:mm:ss');
-        }
-      } else {
-        // 没有时间范围时，按limit参数查询最近的记录
-        let limit = 200; // 默认值
-        
-        // 根据timeframe后缀设置不同的limit值
-        if (timeframe.endsWith('m')) {
-          limit = 1000; // 分钟级别，数据量较大
-        } else if (timeframe.endsWith('h')) {
-          limit = 500;  // 小时级别
-        } else if (timeframe.endsWith('d')) {
-          limit = 200;  // 日级别
-        }
-        
-        params.limit = limit;
-      }
-      
-      // 创建缓存键
-      const cacheKey = `candle_data_${symbol}_${timeframe}_${startTime ? (typeof startTime === 'string' ? startTime : startTime.getTime()) : '0'}_${endTime ? (typeof endTime === 'string' ? endTime : endTime.getTime()) : '0'}`;
-      
-      // 尝试从内存缓存获取数据
-      const cachedData = sessionStorage.getItem(cacheKey);
-      if (cachedData) {
-        const parsedData = JSON.parse(cachedData);
-        // 检查缓存是否在3秒内有效（K线数据更新频率更高，缓存时间较短）
-        if (Date.now() - parsedData.timestamp < 3000) {
-          if (parsedData.query_params) {
-            setCachedQueryParams(parsedData.query_params);
-          }
-          setCandleData(parsedData.rows);
-          setIsLoading(false);
-          return parsedData.rows; // 返回缓存数据以支持Promise.all
-        }
-      }
-      
-      const response = await client.get('/api/market/candles', { params });
-      // 暂存query_params
-      let updatedQueryParams = response?.data?.query_params || {};
-      if (response && response.data && response.data.rows && response.data.rows.length > 0) {
-        // 提取最小和最大时间
-        const sortedRows = [...response.data.rows].sort((a: any, b: any) => 
-          new Date(a.datetime).getTime() - new Date(b.datetime).getTime()
-        );
-        const minTime = sortedRows[0].datetime;
-        const maxTime = sortedRows[sortedRows.length - 1].datetime;
-        
-        // 更新query_params
-        updatedQueryParams = {
-          ...updatedQueryParams,
-          startTime: minTime,
-          endTime: maxTime
-        };
-      }
-      
-      // 设置更新后的query_params
-      setCachedQueryParams(updatedQueryParams);
-      
-      if (response && response.data && response.data.rows) {
-        const processedData = response.data.rows.map((item: any) => ({
-          ...item,
-          isUp: item.close >= item.open
-        }));
-        setCandleData(processedData);
-        
-        // 保存到内存缓存，使用更新后的query_params
-        sessionStorage.setItem(cacheKey, JSON.stringify({
-          query_params: updatedQueryParams,
-          rows: processedData,
-          timestamp: Date.now()
-        }));
-        
-        return processedData; // 返回数据以支持Promise.all
-      }
-      return [];
-    } catch (error) {
-      console.error('获取K线数据失败:', error);
-      return [];
-    } finally {
-      setIsLoading(false);
-    }
-  };
+
 
   // 图表配置
   const chartOption = useMemo(() => {

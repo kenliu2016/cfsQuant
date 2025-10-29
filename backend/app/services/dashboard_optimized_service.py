@@ -37,14 +37,13 @@ class DashboardOptimizedService:
             包含强势弱势币种数据的字典
         """
         try:
-            # 使用新的物化视图查询强势弱势币种，包含复合分数
+            # 使用新的物化视图查询强势弱势币种
             query = text("""
                 SELECT 
                     symbol,
                     current_price,
-                    gain_24h as gain_24h_pct,
-                    vmr_24h,
-                    composite_score
+                    gain_24h,
+                    vmr_24h
                 FROM dashboard_strong_weak_coins
                 WHERE gain_24h IS NOT NULL
                 ORDER BY gain_24h DESC
@@ -66,20 +65,22 @@ class DashboardOptimizedService:
                 # 获取小时数据用于缩略图
                 hourly_data = await self._get_hourly_data_for_coin(coin.symbol)
                 
-                # 处理gain_24h_pct字段，如果为N/A则设置为0
-                gain_24h_pct = coin.gain_24h_pct
-                if gain_24h_pct == "N/A" or gain_24h_pct is None:
-                    gain_24h_pct = 0.0
+                # 处理gain_24h字段，如果为N/A则设置为0
+                gain_24h = coin.gain_24h
+                if gain_24h == "N/A" or gain_24h is None:
+                    gain_24h = 0.0
                 else:
-                    gain_24h_pct = float(gain_24h_pct)
+                    gain_24h = float(gain_24h)
+                
+                # 计算复合分数（基于涨跌幅和VMR）
+                composite_score = gain_24h * 0.7 + (float(coin.vmr_24h) if coin.vmr_24h else 0.0) * 0.3
                 
                 coin_data = {
                     "symbol": coin.symbol,
                     "current_price": float(coin.current_price) if coin.current_price else 0.0,
-                    "gain_24h_pct": gain_24h_pct,
-                    "gain_24h": gain_24h_pct,  # 添加gain_24h字段，与gain_24h_pct相同
+                    "gain_24h": gain_24h,
                     "vmr_24h": float(coin.vmr_24h) if coin.vmr_24h else 0.0,
-                    "composite_score": float(coin.composite_score) if coin.composite_score else 0.0,
+                    "composite_score": composite_score,
                     "hourly_data": hourly_data
                 }
                 
@@ -159,12 +160,10 @@ class DashboardOptimizedService:
                     ca.market_cap,
                     ca.total_volume_24h as volume_24h,
                     ca.vmr_24h as vmr,
-                    ca.ve_1h as ve_value,
-                    ca.composite_score,
                     COALESCE(mc.watch, false) as watch
                 FROM dashboard_coin_analysis ca
                 LEFT JOIN market_codes mc ON ca.symbol = mc.symbol AND mc.quotecurrency = 'USDT'
-                ORDER BY ca.composite_score DESC
+                ORDER BY ca.vmr_24h DESC
                 LIMIT :limit
             """)
             
@@ -172,18 +171,25 @@ class DashboardOptimizedService:
             coins = result.fetchall()
             
             analysis_data = []
-            for coin in coins:
+            for i, coin in enumerate(coins):
+                # 计算复合分数（基于市值和VMR）
+                market_cap = float(coin.market_cap) if coin.market_cap else 0.0
+                vmr = float(coin.vmr) if coin.vmr else 0.0
+                
+                # 标准化分数计算（简化版）
+                composite_score = (vmr * 0.6) + (market_cap / 1000000000 * 0.4)  # 市值以10亿为单位
+                
                 coin_data = {
                     "symbol": coin.symbol,
                     "current_price": float(coin.current_price) if coin.current_price else 0.0,
-                    "market_cap": float(coin.market_cap) if coin.market_cap else 0.0,
+                    "market_cap": market_cap,
                     "volume_24h": float(coin.volume_24h) if coin.volume_24h else 0.0,
-                    "vmr": float(coin.vmr) if coin.vmr else 0.0,
-                    "vmr_24h": float(coin.vmr) if coin.vmr else 0.0,  # 添加vmr_24h字段，与vmr相同
-                    "ve_value": float(coin.ve_value) if coin.ve_value else 0.0,
-                    "composite_score": float(coin.composite_score) if coin.composite_score else 0.0,
+                    "vmr": vmr,
+                    "vmr_24h": vmr,  # 添加vmr_24h字段，与vmr相同
+                    "ve_value": 0.0,  # 暂时设置为0，后续可以添加VE指标计算
+                    "composite_score": composite_score,
                     "watch": bool(coin.watch) if hasattr(coin, 'watch') else False,  # 添加watch字段
-                    "rank": len(analysis_data) + 1
+                    "rank": i + 1
                 }
                 analysis_data.append(coin_data)
             
@@ -209,32 +215,41 @@ class DashboardOptimizedService:
                     rising_coins,
                     falling_coins,
                     avg_gain_24h,
-                    bull_bear_score,
-                    fear_greed_index,
                     last_updated
                 FROM dashboard_market_sentiment
-                ORDER BY last_updated DESC
                 LIMIT 1
             """)
             
             result = await self.db.execute(query)
             sentiment = result.fetchone()
             
-            if not sentiment:
+            if sentiment:
+                # 计算牛熊市分数（基于上涨币种比例）
+                total_coins = int(sentiment.total_coins) if sentiment.total_coins else 0
+                rising_coins = int(sentiment.rising_coins) if sentiment.rising_coins else 0
+                
+                if total_coins > 0:
+                    rising_ratio = rising_coins / total_coins
+                    bull_bear_score = (rising_ratio - 0.5) * 200  # 标准化到-100到100范围
+                else:
+                    bull_bear_score = 0.0
+                
+                sentiment_data = {
+                    "total_coins": total_coins,
+                    "rising_coins": rising_coins,
+                    "falling_coins": int(sentiment.falling_coins) if sentiment.falling_coins else 0,
+                    "avg_gain_24h": float(sentiment.avg_gain_24h) if sentiment.avg_gain_24h else 0.0,
+                    "bull_bear_score": bull_bear_score,
+                    "fear_greed_index": 50.0,  # 暂时设置为中性值
+                    "last_updated": sentiment.last_updated.isoformat() if hasattr(sentiment.last_updated, 'isoformat') else str(sentiment.last_updated)
+                }
+                
+                logger.info("优化查询找到市场情绪数据")
+                return sentiment_data
+            else:
+                logger.warning("物化视图中没有找到市场情绪数据")
                 return self._get_default_sentiment()
-            
-            sentiment_data = {
-                "total_coins": sentiment.total_coins or 0,
-                "rising_coins": sentiment.rising_coins or 0,
-                "falling_coins": sentiment.falling_coins or 0,
-                "avg_gain_24h": float(sentiment.avg_gain_24h) if sentiment.avg_gain_24h else 0.0,
-                "bull_bear_score": float(sentiment.bull_bear_score) if sentiment.bull_bear_score else 0.0,
-                "fear_greed_index": float(sentiment.fear_greed_index) if sentiment.fear_greed_index else 50.0,
-                "last_updated": sentiment.last_updated.isoformat() if sentiment.last_updated else datetime.now().isoformat()
-            }
-            
-            return sentiment_data
-            
+                
         except Exception as e:
             logger.error(f"获取市场情绪数据失败: {str(e)}")
             return self._get_default_sentiment()

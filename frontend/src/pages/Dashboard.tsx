@@ -127,7 +127,7 @@ const Dashboard: React.FC = () => {
   const [vmrTimeframe, setVmrTimeframe] = useState<'30m' | '1h' | '4h' | '1d' | '3d'>('1h');
   const [vmrSeries, setVmrSeries] = useState<VmrSeriesResponse | null>(null);
   const [vmrLoading, setVmrLoading] = useState(false);
-  const [closingSymbols, setClosingSymbols] = useState<Set<string>>(new Set()); // 正在关闭的symbol集合
+  const [, setClosingSymbols] = useState<Set<string>>(new Set()); // 正在关闭的symbol集合
   const [togglingSymbols, setTogglingSymbols] = useState<Set<string>>(new Set()); // 正在切换watch状态的symbol集合
 
   const fetchDashboardData = useCallback(async () => {

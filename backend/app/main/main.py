@@ -5,6 +5,7 @@ from .config import settings
 from .errors import global_exception_handler, validation_exception_handler
 from .middleware import logging_middleware, tenant_middleware, audit_middleware
 from ..routers import strategies, market, backtest, health, export, runs, tuning, trades, tenants, live_trading, auth, users, audit_logs, dashboard_optimized
+from ..api import strong_weak_coins
 from fastapi.exceptions import RequestValidationError
 
 app = FastAPI(title=settings.APP_TITLE, version=settings.APP_VERSION)
@@ -43,3 +44,4 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(audit_logs.router)
 app.include_router(dashboard_optimized.router)  # Dashboard优化API接口
+app.include_router(strong_weak_coins.router)  # 强势弱势币种筛选API接口
