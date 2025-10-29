@@ -37,6 +37,7 @@ export interface CoinAnalysisItem {
   actual_volatility: number;
   composite_score: number;
   rank: number;
+  watch?: boolean; // 是否监控的币种
 }
 
 // Dashboard汇总数据结构
@@ -109,4 +110,52 @@ export const getDashboardSummary = async (): Promise<DashboardSummary> => {
     last_updated: data.last_updated,
     data_source: data.data_source
   };
+};
+
+// VMR时间序列数据点接口
+interface VmrDataPoint {
+  datetime: string;
+  vmr: number;
+  return_pct: number;
+}
+
+// VMR时间序列接口
+interface VmrSeriesItem {
+  symbol: string;
+  data: VmrDataPoint[];
+}
+
+// VMR时间序列响应接口
+export interface VmrSeriesResponse {
+  series: VmrSeriesItem[];
+  timeframe: string;
+  symbols: string[];
+  total_count: number;
+  error?: string;
+}
+
+/**
+ * 获取VMR时间序列数据
+ * 根据时间框架和币种符号获取VMR历史数据
+ * 
+ * @param timeframe 时间框架（30m, 1h, 4h, 1d, 3d）
+ * @param symbols 币种符号列表，为空则获取所有watch=true且quotecurrency=USDT的币种
+ * @param limit 返回记录数量限制，默认100
+ */
+export const getVmrSeries = async (
+  timeframe: string,
+  symbols?: string[],
+  limit: number = 100
+): Promise<VmrSeriesResponse> => {
+  const params: any = {
+    timeframe,
+    limit
+  };
+  
+  if (symbols && symbols.length > 0) {
+    params.symbols = symbols.join(',');
+  }
+  
+  const response = await client.get<VmrSeriesResponse>('/api/v1/dashboard/vmr-series', { params });
+  return response.data;
 };

@@ -317,6 +317,116 @@ class DashboardOptimizedService:
             "fear_greed_index": 50.0,
             "last_updated": datetime.now().isoformat()
         }
+    
+    async def get_vmr_series(self, timeframe: str, symbols: Optional[List[str]] = None, limit: int = 100) -> Dict[str, Any]:
+        """
+        获取VMR时间序列数据
+        
+        Args:
+            timeframe: 时间框架（30m, 1h, 4h, 1d, 3d）
+            symbols: 币种符号列表，如果为None则动态获取watch=true且quotecurrency=USDT的币种
+            limit: 返回记录数量限制
+            
+        Returns:
+            VMR时间序列数据字典
+        """
+        try:
+            # 验证时间框架参数
+            valid_timeframes = ['30m', '1h', '4h', '1d', '3d']
+            if timeframe not in valid_timeframes:
+                raise ValueError(f"无效的时间框架: {timeframe}，有效值为: {valid_timeframes}")
+            
+            # 如果symbols为None，则动态获取watch=true且quotecurrency=USDT的币种
+            if symbols is None:
+                symbols_query = text("""
+                    SELECT symbol FROM market_codes 
+                    WHERE watch = true AND quotecurrency = 'USDT'
+                """)
+                
+                result = await self.db.execute(symbols_query)
+                symbols_rows = result.fetchall()
+                symbols = [row.symbol for row in symbols_rows]
+                
+                if not symbols:
+                    logger.warning("没有找到watch=true且quotecurrency=USDT的币种")
+                    return {"series": [], "timeframe": timeframe, "symbols": []}
+            
+            # 根据时间框架选择对应的视图
+            view_name = f"market_ohlcv_{timeframe}"
+            
+            # 构建查询语句，包含vmr和return_pct字段，每个symbol查询最近limit条记录
+            # 使用窗口函数为每个symbol单独限制记录数
+            query = text(f"""
+                WITH ranked_data AS (
+                    SELECT 
+                        symbol,
+                        bucket as datetime,
+                        vmr,
+                        return_pct,
+                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
+                    FROM {view_name}
+                    WHERE symbol = ANY(:symbols)
+                )
+                SELECT 
+                    symbol,
+                    datetime,
+                    vmr,
+                    return_pct
+                FROM ranked_data
+                WHERE rn <= :limit
+                ORDER BY symbol, datetime DESC
+            """)
+            
+            result = await self.db.execute(query, {"symbols": symbols, "limit": limit})
+            rows = result.fetchall()
+            
+            # 按symbol分组数据
+            series_data = {}
+            for row in rows:
+                symbol = row.symbol
+                if symbol not in series_data:
+                    series_data[symbol] = []
+                
+                series_data[symbol].append({
+                    "datetime": row.datetime.isoformat() if hasattr(row.datetime, 'isoformat') else str(row.datetime),
+                    "vmr": float(row.vmr) if row.vmr else 0.0,
+                    "return_pct": float(row.return_pct) if row.return_pct else 0.0
+                })
+            
+            # 确保每个symbol都有数据，即使为空数组
+            for symbol in symbols:
+                if symbol not in series_data:
+                    series_data[symbol] = []
+            
+            # 转换为前端需要的格式
+            series_list = []
+            for symbol, data in series_data.items():
+                # 按时间升序排序
+                data.sort(key=lambda x: x["datetime"])
+                
+                series_list.append({
+                    "symbol": symbol,
+                    "data": data
+                })
+            
+            logger.info(f"VMR时间序列查询完成: timeframe={timeframe}, symbols={len(symbols)}, records={len(rows)}")
+            
+            return {
+                "series": series_list,
+                "timeframe": timeframe,
+                "symbols": symbols,
+                "total_count": len(rows)
+            }
+            
+        except Exception as e:
+            logger.error(f"获取VMR时间序列数据失败: {str(e)}")
+            return {
+                "series": [],
+                "timeframe": timeframe,
+                "symbols": symbols,
+                "total_count": 0,
+                "error": str(e)
+            }
 
 
 # 缓存管理器（可选，进一步提升性能）

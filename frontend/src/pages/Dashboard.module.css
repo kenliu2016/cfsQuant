@@ -550,6 +550,132 @@
   font-size: 14px;
 }
 
+.vmrSection {
+  margin-top: 28px;
+}
+
+.vmrControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.vmrSelect {
+  min-width: 220px;
+  width: 320px;
+}
+
+.vmrSelect :global(.ant-select-selector) {
+  background: rgba(15, 16, 28, 0.85) !important;
+  border: 1px solid rgba(47, 58, 96, 0.6) !important;
+  color: #e7e9ff !important;
+}
+
+.vmrSelect :global(.ant-select-selection-item) {
+  color: #e7e9ff !important;
+}
+
+.vmrSegmented {
+  background: rgba(47, 58, 96, 0.35) !important;
+}
+
+.vmrSegmented :global(.ant-segmented-item) {
+  color: #d9def5;
+}
+
+.vmrSegmented :global(.ant-segmented-item-selected) {
+  background: linear-gradient(135deg, #18a2ff 0%, #6c5bff 100%) !important;
+  color: #ffffff !important;
+}
+
+.vmrChartWrapper {
+  margin-top: 24px;
+  background: rgba(10, 12, 22, 0.85);
+  border: 1px solid rgba(47, 58, 96, 0.6);
+  border-radius: 20px;
+  padding: 16px;
+  min-height: 360px;
+}
+
+.vmrChartLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 328px;
+}
+
+.vmrSummaryGrid {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.vmrSummaryCard {
+  background: rgba(17, 18, 32, 0.95);
+  border: 1px solid rgba(47, 58, 96, 0.5);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vmrSummaryHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #f4f5fb;
+}
+
+.closeIcon {
+  margin-left: auto;
+  cursor: pointer;
+  color: #8c8fa3;
+  font-size: 12px;
+  transition: color 0.2s ease;
+}
+
+.closeIcon:hover {
+  color: #ff4d4f;
+}
+
+.vmrBullet {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.vmrSummaryMetric {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #b7bdd8;
+}
+
+.vmrSummaryMetric span:last-child {
+  font-weight: 600;
+  color: #e7e9ff;
+}
+
+.vmrNotes {
+  margin-top: 24px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(12, 14, 28, 0.65);
+  border: 1px dashed rgba(47, 58, 96, 0.6);
+  color: #8b92b4;
+  font-size: 13px;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 @media (max-width: 1024px) {
   .metaActions {
     grid-column: span 1;

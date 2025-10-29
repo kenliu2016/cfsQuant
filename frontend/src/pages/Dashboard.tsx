@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Tag, Segmented, Progress, Table, message } from 'antd';
+import { Button, Tag, Segmented, Progress, Table, message, Spin } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { SyncOutlined, SettingOutlined } from '@ant-design/icons';
+import { SyncOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-// import client from '../api/client'; // 删除未使用的导入
+import client from '../api/client';
 import {
   getDashboardSummary,
   type EnhancedStrongWeakCoin,
   type CoinAnalysisItem,
+  getVmrSeries,
+  type VmrSeriesResponse,
 } from '../api/dashboardOptimized';
+import ReactECharts from 'echarts-for-react';
 import styles from './Dashboard.module.css';
 
 type TrendCoin = {
@@ -38,6 +41,27 @@ type MarketMetrics = {
   fearGreedClassification?: string;
   fearGreedUpdatedAt?: string;
 };
+
+const VMR_TIMEFRAME_OPTIONS = [
+  { label: '30分钟', value: '30m' },
+  { label: '1小时', value: '1h' },
+  { label: '4小时', value: '4h' },
+  { label: '1天', value: '1d' },
+  { label: '3天', value: '3d' },
+];
+
+const VMR_COLOR_PALETTE = [
+  '#34d399',
+  '#facc15',
+  '#60a5fa',
+  '#f472b6',
+  '#f97316',
+  '#a855f7',
+  '#22d3ee',
+  '#fb7185',
+  '#4ade80',
+  '#c084fc',
+];
 
 
 const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color }) => {
@@ -100,6 +124,10 @@ const Dashboard: React.FC = () => {
     field?: string;
     order?: 'ascend' | 'descend';
   }>({});
+  const [vmrTimeframe, setVmrTimeframe] = useState<'30m' | '1h' | '4h' | '1d' | '3d'>('1h');
+  const [vmrSeries, setVmrSeries] = useState<VmrSeriesResponse | null>(null);
+  const [vmrLoading, setVmrLoading] = useState(false);
+  const [closingSymbols, setClosingSymbols] = useState<Set<string>>(new Set()); // 正在关闭的symbol集合
 
   const fetchDashboardData = useCallback(async () => {
     setRefreshing(true);
@@ -151,6 +179,8 @@ const Dashboard: React.FC = () => {
         has_next: limitedData.length > 10
       });
       
+      // 不再需要设置vmrSelectedSymbols，后端会动态获取所有watch=true且quotecurrency=USDT的symbol
+      
     } catch (error) {
       console.error('Failed to fetch dashboard data', error);
       message.error('获取Dashboard数据失败');
@@ -164,6 +194,65 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
+
+  const fetchVmrData = useCallback(async (timeframe: string) => {
+    setVmrLoading(true);
+    try {
+      // 不传递symbols参数，后端会动态获取watch=true且quotecurrency=USDT的symbol
+      const response = await getVmrSeries(
+        timeframe,
+        undefined, // 不传递symbols参数，让后端动态获取
+        100
+      );
+      setVmrSeries(response);
+    } catch (error) {
+      console.error('Failed to fetch VMR time series', error);
+      message.error('获取VMR时间序列失败');
+    } finally {
+      setVmrLoading(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    fetchVmrData(vmrTimeframe);
+  }, [vmrTimeframe, fetchVmrData]);
+
+  const handleVmrTimeframeChange = (value: string | number) => {
+    setVmrTimeframe(value as '30m' | '1h' | '4h' | '1d' | '3d');
+  };
+
+  /**
+   * 处理关闭VMR卡片
+   * @param symbol 要关闭的币种符号
+   */
+  const handleCloseVmrCard = async (symbol: string) => {
+    // 添加到正在关闭的集合
+    setClosingSymbols(prev => new Set(prev).add(symbol));
+    
+    try {
+      // 调用后端API，将symbol的watch状态设置为false
+      // 使用binance作为默认交易所，因为VMR数据中只包含symbol信息
+      await client.put(`/api/market/market_codes/binance`, { watch: false }, {
+        params: { symbol }
+      });
+      
+      message.success(`已移除 ${symbol} 的观察`);
+      
+      // 重新加载VMR数据，刷新曲线图
+      await fetchVmrData(vmrTimeframe);
+      
+    } catch (error) {
+      console.error('Failed to close VMR card:', error);
+      message.error(`移除 ${symbol} 观察失败`);
+    } finally {
+      // 从正在关闭的集合中移除
+      setClosingSymbols(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(symbol);
+        return newSet;
+      });
+    }
+  };
 
   const biasScore = marketMetrics.bullBearScore ?? 0;
   const clampedScore = clamp(biasScore, -7, 7);
@@ -228,6 +317,161 @@ const Dashboard: React.FC = () => {
       render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
   ], []);
+
+  const vmrChartOption = useMemo(() => {
+    if (!vmrSeries || vmrSeries.series.length === 0) {
+      return {
+        grid: { left: 50, right: 20, top: 50, bottom: 50 },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: [],
+      };
+    }
+
+    // 获取所有有数据的series，合并时间轴
+    const allDataPoints = vmrSeries.series.flatMap((item: any) => item.data || []);
+    
+    // 去重并排序时间点
+    const uniqueTimes = [...new Set(allDataPoints.map((point: any) => point.datetime))]
+      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    
+    const xAxisData = uniqueTimes.map((datetime: string) =>
+      dayjs(datetime).format(vmrTimeframe === '1d' || vmrTimeframe === '3d' ? 'MM-DD' : 'MM-DD HH:mm')
+    );
+
+    const legendData: string[] = [];
+    const seriesData = vmrSeries.series.map((item: any, index: number) => {
+      legendData.push(item.symbol);
+      const color = VMR_COLOR_PALETTE[index % VMR_COLOR_PALETTE.length];
+      
+      // 将后端返回的data字段映射为前端期望的points格式
+      const points = item.data || [];
+      
+      // 创建时间点映射，便于数据对齐
+      const pointMap = new Map(points.map((point: any) => [point.datetime, point]));
+      
+      // 将数据对齐到统一的时间轴上
+      const alignedData = uniqueTimes.map((datetime: string) => {
+        const point = pointMap.get(datetime) as any;
+        return point ? Number((point.vmr * 100).toFixed(4)) : null; // 使用null表示缺失数据
+      });
+      
+      return {
+        name: item.symbol,
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        color: color, // 添加color属性，确保tooltip和图例能正确获取颜色
+        lineStyle: { width: 2, color },
+        emphasis: { focus: 'series' },
+        connectNulls: true, // 允许连接空值
+        data: alignedData,
+        // 添加区域渐变效果，增强视觉区分度
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: `${color}33` }, // 半透明
+              { offset: 1, color: `${color}0A` }, // 更透明
+            ],
+          },
+        },
+      };
+    });
+
+    return {
+      grid: { left: 50, right: 20, top: 50, bottom: 50 },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(15,16,28,0.92)',
+        borderColor: '#2f3a60',
+        textStyle: { color: '#f4f5fb' },
+        formatter: (params: any[]) => {
+          if (!params?.length || !vmrSeries?.series) return '';
+          const axisLabel = params[0].axisValue;
+          
+          // 按VMR值排序，便于查看
+          const sortedParams = [...params].sort((a, b) => Number(b.data) - Number(a.data));
+          
+          const lines = sortedParams
+            .map((item) => {
+              // 获取对应的原始数据点，包含return_pct信息
+              const seriesIndex = vmrSeries.series.findIndex((s: any) => s.symbol === item.seriesName);
+              if (seriesIndex === -1) return '';
+              
+              // 通过时间点匹配找到对应的原始数据
+              const seriesData = vmrSeries.series[seriesIndex]?.data || [];
+              
+              // 直接通过时间戳匹配，避免作用域问题
+              const originalData = seriesData.find((point: any) => {
+                const pointTime = dayjs(point.datetime).format(vmrTimeframe === '1d' || vmrTimeframe === '3d' ? 'MM-DD' : 'MM-DD HH:mm');
+                return pointTime === axisLabel;
+              });
+              
+              if (!originalData) return '';
+              
+              const returnPct = originalData.return_pct || 0;
+              
+              return `<span style=\"display:inline-block;margin-right:8px;border-radius:4px;width:8px;height:8px;background:${
+                item.color
+              };\"></span>${item.seriesName}: <strong style=\"color:${item.color}\">${Number(item.data).toFixed(4)}</strong> (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%)`;
+            })
+            .filter(line => line !== '') // 过滤掉空行
+            .join('<br/>');
+          return `<div style=\"margin-bottom:8px;font-weight:bold;\">${axisLabel}</div>${lines}`;
+        },
+      },
+      legend: {
+        type: 'scroll',
+        top: 0,
+        icon: 'circle',
+        textStyle: { color: '#d7daff' },
+        data: legendData,
+      },
+      xAxis: {
+        type: 'category',
+        data: xAxisData,
+        boundaryGap: false,
+        axisLine: { lineStyle: { color: '#2f3a60' } },
+        axisLabel: { color: '#8b92b4' },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        axisLine: { lineStyle: { color: '#2f3a60' } },
+        axisLabel: {
+          color: '#8b92b4',
+          formatter: (value: number) => value.toFixed(2),
+        },
+        splitLine: { lineStyle: { color: 'rgba(47,58,96,0.35)' } },
+        name: 'VMR × 100',
+        nameTextStyle: { color: '#8b92b4' },
+      },
+      series: seriesData,
+    };
+  }, [vmrSeries, vmrTimeframe]);
+
+  const vmrChangeLabel = useMemo(() => {
+    // 根据时间框架确定变化标签
+    switch (vmrTimeframe) {
+      case '30m':
+        return '30分钟';
+      case '1h':
+        return '1小时';
+      case '4h':
+        return '4小时';
+      case '1d':
+        return '1天';
+      case '3d':
+        return '3天';
+      default:
+        return '变化';
+    }
+  }, [vmrTimeframe]);
 
   // 根据牛熊市分数获取对应的阶段描述
   const getBullBearPhase = (score: number): string => {
@@ -497,6 +741,92 @@ const Dashboard: React.FC = () => {
             <Tag className={`${styles.trendTag} ${styles.bearishTag}`}>警戒</Tag>
           </div>
           {renderTrendList(weakCoins, 'bearish')}
+        </div>
+      </section>
+
+      <section className={`${styles.sectionCard} ${styles.vmrSection}`}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <div className={styles.sectionTitle}>VMR 时间序列对比图</div>
+            <div className={styles.sectionDescription}>动态显示所有watch=true且quotecurrency=USDT的币种 · 支持多时间框架横向趋势比较</div>
+          </div>
+          <div className={styles.vmrControls}>
+            <Segmented
+              options={VMR_TIMEFRAME_OPTIONS}
+              value={vmrTimeframe}
+              onChange={handleVmrTimeframeChange}
+              className={styles.vmrSegmented}
+            />
+          </div>
+        </div>
+
+        <div className={styles.vmrChartWrapper}>
+          {vmrLoading ? (
+            <div className={styles.vmrChartLoading}>
+              <Spin />
+              <div style={{ marginTop: 16, color: '#8c8fa3' }}>加载VMR数据...</div>
+            </div>
+          ) : vmrSeries && vmrSeries.series.length ? (
+            <ReactECharts option={vmrChartOption} style={{ height: 360, width: '100%' }} />
+          ) : (
+            <div className={styles.emptyContainer}>
+              <div className={styles.emptyText}>暂无可用的VMR数据，请尝试选择其他币种</div>
+            </div>
+          )}
+        </div>
+
+        {vmrSeries && vmrSeries.series.length > 0 && (
+          <div className={styles.vmrSummaryGrid}>
+            {vmrSeries.series.map((item: any, index: number) => {
+              // 使用与图表系列相同的颜色分配逻辑，确保颜色一致
+              const color = VMR_COLOR_PALETTE[index % VMR_COLOR_PALETTE.length];
+              
+              // 计算当前VMR值和变化率（基于实际数据）
+              const dataPoints = item.data || [];
+              if (dataPoints.length === 0) {
+                return null; // 跳过没有数据的币种
+              }
+              
+              // 获取最新的VMR值并放大100倍，与图表显示保持一致
+              const latestVmr = dataPoints[dataPoints.length - 1]?.vmr || 0;
+              const latestVmrScaled = latestVmr * 100; // 放大100倍，与图表显示一致
+              
+              // 计算变化率（基于return_pct字段，这是正确的涨幅数据）
+              const latestReturnPct = dataPoints[dataPoints.length - 1]?.return_pct || 0;
+              const changeRate = latestReturnPct * 100; // return_pct已经是小数形式，乘以100转换为百分比
+              const changePositive = changeRate >= 0;
+              
+              return (
+                <div key={item.symbol} className={styles.vmrSummaryCard}>
+                  <div className={styles.vmrSummaryHeader}>
+                    <span className={styles.vmrBullet} style={{ backgroundColor: color }} />
+                    <span>{item.symbol}</span>
+                    <CloseOutlined 
+                      className={styles.closeIcon}
+                      onClick={() => handleCloseVmrCard(item.symbol)}
+                    />
+                  </div>
+                  <div className={styles.vmrSummaryMetric}>
+                    <span>VMR × 100</span>
+                    <span>{latestVmrScaled.toFixed(4)}</span>
+                </div>
+                  <div className={styles.vmrSummaryMetric}>
+                    <span>{vmrChangeLabel}</span>
+                    <span className={changePositive ? styles.positiveChange : styles.negativeChange}>
+                      {changePositive ? '+' : ''}
+                      {changeRate.toFixed(2)}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className={styles.vmrNotes}>
+          <div>• 横向对比：观察同一时间框架下VMR随时间的变化趋势，VMR上升可能意味着资金逐步堆积。</div>
+          <div>• 纵向对比：对比不同时间框架的VMR多维表现，寻找结构性强势币种。</div>
+          <div>• 数据来源：实时指标数据（支持自动刷新）。切换时间窗或币种即可快速定位。</div>
         </div>
       </section>
     </div>

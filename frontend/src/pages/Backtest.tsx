@@ -655,23 +655,19 @@ const Backtest: React.FC = () => {
         formatter: function(params: any[]) {
   if (!params || params.length === 0) return '';
   
-  // 查找K线数据
-  let klineData = params.find(param => param.seriesName === 'K线图' || param.seriesName === '折线图');
+  // 优先查找主系列（K线图或折线图）的数据
+  let mainParam = params.find(param => param.seriesName === 'K线图' || param.seriesName === '折线图');
   
-  // 查找成交量数据
-  const volumeData = params.find(param => param.seriesName === '成交量');
+  // 如果没有找到主系列，使用第一个参数
+  if (!mainParam) mainParam = params[0];
   
-  // 查找信号数据
-  const signalParams = params.filter(param => param.seriesName.includes('_buy') || param.seriesName.includes('_sell'));
-  
-  // 获取当前数据点的索引
-  const dataIndex = klineData?.dataIndex || volumeData?.dataIndex || 0;
-  const timeValue = klineData?.axisValue || volumeData?.axisValue || (signalParams.length > 0 ? signalParams[0].axisValue : '');
+  const dataIndex = mainParam.dataIndex;
+  const timeValue = mainParam.axisValue;
   
   let result = timeValue + '<br/>';
   
   // 如果有K线数据，显示K线信息
-  if (klineData && candleData && candleData[dataIndex]) {
+  if (candleData && candleData[dataIndex]) {
       const candle = candleData[dataIndex];
       result += '<span style="color: #ef232a">开盘: ' + candle.open + '</span><br/>';
       const closeColor = candle.close >= candle.open ? '52c41a' : 'ff4d4f';
@@ -683,39 +679,43 @@ const Backtest: React.FC = () => {
       const change = ((candle.close - candle.open) / candle.open * 100).toFixed(2);
       const changeColor = candle.close >= candle.open ? '52c41a' : 'ff4d4f';
       result += '<span style="color: #' + changeColor + '">涨跌幅: ' + change + '%</span><br/>';
-      
-      // 如果有信号，添加分隔线
-      if (signalParams.length > 0) {
-        result += '<hr style="border: none; border-top: 1px solid #4E4E6A; margin: 5px 0;">';
-      }
   }
   
-  // 如果有成交量数据，显示成交量信息
-  if (volumeData && candleData && candleData[dataIndex] && candleData[dataIndex].volume) {
+  // 查找成交量数据
+  const volumeParam = params.find(param => param.seriesName === '成交量');
+  if (volumeParam && candleData && candleData[dataIndex] && candleData[dataIndex].volume) {
     const volume = candleData[dataIndex].volume;
     const volumeColor = candleData[dataIndex] && candleData[dataIndex].isUp !== undefined ? 
                        (candleData[dataIndex].isUp ? '#52c41a' : '#ff4d4f') : '#8c8c8c';
     result += '<span style="color: ' + volumeColor + '">成交量: ' + formatVolume(volume) + '</span><br/>';
   }
   
-  // 显示信号信息
-   if (signalParams.length > 0) {
-     // 去重相同位置的信号
-     const uniqueSignals: any[] = [];
-     const signalKeys = new Set<string>();
-     
-     signalParams.forEach(param => {
-       const signalKey = `${param.data[0]}-${param.data[1]}`;
-       if (!signalKeys.has(signalKey)) {
-         signalKeys.add(signalKey);
-         uniqueSignals.push(param);
-       }
-     });
-     
-     uniqueSignals.forEach(param => {
+  // 查找信号数据 - 改进匹配逻辑
+  const signalParams = params.filter(param => {
+    const seriesName = param.seriesName || '';
+    return seriesName.includes('buy') || seriesName.includes('sell');
+  });
+  
+  if (signalParams.length > 0) {
+    // 添加分隔线
+    result += '<hr style="border: none; border-top: 1px solid #4E4E6A; margin: 5px 0;">';
+    
+    // 去重相同位置的信号
+    const uniqueSignals: any[] = [];
+    const signalKeys = new Set<string>();
+    
+    signalParams.forEach(param => {
+      const signalKey = `${param.data[0]}-${param.data[1]}`;
+      if (!signalKeys.has(signalKey)) {
+        signalKeys.add(signalKey);
+        uniqueSignals.push(param);
+      }
+    });
+    
+    uniqueSignals.forEach(param => {
       const signalIndex = param.data[0];
       const signalPrice = param.data[1];
-      const isBuy = param.seriesName.includes('_buy');
+      const isBuy = param.seriesName.includes('buy');
       const signalType = isBuy ? '买入' : '卖出';
       const signalColor = isBuy ? '#52c41a' : '#ff4d4f';
       
@@ -821,7 +821,7 @@ const Backtest: React.FC = () => {
             borderColor0: '#ff4d4f'
           },
           lineStyle: {
-            color: '#26A69A'
+            color: '#52c41a' // 修改为与卡片颜色一致的绿色
           },
           xAxisIndex: 0,
           yAxisIndex: 0

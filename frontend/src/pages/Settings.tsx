@@ -8,16 +8,16 @@ import { useAuth } from '../context/AuthContext';
 
 const tabStyle = {
   color: '#FFFFFF',
-  '& .ant-tabs-tab': {
+  '& .antTabsTab': {
     color: '#FFFFFF !important',
   },
-  '& .ant-tabs-tab-btn': {
+  '& .antTabsTabBtn': {
     color: '#FFFFFF !important',
   },
-  '& .ant-tabs-nav::before': {
+  '& .antTabsNav::before': {
     borderBottom: '1px solid #333333 !important',
   },
-  '& .ant-tabs-ink-bar': {
+  '& .antTabsInkBar': {
     background: '#1890ff !important',
   },
 };
@@ -50,7 +50,7 @@ const Settings: React.FC = () => {
     <div style={{ padding: '0px 0px 0px 0px' }}>
       <Tabs 
         items={items} 
-        destroyInactiveTabPane
+        destroyOnHidden
         style={tabStyle}
         className="custom-tabs"
       />

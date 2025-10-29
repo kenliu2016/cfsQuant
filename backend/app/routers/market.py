@@ -85,10 +85,6 @@ def process_market_data(df, context=""):
     # 创建df的副本以避免修改原始数据
     processed_df = df.copy()
     
-    logger.info(f"处理DataFrame: 形状={processed_df.shape}, 列={list(processed_df.columns)}")
-    
-    # 添加调试信息：显示原始数据的前几行
-    logger.info(f"原始数据预览 (前3行):\n{processed_df.head(3).to_string()}")
     
     # 检查datetime列是否存在
     datetime_columns = [col for col in processed_df.columns if col.lower() in ['datetime', 'date', 'time']]
@@ -98,13 +94,10 @@ def process_market_data(df, context=""):
             logger.warning("DataFrame中未找到datetime相关列")
     else:
         datetime_col = datetime_columns[0]
-        logger.info(f"使用{datetime_col}作为datetime列")
-        
         # 尝试将列转换为datetime类型并格式化为ISO字符串
         try:
             # 先检查是否已经是datetime类型
             if not pd.api.types.is_datetime64_any_dtype(processed_df[datetime_col]):
-                logger.info(f"转换{datetime_col}列为datetime类型")
                 processed_df[datetime_col] = pd.to_datetime(processed_df[datetime_col], errors='coerce')
             
             # 检查是否有NaT值
@@ -123,19 +116,14 @@ def process_market_data(df, context=""):
     price_columns = ["open", "high", "low", "close", "volume"]
     for col in price_columns:
         if col in processed_df.columns:
-            logger.info(f"处理{col}列")
             
             # 记录处理前该列的非零值数量
             if pd.api.types.is_numeric_dtype(processed_df[col]):
                 non_zero_count_before = (processed_df[col] != 0).sum()
-                logger.info(f"{col}列处理前非零值数量: {non_zero_count_before}/{len(processed_df)}")
-                # 记录该列的统计信息
-                logger.info(f"{col}列处理前统计信息: 最小值={processed_df[col].min()}, 最大值={processed_df[col].max()}, 平均值={processed_df[col].mean()}")
             
             try:
                 # 检查列的数据类型
                 current_dtype = processed_df[col].dtype
-                logger.info(f"{col}列当前类型: {current_dtype}")
                 
                 # 如果被错误地识别为日期时间类型，需要特殊处理
                 if pd.api.types.is_datetime64_any_dtype(processed_df[col]):
@@ -162,9 +150,6 @@ def process_market_data(df, context=""):
                 non_zero_count_after = len(processed_df) - zero_count
                 if zero_count > 0:
                     logger.warning(f"{col}列包含{zero_count}个0值，非零值数量: {non_zero_count_after}/{len(processed_df)}")
-                    
-                # 记录处理后该列的统计信息
-                logger.info(f"{col}列处理后统计信息: 最小值={processed_df[col].min()}, 最大值={processed_df[col].max()}, 平均值={processed_df[col].mean()}")
                 
             except Exception as e:
                 logger.error(f"处理{col}列时出错: {str(e)}")
@@ -181,10 +166,6 @@ def process_market_data(df, context=""):
                     # 如果所有尝试都失败，保持原样
                     pass
     
-    # 添加调试信息：显示处理后数据的前几行
-    logger.info(f"处理后数据预览 (前3行):\n{processed_df.head(3).to_string()}")
-    
-    logger.info("数据处理完成")
     return processed_df
 
 # 定义通用的日期时间解析函数
@@ -239,12 +220,9 @@ def candles(symbol: str = Query(...), startTime: str = Query(None), endTime: str
                  page: int = Query(None, ge=1, description="页码，从1开始"), 
                  page_size: int = Query(None, ge=1, le=1000, description="每页数据量，最大1000条"),
                  limit: int = Query(None, ge=1, le=70000, description="查询最近的记录条数，最大70000条")):
-    logger.info(f"接收到candles请求: symbol={symbol}, startTime={startTime}, endTime={endTime}, timeframe={timeframe}, page={page}, page_size={page_size}, limit={limit}")
     
     # 处理查询逻辑：有时间范围按时间范围查询，没有时间范围按limit查询最近记录
     if startTime and endTime:
-        # 有时间范围时，按时间范围查询
-        logger.info(f"有时间范围参数，按时间范围查询")
         # 将字符串类型的日期时间转换为datetime对象
         try:
             start_dt = parse_datetime(startTime)
@@ -255,12 +233,9 @@ def candles(symbol: str = Query(...), startTime: str = Query(None), endTime: str
         
         result = get_candles(symbol, startTime, endTime, timeframe, page, page_size)
     else:
-        # 没有时间范围时，按limit参数查询最近的记录
-        logger.info(f"没有时间范围参数，按limit查询最近的记录")
         # 调用新的方法查询最近的K线数据
         result = get_latest_candles(symbol, timeframe, limit)
 
-    logger.info(f"查询参数: symbol={symbol}, timeframe={timeframe}")
 
     # 处理返回结果
     if isinstance(result, tuple):
@@ -295,7 +270,6 @@ def candles(symbol: str = Query(...), startTime: str = Query(None), endTime: str
         if query_params is not None:
             response["query_params"] = query_params
             
-        logger.info(f"返回candles响应: rows={len(response['rows'])}, total_count={total_count}")
         return response
     else:
         # 处理非元组返回值（单df）
@@ -311,7 +285,6 @@ def candles(symbol: str = Query(...), startTime: str = Query(None), endTime: str
             "has_more": False
         }
         
-        logger.info(f"返回非元组candles响应: rows={len(response['rows'])}")
         return response
 
 @router.post("/refresh-cache")
@@ -325,11 +298,9 @@ def refresh_market_cache(symbol: str = Query(None, description="可选的交易�
     Returns:
         刷新结果信息
     """
-    logger.info(f"接收到refresh-cache请求: symbol={symbol}")
     
     try:
         refresh_market_data_cache(symbol)
-        logger.info("市场数据缓存刷新成功")
         return {"status": "success", "message": f"市场数据缓存已刷新"}
     except Exception as e:
         logger.error(f"刷新市场数据缓存失败: {str(e)}")
@@ -346,7 +317,6 @@ def get_exchanges(active: bool = Query(True, description="是否只获取活跃�
     Returns:
         交易所列表
     """
-    logger.info(f"接收到获取交易所列表请求: active={active}")
     
     try:
         tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
@@ -358,8 +328,6 @@ def get_exchanges(active: bool = Query(True, description="是否只获取活跃�
         
         # 转换为字典列表
         result = processed_df.to_dict(orient="records")
-        
-        logger.info(f"返回交易所列表: 共{len(result)}条记录")
         return {
             "rows": result,
             "total_count": len(result)
@@ -398,7 +366,6 @@ def get_codes(exchange: str = None,
     Returns:
         市场代码列表
     """
-    logger.info(f"接收到获取市场代码列表请求: exchange={exchange}, symbol={symbol}, active={active}, watch={watch}")
     
     try:
         # 直接调用底层服务函数，不经过缓存
@@ -429,22 +396,13 @@ def get_codes(exchange: str = None,
         sql += " ORDER BY symbol"
         
         df = fetch_df(sql, **params)
-        logger.info(f"直接从数据库获取数据，形状={df.shape}")
-        if not df.empty:
-            logger.info(f"直接从数据库获取的数据预览: {df.head(2).to_dict('records')}")
         
         # 处理结果
         context = f"market_codes - exchange={exchange}, active={active}"
         processed_df = process_market_data(df, context)
-        logger.info(f"处理后的数据形状={processed_df.shape}")
-        if not processed_df.empty:
-            logger.info(f"处理后的数据预览: {processed_df.head(2).to_dict('records')}")
         
         # 转换为字典列表
         result = processed_df.to_dict(orient="records")
-        logger.info(f"转换后的结果数量: {len(result)}")
-        if result:
-            logger.info(f"转换后的结果预览: {result[:2]}")
         
         return {
             "rows": result,
@@ -466,7 +424,6 @@ def add_code(code_data: dict, request: Request):
     Returns:
         成功信息
     """
-    logger.info(f"接收到添加市场代码请求: {code_data}")
     
     try:
         # 检查必要字段
@@ -476,11 +433,10 @@ def add_code(code_data: dict, request: Request):
                 raise HTTPException(status_code=400, detail=f"缺少必要字段: {field}")
         
         # 检查是否已存在
-        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
         check_sql = """
-        SELECT 1 FROM market_codes WHERE exchange = :exchange AND symbol = :symbol AND tenant_id = :tenant_id
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND symbol = :symbol
         """
-        check_params = {'exchange': code_data['exchange'], 'symbol': code_data['symbol'], 'tenant_id': tenant_id}
+        check_params = {'exchange': code_data['exchange'], 'symbol': code_data['symbol']}
         check_df = fetch_df(check_sql, **check_params)
         
         if len(check_df) > 0:
@@ -488,13 +444,12 @@ def add_code(code_data: dict, request: Request):
         
         # 插入新记录
         insert_sql = """
-        INSERT INTO market_codes (tenant_id, exchange, symbol, active, watch)
-        VALUES (:tenant_id, :exchange, :symbol, :active, :watch)
+        INSERT INTO market_codes (exchange, symbol, active, watch)
+        VALUES (:exchange, :symbol, :active, :watch)
         """
         
         # 设置默认值
         insert_params = {
-            'tenant_id': tenant_id,
             'exchange': code_data['exchange'],
             'symbol': code_data['symbol'],
             'active': code_data.get('active', True),
@@ -502,7 +457,6 @@ def add_code(code_data: dict, request: Request):
         }
         
         execute(insert_sql, **insert_params)
-        logger.info(f"添加市场代码成功: {code_data['exchange']}:{code_data['symbol']}")
         
         return {"success": True, "message": "添加成功"}
     except HTTPException as e:
@@ -512,28 +466,26 @@ def add_code(code_data: dict, request: Request):
         raise HTTPException(status_code=500, detail="添加失败")
 
 
-@router.put("/market_codes/{exchange}")
-def update_code(exchange: str, symbol: str = Query(..., description="交易对代码"), update_data: dict = Body(...), request: Request = None):
+@router.put("/market_codes")
+def update_code(exchange: str = Query(..., description="交易所代码"), symbol: str = Query(..., description="交易对代码"), update_data: dict = Body(...), request: Request = None):
     """
     更新市场代码
     
     Args:
-        exchange: 交易所
-        symbol: 交易对代码
+        exchange: 交易所（通过查询参数传递）
+        symbol: 交易对代码（通过查询参数传递）
         update_data: 更新数据
     
     Returns:
         成功信息
     """
-    logger.info(f"接收到更新市场代码请求: {exchange}:{symbol}, 数据: {update_data}")
     
     try:
         # 检查记录是否存在
-        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID)
         check_sql = """
-        SELECT 1 FROM market_codes WHERE exchange = :exchange AND symbol = :symbol AND tenant_id = :tenant_id
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND symbol = :symbol
         """
-        check_params = {'exchange': exchange, 'symbol': symbol, 'tenant_id': tenant_id}
+        check_params = {'exchange': exchange, 'symbol': symbol}
         check_df = fetch_df(check_sql, **check_params)
         
         if len(check_df) == 0:
@@ -541,7 +493,7 @@ def update_code(exchange: str, symbol: str = Query(..., description="交易对�
         
         # 构建更新SQL
         update_fields = []
-        update_params = {'exchange': exchange, 'symbol': symbol, 'tenant_id': tenant_id}
+        update_params = {'exchange': exchange, 'symbol': symbol}
         
         allowed_fields = ['active', 'watch']
         for field in allowed_fields:
@@ -555,11 +507,10 @@ def update_code(exchange: str, symbol: str = Query(..., description="交易对�
         update_sql = f"""
         UPDATE market_codes 
         SET {', '.join(update_fields)}
-        WHERE exchange = :exchange AND symbol = :symbol AND tenant_id = :tenant_id
+        WHERE exchange = :exchange AND symbol = :symbol
         """
         
         execute(update_sql, **update_params)
-        logger.info(f"更新市场代码成功: {exchange}:{symbol}")
         
         return {"success": True, "message": "更新成功"}
     except HTTPException as e:
@@ -581,15 +532,13 @@ def delete_code(exchange: str = Query(...), symbol: str = Query(...), request: R
     Returns:
         成功信息
     """
-    logger.info(f"接收到删除市场代码请求: {exchange}:{symbol}")
     
     try:
         # 检查记录是否存在
-        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
         check_sql = """
-        SELECT 1 FROM market_codes WHERE exchange = :exchange AND symbol = :symbol AND tenant_id = :tenant_id
+        SELECT 1 FROM market_codes WHERE exchange = :exchange AND symbol = :symbol
         """
-        check_params = {'exchange': exchange, 'symbol': symbol, 'tenant_id': tenant_id}
+        check_params = {'exchange': exchange, 'symbol': symbol}
         check_df = fetch_df(check_sql, **check_params)
         
         if len(check_df) == 0:
@@ -597,13 +546,12 @@ def delete_code(exchange: str = Query(...), symbol: str = Query(...), request: R
         
         # 执行删除
         delete_sql = """
-        DELETE FROM market_codes WHERE exchange = :exchange AND symbol = :symbol AND tenant_id = :tenant_id
+        DELETE FROM market_codes WHERE exchange = :exchange AND symbol = :symbol
         """
-        delete_params = {'exchange': exchange, 'symbol': symbol, 'tenant_id': tenant_id}
+        delete_params = {'exchange': exchange, 'symbol': symbol}
         
         # 使用execute函数执行DELETE操作，而不是fetch_df
         execute(delete_sql, **delete_params)
-        logger.info(f"删除市场代码成功: {exchange}:{symbol}")
         
         return {"success": True, "message": "删除成功"}
     except HTTPException as e:
@@ -624,7 +572,6 @@ def batch_update_codes(batch_data: dict, request: Request = None):
     Returns:
         成功信息
     """
-    logger.info(f"接收到批量更新市场代码请求: {batch_data}")
     
     try:
         # 检查必要字段
@@ -644,7 +591,6 @@ def batch_update_codes(batch_data: dict, request: Request = None):
         if not update_fields:
             return {"success": True, "message": "没有需要更新的字段"}
         
-        tenant_id = getattr(request.state, "tenant_id", settings.DEFAULT_TENANT_ID) if request else settings.DEFAULT_TENANT_ID
         # 构建更新语句
         update_sql = """
         UPDATE market_codes SET
@@ -652,19 +598,18 @@ def batch_update_codes(batch_data: dict, request: Request = None):
         
         # 添加更新字段
         set_clauses = []
-        params = {'tenant_id': tenant_id}
+        params = {}
         
         for field, value in update_fields.items():
             set_clauses.append(f"{field} = :{field}")
             params[field] = value
         
         update_sql += ", ".join(set_clauses)
-        update_sql += " WHERE tenant_id = :tenant_id AND CONCAT(exchange, ':', code) = ANY(:keys)"
+        update_sql += " WHERE CONCAT(exchange, ':', symbol) = ANY(:keys)"
         params['keys'] = keys
         
         # 使用execute函数而非fetch_df，因为更新操作不返回数据
         execute(update_sql, **params)
-        logger.info(f"批量更新市场代码成功，共更新 {len(keys)} 条记录")
         
         return {"success": True, "message": f"批量更新成功，共更新 {len(keys)} 条记录"}
     except HTTPException as e:
@@ -686,13 +631,11 @@ def delete_candles_cache(symbol: str = Query(..., description="市场代码，�
     支持清除基于时间范围的查询缓存或基于limit的查询缓存
     如果同时提供了时间范围和limit，则优先按时间范围清除
     """
-    logger.info(f"接收到清除K线缓存请求: symbol={symbol}, timeframe={timeframe}, limit={limit}, startTime={startTime}, endTime={endTime}")
     
     # 调用清除缓存的服务函数
     success = clear_candles_cache(symbol, timeframe, limit, startTime, endTime)
     
     if success:
-        logger.info(f"成功清除K线缓存: symbol={symbol}, timeframe={timeframe}")
         return {"success": True, "message": "K线缓存清除成功"}
     else:
         logger.error(f"清除K线缓存失败: symbol={symbol}, timeframe={timeframe}")
@@ -704,13 +647,11 @@ def delete_all_candles_cache_endpoint():
     """
     清除所有K线相关的缓存
     """
-    logger.info("接收到清除所有K线缓存的请求")
     
     # 调用清除所有缓存的服务函数
     success = clear_all_candles_cache()
     
     if success:
-        logger.info("成功清除所有K线缓存")
         return {"success": True, "message": "所有K线缓存清除成功"}
     else:
         logger.error("清除所有K线缓存失败")
