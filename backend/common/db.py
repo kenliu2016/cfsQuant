@@ -274,14 +274,10 @@ def fetch_df(query: str, config_path: Optional[str] = None, **kwargs):
         with engine.connect() as conn:
             if kwargs:
                 # 使用SQLAlchemy的text对象来支持命名参数
-                logger.debug(f"执行带参数的SQL查询: {query}")
-                logger.debug(f"SQL参数: {kwargs}")
                 # 修复参数传递方式，避免SQLAlchemy版本兼容性问题
                 df = pd.read_sql(text(query).bindparams(**kwargs), conn)
             else:
-                logger.debug(f"执行SQL查询: {query}")
                 df = pd.read_sql(query, conn)
-        logger.debug(f"SQL查询成功，返回 {len(df)} 行数据")
         return df
     except Exception as e:
         logger.error(f"执行SQL查询失败: {query}")
@@ -362,15 +358,12 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
 
             # 如果没有数据，返回空DataFrame
             if not chunks:
-                logger.debug("没有获取到数据，返回空DataFrame")
                 return pd.DataFrame(columns=columns)
 
             # 优化：合并所有批次的数据，避免过多的内存复制
             if len(chunks) == 1:
-                logger.debug("只有一个批次，直接复制")
                 df = chunks[0].copy()
             else:
-                logger.debug(f"合并 {len(chunks)} 个批次")
                 # 使用ignore_index=True避免索引冲突
                 df = pd.concat(chunks, ignore_index=True)
                 # 释放中间数据占用的内存
@@ -413,7 +406,6 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
                         if len(df[col].unique()) < len(df) * 0.5:
                             df[col] = df[col].astype('category')
 
-            logger.debug(f"成功获取数据: {len(df)} 行，{len(df.columns)} 列")
             return df
     except asyncio.TimeoutError as e:
         logger.error(f"数据库查询超时: {type(e).__name__}: {e}")
@@ -436,9 +428,7 @@ async def fetch_df_async(query, config_path: Optional[str] = None, **kwargs):
     finally:
         if result is not None:
             try:
-                logger.debug(f"关闭结果集，类型: {type(result)}")
                 result.close()
-                logger.debug("结果集关闭成功")
             except Exception as close_e:
                 logger.warning(f"关闭结果集时出错: {type(close_e).__name__}: {close_e}")
 
@@ -538,8 +528,6 @@ def execute(query: str, config_path: Optional[str] = None, **kwargs) -> int:
         
     try:
         engine = get_engine(config_path)
-        logger.debug(f"开始执行SQL语句: {query}")
-        logger.debug(f"SQL参数: {kwargs}")
         
         with engine.connect() as conn:
             with conn.begin() as transaction:
@@ -551,7 +539,6 @@ def execute(query: str, config_path: Optional[str] = None, **kwargs) -> int:
                     transaction.commit()
                     # 返回受影响的行数，确保返回值始终是一个整数
                     affected_rows = result.rowcount if result.rowcount is not None else 0
-                    logger.debug(f"SQL语句执行成功，受影响行数: {affected_rows}")
                     return affected_rows
                 except Exception as e:
                     transaction.rollback()

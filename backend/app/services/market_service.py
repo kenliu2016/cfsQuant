@@ -316,7 +316,7 @@ class MarketDataService:
             # 不再需要代码层面的聚合，直接返回数据
             # 创建查询参数dict
             query_params = {"symbol": symbol, "startTime": startTime, "endTime": endTime, "timeframe": timeframe, "exchange": exchange}
-            print("使用分页查询参数:", query_params)
+            # 不再打印调试信息，减少日志输出
 
             return df, total_count, query_params
         except Exception as e:
@@ -522,8 +522,7 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
         包含强势币种和弱势币种列表的字典
     """
     try:
-        # 调试信息：函数开始执行
-        logger.info("get_strong_weak_coins_enhanced函数开始执行")
+        # 不再打印调试信息，减少日志输出
         
         # 获取当前时间和24小时前的时间
         end_time = datetime.now()
@@ -546,7 +545,7 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
             return {"strong_coins": [], "weak_coins": []}
         
         symbols = symbols_df['symbol'].tolist()
-        logger.info(f"找到{len(symbols)}个在最近24小时内有数据的币种")
+        # 不再打印调试信息，减少日志输出
         
         # 简化查询逻辑，直接使用market_ohlcv_1h视图获取数据
         sql = """
@@ -667,11 +666,7 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
             AND v.total_quote_volume IS NOT NULL
         """
         
-        # 调试信息：打印时间参数
-        print(f"查询时间范围: {start_time_str} 到 {end_time_str}")
-        print(f"查询币种数量: {len(symbols)}")
-        if symbols:
-            print(f"前5个币种: {symbols[:5]}")
+        # 不再打印调试信息，减少日志输出
         
         # 使用命名参数调用fetch_df
         df = fetch_df(sql, 
@@ -682,27 +677,17 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
                      symbols3=symbols,
                      symbols4=symbols)
         
-        # 调试信息：打印查询结果
-        print(f"主查询返回数据行数: {len(df)}")
-        if not df.empty:
-            print(f"前5个币种数据: {df['symbol'].head().tolist()}")
-        
         if df.empty:
-            print("主查询返回空数据，直接返回空结果")
             return {"strong_coins": [], "weak_coins": []}
         
         # 业务要求：获取前20个币种的24小时价格数据用于绘制曲线图
         top_symbols = df['symbol'].head(20).tolist()
         
-        # 调试信息：打印top_symbols
-        logger.info(f"需要查询小时数据的币种数量: {len(top_symbols)}")
-        if top_symbols:
-            logger.info(f"前20个币种: {top_symbols}")
+        # 不再打印调试信息，减少日志输出
         
         # 如果top_symbols为空，直接返回空数据
         if not top_symbols:
             symbol_to_hourly_data = {}
-            logger.info("top_symbols为空，symbol_to_hourly_data设置为空字典")
         else:
             # 使用批量查询优化性能，一次性查询所有币种的小时数据
             sql_hourly = """
@@ -724,8 +709,7 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
                 start_time=start_time_str
             )
             
-            # 调试信息：打印查询结果
-            logger.info(f"批量查询到 {len(df_hourly)} 条小时数据")
+            # 不再打印调试信息，减少日志输出
             
             # 按币种分组处理小时数据
             symbol_to_hourly_data = {}
@@ -753,15 +737,12 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
                     symbol_to_hourly_data[symbol] = symbol_hourly_data
                 else:
                     # 如果没有数据，跳过该币种，不创建模拟数据
-                    logger.warning(f"币种 {symbol} 在最近24小时内没有小时数据，跳过该币种")
                     continue
         
         # 处理计算结果
         coins_data = []
         
-        # 调试信息：检查df是否为空
-        logger.info(f"df行数: {len(df)}")
-        logger.info(f"df列名: {df.columns.tolist()}")
+        # 不再打印调试信息，减少日志输出
         
         # 只处理那些有实际小时数据的币种
         for _, row in df.iterrows():
@@ -769,7 +750,6 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
             
             # 检查该币种是否有实际的小时数据
             if symbol not in symbol_to_hourly_data:
-                logger.warning(f"币种 {symbol} 没有小时数据，跳过")
                 continue
                 
             gain_24h = float(row['gain_24h']) if row['gain_24h'] is not None else 0.0
@@ -782,7 +762,6 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
             
             # 确保小时数据不为空
             if not symbol_hourly_data:
-                logger.warning(f"币种 {symbol} 的小时数据为空，跳过")
                 continue
             
             # 从查询结果中获取实际的VMR值
@@ -790,8 +769,8 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
             vmr_1h = float(row['vmr_1h']) if 'vmr_1h' in row and row['vmr_1h'] is not None else 0.0
             vmr_1d = float(row['vmr_1d']) if 'vmr_1d' in row and row['vmr_1d'] is not None else 0.0
             
-            # 计算复合分数：涨幅权重0.6 + VMR总分权重0.4
-            composite_score = (gain_24h * 0.6) + (vmr_total * 0.4)
+            # 计算复合分数：15分钟VMR * 0.1 + 1小时VMR * 0.3 + 1天VMR * 0.6
+            composite_score = vmr_15m * 0.1 + vmr_1h * 0.3 + vmr_1d * 0.6
             
             coins_data.append({
                 'symbol': symbol,
@@ -810,517 +789,13 @@ def get_strong_weak_coins_enhanced() -> Dict[str, Any]:
         # 按24小时涨幅降序排序
         coins_sorted_by_gain = sorted(coins_data, key=lambda x: x['gain_24h'], reverse=True)
         
-        # 调试信息：打印排序后的币种涨幅
-        logger.info(f"排序后币种数量: {len(coins_sorted_by_gain)}")
-        if coins_sorted_by_gain:
-            logger.info(f"所有币种: {[coin['symbol'] for coin in coins_sorted_by_gain]}")
-            logger.info(f"所有币种涨幅: {[coin['gain_24h'] for coin in coins_sorted_by_gain]}")
+        # 不再打印调试信息，减少日志输出
         
         # 业务要求：前10为强势币，最后10为弱势币
         strong_coins = coins_sorted_by_gain[:10]
         weak_coins = coins_sorted_by_gain[-10:]  # 取最后10名作为弱势币
         
-        # 调试信息：打印最终结果
-        logger.info(f"强势币数量: {len(strong_coins)}")
-        logger.info(f"弱势币数量: {len(weak_coins)}")
-        
-        return {
-            "strong_coins": strong_coins,
-            "weak_coins": weak_coins
-        }
-        
-    except Exception as e:
-        logger.error(f"获取增强版强势/弱势币种数据失败: {e}")
-        return {"strong_coins": [], "weak_coins": []}
-
-
-@cache_dataframe_result(expire_time=3600)  # 1小时缓存
-def get_coin_analysis_table() -> List[Dict[str, Any]]:
-    """
-    获取币种分析表数据 - 优化版本
-    
-    优化策略：
-    1. 优先使用物化视图查询，提高性能
-    2. 备用方案：使用窗口函数优化查询
-    3. 添加智能缓存策略
-    4. 支持实时数据和历史数据查询
-    
-    Returns:
-        币种分析表数据列表，包含symbol, market_cap, quoteVolume, vmr, ve字段
-    """
-    try:
-        logger.info("开始获取币种分析表数据（优化版本）")
-        
-        # 首先尝试使用物化视图（如果存在）
-        try:
-            sql_materialized = """
-            SELECT 
-                symbol,
-                market_cap,
-                quote_volume as quoteVolume,
-                vmr,
-                ve
-            FROM coin_analysis_view
-            ORDER BY market_cap DESC
-            LIMIT 200
-            """
-            
-            df = fetch_df(sql_materialized, timeout=5)
-            if not df.empty:
-                logger.info(f"使用物化视图查询成功，共{len(df)}条记录")
-                return _convert_df_to_result_list(df)
-        except Exception as e:
-            logger.warning(f"物化视图查询失败，使用备用查询方案: {e}")
-        
-        # 备用方案：使用窗口函数优化查询
-        sql_fallback = """
-        WITH latest_ohlcv AS (
-            SELECT 
-                symbol,
-                market_cap,
-                quote_volume,
-                vmr,
-                bucket,
-                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
-            FROM market_ohlcv_1d
-            WHERE market_cap > 100000000
-                AND bucket >= NOW() - INTERVAL '7 days'
-        ),
-        latest_ve AS (
-            SELECT 
-                symbol,
-                ve,
-                datetime,
-                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY datetime DESC) as rn
-            FROM indecator_ve
-            WHERE datetime >= NOW() - INTERVAL '7 days'
-        )
-        SELECT 
-            mc.symbol,
-            lo.market_cap,
-            lo.quote_volume as quoteVolume,
-            lo.vmr,
-            lv.ve
-        FROM market_codes mc
-        INNER JOIN latest_ohlcv lo ON mc.symbol = lo.symbol AND lo.rn = 1
-        LEFT JOIN latest_ve lv ON mc.symbol = lv.symbol AND lv.rn = 1
-        WHERE mc.active = true
-            AND mc.quotecurrency = 'USDT'
-        ORDER BY lo.market_cap DESC
-        LIMIT 200
-        """
-        
-        df = fetch_df(sql_fallback)
-        logger.info(f"备用查询方案结果：共{len(df)}条记录")
-        
-        return _convert_df_to_result_list(df)
-        
-    except Exception as e:
-        logger.error(f"获取币种分析表数据失败: {e}")
-        return []
-
-
-def _convert_df_to_result_list(df) -> List[Dict[str, Any]]:
-    """
-    将DataFrame转换为结果列表的辅助函数
-    
-    Args:
-        df: 查询结果的DataFrame
-        
-    Returns:
-        转换后的字典列表
-    """
-    result_list = []
-    for _, row in df.iterrows():
-        # 调试：打印DataFrame的列名
-        logger.info(f"DataFrame列名: {list(df.columns)}")
-        
-        # 安全地获取列值，处理可能的列名变化
-        symbol = row['symbol'] if 'symbol' in df.columns else ''
-        market_cap = float(row['market_cap']) if 'market_cap' in df.columns and row['market_cap'] is not None else 0.0
-        
-        # 处理quoteVolume列名（可能为quoteVolume或quote_volume）
-        if 'quoteVolume' in df.columns:
-            quote_volume = float(row['quoteVolume']) if row['quoteVolume'] is not None else 0.0
-        elif 'quote_volume' in df.columns:
-            quote_volume = float(row['quote_volume']) if row['quote_volume'] is not None else 0.0
-        else:
-            quote_volume = 0.0
-            
-        vmr = float(row['vmr']) if 'vmr' in df.columns and row['vmr'] is not None else 0.0
-        ve = float(row['ve']) if 've' in df.columns and row['ve'] is not None else 0.0
-        
-        result_list.append({
-            'symbol': symbol,
-            'market_cap': market_cap,
-            'quoteVolume': quote_volume,
-            'vmr': vmr,
-            've': ve
-        })
-    
-    logger.info(f"数据转换成功，共{len(result_list)}条记录")
-    return result_list
-
-
-def _get_vmr_value(symbol: str, timeframe: str) -> float:
-    """
-    获取指定币种和时间框架的VMR值
-    
-    Args:
-        symbol: 币种代码
-        timeframe: 时间框架（15m, 1h, 1d）
-        
-    Returns:
-        VMR值，如果获取失败返回0.0
-    """
-    try:
-        # 根据时间框架确定对应的表名
-        table_mapping = {
-            '15m': 'market_ohlcv_15m',
-            '1h': 'market_ohlcv_1h',
-            '1d': 'market_ohlcv_1d'
-        }
-        
-        table_name = table_mapping.get(timeframe)
-        if not table_name:
-            return 0.0
-        
-        # 查询最新的VMR值
-        sql = f"""
-        SELECT vmr 
-        FROM {table_name} 
-        WHERE symbol = :symbol 
-        ORDER BY bucket DESC 
-        LIMIT 1
-        """
-        
-        df = fetch_df(sql, symbol=symbol)
-        if not df.empty and 'vmr' in df.columns:
-            return float(df.iloc[0]['vmr'])
-        else:
-            return 0.0
-            
-    except Exception as e:
-        logger.error(f"获取{symbol}的{timeframe} VMR值失败: {e}")
-        return 0.0
-
-
-def _get_batch_vmr_values(self, symbols: List[str], timeframes: List[str]) -> Dict[str, float]:
-    """
-    批量获取多个币种在不同时间周期的VMR值
-    
-    Args:
-        symbols: 币种代码列表
-        timeframes: 时间周期列表
-        
-    Returns:
-        包含各币种VMR值的字典
-    """
-    try:
-        vmr_data = {}
-        
-        for timeframe in timeframes:
-            # 根据时间周期确定时间范围
-            if timeframe == '1h':
-                hours = 1
-            elif timeframe == '4h':
-                hours = 4
-            elif timeframe == '24h':
-                hours = 24
-            else:
-                continue
-                
-            # 获取当前时间和指定小时前的时间
-            from datetime import datetime, timedelta
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=hours)
-            
-            # 将datetime对象转换为字符串格式
-            end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
-            start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # 批量查询所有币种的VMR数据，使用命名参数格式
-            sql = """
-            WITH latest_data AS (
-                -- 获取每个币种的最新数据（当前时间）
-                SELECT 
-                    symbol, 
-                    market_cap as current_market_cap
-                FROM (
-                    SELECT 
-                        symbol, market_cap, bucket,
-                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
-                    FROM market_ohlcv_1h
-                    WHERE symbol = ANY(:symbols1) 
-                        AND bucket <= :end_time1
-                ) ranked
-                WHERE rn = 1
-            ),
-            past_data AS (
-                -- 获取每个币种指定小时前的数据
-                SELECT 
-                    symbol, 
-                    market_cap as past_market_cap
-                FROM (
-                    SELECT 
-                        symbol, market_cap, bucket,
-                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ABS(EXTRACT(EPOCH FROM (bucket - :start_time1::timestamp))) ASC) as rn
-                    FROM market_ohlcv_1h
-                    WHERE symbol = ANY(:symbols2) 
-                        AND bucket >= :start_time1::timestamp - INTERVAL '1 hour'
-                        AND bucket <= :start_time1::timestamp + INTERVAL '1 hour'
-                ) ranked
-                WHERE rn = 1
-            ),
-            volume_data AS (
-                -- 计算指定小时内总成交量
-                SELECT 
-                    symbol,
-                    SUM(quote_volume) as total_quote_volume
-                FROM market_ohlcv_1h
-                WHERE symbol = ANY(:symbols3) 
-                    AND bucket >= :start_time2::timestamp
-                    AND bucket <= :end_time2::timestamp
-                GROUP BY symbol
-            )
-            SELECT 
-                l.symbol,
-                p.past_market_cap,
-                v.total_quote_volume,
-                -- 计算VMR：指定小时内总成交量 / 期初市值
-                CASE 
-                    WHEN p.past_market_cap > 0 THEN ROUND((v.total_quote_volume / p.past_market_cap), 4)
-                    ELSE 0.0
-                END as vmr
-            FROM latest_data l
-            LEFT JOIN past_data p ON l.symbol = p.symbol
-            LEFT JOIN volume_data v ON l.symbol = v.symbol
-            WHERE p.past_market_cap IS NOT NULL 
-                AND v.total_quote_volume IS NOT NULL
-            """
-            
-            # 使用命名参数调用fetch_df
-            df = fetch_df(sql, 
-                         symbols1=symbols, 
-                         end_time1=end_time_str,
-                         symbols2=symbols,
-                         start_time1=start_time_str,
-                         start_time2=start_time_str,
-                         end_time2=end_time_str,
-                         symbols3=symbols)
-            
-            if not df.empty:
-                for _, row in df.iterrows():
-                    symbol = row['symbol']
-                    vmr_value = float(row['vmr']) if row['vmr'] is not None else 0.0
-                    vmr_data[f"{symbol}_{timeframe}"] = vmr_value
-        
-        return vmr_data
-        
-    except Exception as e:
-        logger.error(f"批量获取VMR值失败: {e}")
-        return {}
-
-
-
-
-
-def _get_batch_24h_gains(symbols: List[str]) -> Dict[str, float]:
-    """
-    批量计算多个币种的24小时涨幅（优化性能）
-    
-    Args:
-        symbols: 币种代码列表
-        
-    Returns:
-        包含各币种24小时涨幅的字典
-    """
-    try:
-        if not symbols:
-            return {}
-        
-        # 获取所有币种列表
-        market_service = MarketDataService()
-        market_codes_df = market_service.get_market_codes()
-        if market_codes_df.empty:
-            return {"strong_coins": [], "weak_coins": []}
-        symbols = market_codes_df['symbol'].tolist()
-        
-        # 获取当前时间和24小时前的时间
-        from datetime import datetime, timedelta
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=24)
-        
-        # 将datetime对象转换为字符串格式
-        end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
-        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 批量查询所有币种的24小时数据，使用命名参数格式
-        sql = """
-        WITH latest_data AS (
-            -- 获取每个币种的最新数据（当前时间）
-            SELECT 
-                symbol, 
-                close as current_close,
-                market_cap as current_market_cap,
-                bucket as current_time
-            FROM (
-                SELECT 
-                    symbol, close, market_cap, bucket,
-                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
-                FROM market_ohlcv_1h
-                WHERE symbol = ANY(:symbols1) 
-                    AND bucket <= :end_time1
-            ) ranked
-            WHERE rn = 1
-        ),
-        past_data AS (
-            -- 获取每个币种24小时前的数据
-            SELECT 
-                symbol, 
-                open as past_open,
-                market_cap as past_market_cap,
-                bucket as past_time
-            FROM (
-                SELECT 
-                    symbol, open, market_cap, bucket,
-                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ABS(EXTRACT(EPOCH FROM (bucket - :start_time1::timestamp))) ASC) as rn
-                FROM market_ohlcv_1h
-                WHERE symbol = ANY(:symbols2) 
-                    AND bucket >= :start_time1::timestamp - INTERVAL '1 hour'
-                    AND bucket <= :start_time1::timestamp + INTERVAL '1 hour'
-            ) ranked
-            WHERE rn = 1
-        ),
-        volume_data AS (
-            -- 计算24小时内总成交量
-            SELECT 
-                symbol,
-                SUM(quote_volume) as total_quote_volume
-            FROM market_ohlcv_1h
-            WHERE symbol = ANY(:symbols3) 
-                AND bucket >= :start_time2::timestamp
-                AND bucket <= :end_time2::timestamp
-            GROUP BY symbol
-        ),
-        hourly_data AS (
-            -- 获取24小时内每个小时的数据用于绘制曲线图
-            SELECT 
-                symbol,
-                bucket,
-                close,
-                quote_volume
-            FROM market_ohlcv_1h
-            WHERE symbol = ANY(:symbols4) 
-                AND bucket >= :start_time3::timestamp
-                AND bucket <= :end_time3::timestamp
-            ORDER BY symbol, bucket
-        )
-        SELECT 
-            l.symbol,
-            l.current_close,
-            l.current_market_cap,
-            p.past_open,
-            p.past_market_cap,
-            v.total_quote_volume,
-            -- 计算VMR：24小时内总成交量 / 期初市值
-            CASE 
-                WHEN p.past_market_cap > 0 THEN ROUND((v.total_quote_volume / p.past_market_cap), 4)
-                ELSE 0.0
-            END as vmr_24h,
-            -- 计算涨幅：(当前收盘价 - 24小时前开盘价) / 24小时前开盘价
-            CASE 
-                WHEN p.past_open > 0 THEN ROUND(((l.current_close - p.past_open) / p.past_open), 4)
-                ELSE 0.0
-            END as gain_24h
-        FROM latest_data l
-        LEFT JOIN past_data p ON l.symbol = p.symbol
-        LEFT JOIN volume_data v ON l.symbol = v.symbol
-        WHERE l.current_close IS NOT NULL 
-            AND p.past_open IS NOT NULL
-            AND v.total_quote_volume IS NOT NULL
-        """
-        
-        # 使用命名参数调用fetch_df
-        df = fetch_df(sql, 
-                     symbols1=symbols, 
-                     end_time1=end_time_str,
-                     symbols2=symbols,
-                     start_time1=start_time_str,
-                     symbols3=symbols,
-                     start_time2=start_time_str,
-                     end_time2=end_time_str,
-                     symbols4=symbols,
-                     start_time3=start_time_str,
-                     end_time3=end_time_str)
-        
-        if df.empty:
-            return {"strong_coins": [], "weak_coins": []}
-        
-        # 获取每个币种的24小时价格数据用于绘制曲线图
-        hourly_sql = """
-        SELECT 
-            symbol,
-            bucket,
-            close,
-            quote_volume
-        FROM market_ohlcv_1h
-        WHERE symbol = ANY(:symbols5) 
-            AND bucket >= :start_time4::timestamp
-            AND bucket <= :end_time4::timestamp
-        ORDER BY symbol, bucket
-        """
-        
-        hourly_df = fetch_df(hourly_sql, 
-                           symbols5=symbols, 
-                           start_time4=start_time_str, 
-                           end_time4=end_time_str)
-        hourly_data = {}
-        if not hourly_df.empty:
-            # 记录调试信息
-            logger.debug(f"hourly_df查询结果: {len(hourly_df)}行数据")
-            logger.debug(f"查询的币种数量: {len(symbols)}")
-            
-            # 确保我们只处理在df中存在的币种
-            valid_symbols = set(df['symbol'].tolist())
-            
-            for symbol in valid_symbols:
-                symbol_data = hourly_df[hourly_df['symbol'] == symbol]
-                hourly_data_list = []
-                for _, row in symbol_data.iterrows():
-                    hourly_data_list.append({
-                        'close': float(row['close']) if row['close'] is not None else 0.0,
-                        'quote_volume': float(row['quote_volume']) if row['quote_volume'] is not None else 0.0,
-                        'timestamp': row['bucket'].isoformat() if hasattr(row['bucket'], 'isoformat') else str(row['bucket'])
-                    })
-                hourly_data[symbol] = hourly_data_list
-                logger.debug(f"币种 {symbol} 的hourly_data长度: {len(hourly_data_list)}")
-        else:
-            logger.warning("hourly_df查询结果为空")
-        
-        # 处理计算结果
-        coins_data = []
-        for _, row in df.iterrows():
-            symbol = row['symbol']
-            vmr_24h = float(row['vmr_24h']) if row['vmr_24h'] is not None else 0.0
-            gain_24h = float(row['gain_24h']) if row['gain_24h'] is not None else 0.0
-            
-            # 获取该币种的24小时价格数据
-            symbol_hourly_data = hourly_data.get(symbol, [])
-            
-            coins_data.append({
-                'symbol': symbol,
-                'vmr': vmr_24h,  # 使用24小时VMR作为总分数
-                'gain_24h': gain_24h,
-                'hourly_data': symbol_hourly_data
-            })
-        
-        # 按24小时涨幅降序排序
-        coins_sorted_by_gain = sorted(coins_data, key=lambda x: x['gain_24h'], reverse=True)
-        
-        # 前10为强势币，后10为弱势币
-        strong_coins = coins_sorted_by_gain[:10]
-        weak_coins = coins_sorted_by_gain[10:20]  # 取第11-20名作为弱势币
+        # 不再打印调试信息，减少日志输出
         
         return {
             "strong_coins": strong_coins,

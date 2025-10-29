@@ -37,13 +37,14 @@ class DashboardOptimizedService:
             包含强势弱势币种数据的字典
         """
         try:
-            # 使用新的物化视图查询强势弱势币种
+            # 使用新的物化视图查询强势弱势币种，包含复合分数
             query = text("""
                 SELECT 
                     symbol,
                     current_price,
                     gain_24h as gain_24h_pct,
-                    vmr_24h
+                    vmr_24h,
+                    total_score as composite_score
                 FROM dashboard_strong_weak_coins
                 WHERE gain_24h IS NOT NULL
                 ORDER BY gain_24h DESC
@@ -62,11 +63,24 @@ class DashboardOptimizedService:
             weak_coins = []
             
             for i, coin in enumerate(all_coins):
+                # 获取小时数据用于缩略图
+                hourly_data = await self._get_hourly_data_for_coin(coin.symbol)
+                
+                # 处理gain_24h_pct字段，如果为N/A则设置为0
+                gain_24h_pct = coin.gain_24h_pct
+                if gain_24h_pct == "N/A" or gain_24h_pct is None:
+                    gain_24h_pct = 0.0
+                else:
+                    gain_24h_pct = float(gain_24h_pct)
+                
                 coin_data = {
                     "symbol": coin.symbol,
                     "current_price": float(coin.current_price) if coin.current_price else 0.0,
-                    "gain_24h_pct": float(coin.gain_24h_pct) if coin.gain_24h_pct else 0.0,
-                    "vmr_24h": float(coin.vmr_24h) if coin.vmr_24h else 0.0
+                    "gain_24h_pct": gain_24h_pct,
+                    "gain_24h": gain_24h_pct,  # 添加gain_24h字段，与gain_24h_pct相同
+                    "vmr_24h": float(coin.vmr_24h) if coin.vmr_24h else 0.0,
+                    "composite_score": float(coin.composite_score) if coin.composite_score else 0.0,
+                    "hourly_data": hourly_data
                 }
                 
                 if i < 10:  # 前10个为强势币种
@@ -84,6 +98,47 @@ class DashboardOptimizedService:
         except Exception as e:
             logger.error(f"获取强势弱势币种数据失败: {str(e)}")
             return {"strong_coins": [], "weak_coins": []}
+    
+    async def _get_hourly_data_for_coin(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        获取币种的小时数据用于缩略图显示
+        
+        Args:
+            symbol: 币种符号
+            
+        Returns:
+            小时数据列表
+        """
+        try:
+            # 查询最近24小时的数据用于缩略图
+            query = text("""
+                SELECT 
+                    close,
+                    quote_volume,
+                    bucket as timestamp
+                FROM market_ohlcv_1h
+                WHERE symbol = :symbol
+                    AND bucket >= NOW() - INTERVAL '24 hours'
+                ORDER BY bucket ASC
+                LIMIT 24
+            """)
+            
+            result = await self.db.execute(query, {"symbol": symbol})
+            hourly_data = result.fetchall()
+            
+            formatted_data = []
+            for data in hourly_data:
+                formatted_data.append({
+                    "close": float(data.close) if data.close else 0.0,
+                    "quote_volume": float(data.quote_volume) if data.quote_volume else 0.0,
+                    "timestamp": data.timestamp.isoformat() if data.timestamp else ""
+                })
+            
+            return formatted_data
+            
+        except Exception as e:
+            logger.warning(f"获取币种{symbol}的小时数据失败: {str(e)}")
+            return []
     
     async def get_coin_analysis_table_optimized(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
@@ -122,6 +177,7 @@ class DashboardOptimizedService:
                     "market_cap": float(coin.market_cap) if coin.market_cap else 0.0,
                     "volume_24h": float(coin.volume_24h) if coin.volume_24h else 0.0,
                     "vmr": float(coin.vmr) if coin.vmr else 0.0,
+                    "vmr_24h": float(coin.vmr) if coin.vmr else 0.0,  # 添加vmr_24h字段，与vmr相同
                     "ve_value": float(coin.ve_value) if coin.ve_value else 0.0,
                     "composite_score": float(coin.composite_score) if coin.composite_score else 0.0,
                     "rank": len(analysis_data) + 1
@@ -191,7 +247,7 @@ class DashboardOptimizedService:
         try:
             # 并行获取所有数据
             strong_weak_coins = await self.get_strong_weak_coins_optimized()
-            coin_analysis = await self.get_coin_analysis_table_optimized(30)
+            coin_analysis = await self.get_coin_analysis_table_optimized(300)
             market_sentiment = await self.get_market_sentiment_optimized()
             
             summary_data = {

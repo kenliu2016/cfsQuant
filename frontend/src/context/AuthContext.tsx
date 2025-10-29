@@ -158,9 +158,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (token && tenantId) {
-      void refreshSession();
+      // 使用更稳定的防抖机制，避免频繁调用refresh接口
+      const timer = setTimeout(() => {
+        void refreshSession();
+      }, 30000); // 30秒延迟，大幅减少刷新频率
+      
+      return () => clearTimeout(timer);
     }
-  }, [token, tenantId, refreshSession]);
+  }, [token, tenantId]);
 
   useEffect(() => {
     const handler = (event: Event) => {

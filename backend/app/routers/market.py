@@ -22,7 +22,6 @@ from ..services.market_service import (
     get_market_codes,
     get_market_base_score,
     get_strong_weak_coins_enhanced,
-    get_coin_analysis_table as get_coin_analysis_table_service,
     market_data_service,
 )
 from ..services.candles_cache_service import clear_candles_cache, clear_all_candles_cache
@@ -61,12 +60,6 @@ class PaginationInfo(BaseModel):
     total_pages: int = Field(..., description="总页数")
     has_previous: bool = Field(..., description="是否有上一页")
     has_next: bool = Field(..., description="是否有下一页")
-
-# 定义币种分析表响应模型
-class CoinAnalysisTableResponse(BaseModel):
-    """币种分析表响应模型"""
-    items: List[dict] = Field(..., description="币种分析数据列表")
-    pagination: PaginationInfo = Field(..., description="分页信息")
 
 
 
@@ -756,7 +749,7 @@ def get_strong_weak_coins_enhanced_endpoint():
         # 调用服务层方法获取增强版强势/弱势币种数据
         result = get_strong_weak_coins_enhanced()
         
-        logger.info(f"成功获取增强版强势/弱势币种数据: 强势币种{len(result.get('strong_coins', []))}个, 弱势币种{len(result.get('weak_coins', []))}个")
+        # 不再打印调试信息，减少日志输出
         
         return {
             "success": True,
@@ -766,139 +759,3 @@ def get_strong_weak_coins_enhanced_endpoint():
     except Exception as e:
         logger.error(f"获取增强版强势/弱势币种数据失败: {e}")
         raise HTTPException(status_code=500, detail="获取增强版强势/弱势币种数据失败")
-
-
-@router.get("/coin-analysis-table", response_model=ApiResponse)
-async def get_coin_analysis_table(
-    page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(10, ge=1, le=100, description="每页大小"),
-    force_refresh: bool = Query(False, description="强制刷新缓存")
-):
-    """
-    获取币种分析表数据 - 优化版本
-    
-    优化特性：
-    1. 智能缓存策略：根据数据更新频率动态调整缓存时间
-    2. 分级缓存：支持物化视图和内存缓存
-    3. 强制刷新机制：支持手动刷新缓存
-    4. 性能监控：记录查询耗时和缓存命中率
-    
-    缓存策略：
-    - 正常情况：30分钟缓存
-    - 数据量少时：15分钟缓存
-    - 强制刷新：跳过缓存直接查询
-    """
-    start_time = time.time()
-    cache_hit = False
-    
-    try:
-        # 使用缓存键
-        cache_key = f"coin_analysis_table:all_data"
-        
-        # 检查是否强制刷新
-        if force_refresh:
-            logger.info("强制刷新模式，跳过缓存直接查询")
-            all_data = []
-        else:
-            # 尝试从缓存获取数据，使用try-catch包装await调用
-            try:
-                cached_data = await CacheService.get(cache_key)
-                if cached_data is not None:  # 明确检查是否为None
-                    logger.info("从缓存获取币种分析表数据成功")
-                    all_data = cached_data
-                    cache_hit = True
-                else:
-                    logger.info("缓存未命中，开始查询数据库")
-                    all_data = []
-            except Exception as e:
-                logger.warning(f"缓存获取失败，但继续处理: {e}")
-                all_data = []
-        
-        # 如果缓存未命中或强制刷新，查询数据库
-        if not all_data:
-            try:
-                all_data = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, get_coin_analysis_table_service),
-                    timeout=15.0  # 优化超时时间
-                )
-                
-                # 智能缓存策略：根据数据量动态调整缓存时间
-                if all_data:
-                    data_count = len(all_data)
-                    if data_count > 50:
-                        # 数据量充足，设置30分钟缓存
-                        cache_time = 1800
-                    elif data_count > 10:
-                        # 数据量中等，设置20分钟缓存
-                        cache_time = 1200
-                    else:
-                        # 数据量较少，设置15分钟缓存
-                        cache_time = 900
-                    
-                    # 使用try-catch包装await调用，防止NoneType错误
-                    try:
-                        await CacheService.set(cache_key, all_data, expire_time=cache_time)
-                        logger.info(f"币种分析表数据查询成功，共{data_count}条记录，已设置{cache_time//60}分钟缓存")
-                    except Exception as cache_error:
-                        logger.warning(f"缓存设置失败，但继续处理: {cache_error}")
-                else:
-                    # 空数据设置较短缓存时间
-                    try:
-                        await CacheService.set(cache_key, all_data, expire_time=300)
-                        logger.info("币种分析表数据为空，设置5分钟缓存")
-                    except Exception as cache_error:
-                        logger.warning(f"空数据缓存设置失败，但继续处理: {cache_error}")
-                    
-            except asyncio.TimeoutError:
-                logger.warning("币种分析表查询超时，返回空数据")
-                all_data = []
-                # 查询超时时设置较短缓存
-                try:
-                    await CacheService.set(cache_key, all_data, expire_time=300)
-                except Exception as cache_error:
-                    logger.warning(f"超时数据缓存设置失败，但继续处理: {cache_error}")
-            except Exception as e:
-                logger.error(f"币种分析表查询异常: {e}")
-                all_data = []
-        
-        # 分页处理
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        paginated_data = all_data[start_idx:end_idx]
-        
-        # 计算查询耗时
-        query_time = time.time() - start_time
-        
-        # 构建响应
-        response = CoinAnalysisTableResponse(
-            items=paginated_data,
-            pagination=PaginationInfo(
-                page=page,
-                page_size=page_size,
-                total_count=len(all_data),
-                total_pages=math.ceil(len(all_data) / page_size) if all_data else 0,
-                has_previous=page > 1,
-                has_next=end_idx < len(all_data)
-            )
-        )
-        
-        # 记录性能指标
-        logger.info(f"币种分析表API请求完成 - 耗时: {query_time:.4f}s, 缓存命中: {cache_hit}, 数据量: {len(all_data)}")
-        
-        return ApiResponse.create_success(response, "获取币种分析表数据成功")
-        
-    except Exception as e:
-        logger.error(f"获取币种分析表数据失败: {e}")
-        # 返回空数据但保持API响应正常
-        response = CoinAnalysisTableResponse(
-            items=[],
-            pagination=PaginationInfo(
-                page=page,
-                page_size=page_size,
-                total_count=0,
-                total_pages=0,
-                has_previous=False,
-                has_next=False
-            )
-        )
-        return ApiResponse.create_success(response, "获取币种分析表数据成功")

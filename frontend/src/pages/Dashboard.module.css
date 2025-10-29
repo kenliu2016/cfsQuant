@@ -466,6 +466,23 @@
   background: rgba(255, 255, 255, 0.02) !important;
 }
 
+.tableWrapper :global(.ant-table-thead > tr > th.ant-table-column-sort) {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+.tableWrapper :global(.ant-table-thead > tr > th.ant-table-column-has-sorters:hover) {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* 防止排列表格列背景色变化 */
+.tableWrapper :global(.ant-table-tbody > tr > td.ant-table-column-sort) {
+  background: transparent !important;
+}
+
+.tableWrapper :global(.ant-table-tbody > tr:hover > td.ant-table-column-sort) {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
 .tableRow {
   background: transparent;
 }

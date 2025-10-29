@@ -1,3 +1,4 @@
+import json
 import uuid
 from typing import Any, Dict, Optional
 from datetime import datetime
@@ -25,7 +26,7 @@ def log_action(
             """
             INSERT INTO tenant_audit_logs
             (id, tenant_id, user_id, role, method, path, query, status_code, user_agent, ip_address, created_at, extra)
-            VALUES (:id, :tenant_id, :user_id, :role, :method, :path, :query, :status_code, :user_agent, :ip_address, :created_at, :extra::jsonb)
+            VALUES (:id, :tenant_id, :user_id, :role, :method, :path, :url_query, :status_code, :user_agent, :ip_address, :created_at, CAST(:extra AS jsonb))
             """,
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
@@ -33,12 +34,12 @@ def log_action(
             role=role,
             method=method,
             path=path,
-            query=query,
+            url_query=query,
             status_code=status_code,
             user_agent=user_agent,
             ip_address=ip_address,
             created_at=datetime.utcnow(),
-            extra=extra or {},
+            extra=json.dumps(extra or {}),
         )
     except Exception as exc:
         logger.error("Failed to write audit log: %s", exc, exc_info=True)

@@ -62,8 +62,53 @@ export interface DashboardSummary {
  * 一次性返回所有dashboard需要的数据，减少HTTP请求开销
  */
 export const getDashboardSummary = async (): Promise<DashboardSummary> => {
-  const response = await client.get<DashboardSummary>('/api/v1/dashboard/summary');
-  return response.data;
+  const response = await client.get<any>('/api/v1/dashboard/summary');
+  
+  // 映射后端返回的字段到前端期望的字段
+  const data = response.data;
+  
+  // 映射强势弱势币种数据，后端API现在直接返回gain_24h字段
+  const mappedStrongCoins = data.strong_coins?.map((coin: any) => ({
+    symbol: coin.symbol,
+    current_price: coin.current_price,
+    gain_24h: coin.gain_24h, // 直接使用gain_24h字段
+    vmr: coin.vmr_24h, // 映射vmr_24h到vmr
+    vmr_total: coin.vmr_24h, // 设置vmr_total字段
+    composite_score: coin.composite_score || 0, // 设置默认值
+    hourly_data: coin.hourly_data // 添加小时数据用于缩略图
+  })) || [];
+  
+  const mappedWeakCoins = data.weak_coins?.map((coin: any) => ({
+    symbol: coin.symbol,
+    current_price: coin.current_price,
+    gain_24h: coin.gain_24h, // 直接使用gain_24h字段
+    vmr: coin.vmr_24h, // 映射vmr_24h到vmr
+    vmr_total: coin.vmr_24h, // 设置vmr_total字段
+    composite_score: coin.composite_score || 0, // 设置默认值
+    hourly_data: coin.hourly_data // 添加小时数据用于缩略图
+  })) || [];
+  
+  // 映射币种分析数据
+  const mappedCoinAnalysis = data.coin_analysis?.map((coin: any) => ({
+    symbol: coin.symbol,
+    current_price: coin.current_price,
+    market_cap: coin.market_cap,
+    volume_24h: coin.volume_24h,
+    vmr: coin.vmr_24h,
+    ve_value: coin.ve_value,
+    actual_volatility: coin.actual_volatility,
+    composite_score: coin.composite_score,
+    rank: coin.rank
+  })) || [];
+  
+  return {
+    strong_coins: mappedStrongCoins,
+    weak_coins: mappedWeakCoins,
+    coin_analysis: mappedCoinAnalysis,
+    market_sentiment: data.market_sentiment,
+    last_updated: data.last_updated,
+    data_source: data.data_source
+  };
 };
 
 /**

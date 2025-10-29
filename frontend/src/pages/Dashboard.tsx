@@ -1,6 +1,3 @@
-// ... existing code ...
-
-// 清理未使用的导入
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Tag, Segmented, Progress, Table, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -9,12 +6,8 @@ import dayjs from 'dayjs';
 // import client from '../api/client'; // 删除未使用的导入
 import {
   getDashboardSummary,
-  getEnhancedStrongWeakCoins,
-  getMarketBaseScore,
-  type StrongWeakCoin,
   type EnhancedStrongWeakCoin,
   type CoinAnalysisItem,
-  // type MarketSentiment // 删除未使用的导入
 } from '../api/dashboardOptimized';
 import styles from './Dashboard.module.css';
 
@@ -27,17 +20,7 @@ type TrendCoin = {
   spark: number[];
 };
 
-// 删除重复的类型定义，使用从API导入的EnhancedStrongWeakCoin类型
 
-// 删除未使用的类型定义
-// type EnhancedStrongWeakCoinsResponse = {
-//   success: boolean;
-//   data: {
-//     strong_coins: EnhancedStrongWeakCoin[];
-//     weak_coins: EnhancedStrongWeakCoin[];
-//   };
-//   message: string;
-// };
 
 type CoinAnalysisTableItem = CoinAnalysisItem & {
   // 为了兼容现有代码，添加别名字段
@@ -45,34 +28,7 @@ type CoinAnalysisTableItem = CoinAnalysisItem & {
   ve?: number; // 对应ve_value，改为可选字段
 };
 
-// type CoinAnalysisTableResponse = {
-//   success: boolean;
-//   data: {
-//     items: CoinAnalysisTableItem[];
-//     pagination: {
-//       page: number;
-//       page_size: number;
-//       total_count: number;
-//       total_pages: number;
-//       has_previous: boolean;
-//       has_next: boolean;
-//     };
-//   };
-//   message: string;
-// };
 
-// type CoinTableRow = {
-//   key: string;
-//   symbol: string;
-//   pair: string;
-//   marketCap: string;
-//   volume24h: string;
-//   vmr: number;
-//   l1: number;
-//   ve: number;
-//   composite: number;
-//   forecast: number;
-// };
 
 type MarketMetrics = {
   bullBearScore: number;
@@ -82,37 +38,6 @@ type MarketMetrics = {
   fearGreedClassification?: string;
   fearGreedUpdatedAt?: string;
 };
-
-// type MarketBaseScoreResponse = {
-//   bull_bear?: {
-//     score?: number;
-//     phase?: string;
-//     updated_at?: string;
-//     exchange?: string;
-//     symbol?: string;
-//   };
-//   fear_greed?: {
-//     value?: number;
-//     classification?: string;
-//     updated_at?: string;
-//   };
-// };
-
-
-
-// 删除未使用的变量
-// const strongCoins: TrendCoin[] = [
-//   { symbol: 'SUI', pair: 'SUI-USDT', change24h: 2.95, vmr: 1.66, composite: 0.469, spark: [4, 7, 9, 8, 12, 18, 22] },
-//   { symbol: 'UNI', pair: 'UNI-USDT', change24h: 2.69, vmr: 1.09, composite: 0.505, spark: [9, 11, 10, 12, 13, 15, 17] },
-//   { symbol: 'VET', pair: 'VET-USDT', change24h: 1.68, vmr: 1.54, composite: 0.486, spark: [6, 7, 8, 8, 10, 11, 12] },
-// ];
-
-// const weakCoins: TrendCoin[] = [
-//   { symbol: 'CHZ', pair: 'CHZ-USDT', change24h: -4.57, vmr: 1.60, composite: 1.072, spark: [18, 16, 14, 11, 9, 6, 4] },
-//   { symbol: 'INJ', pair: 'INJ-USDT', change24h: -3.31, vmr: 1.64, composite: 0.575, spark: [17, 15, 12, 10, 8, 6, 5] },
-//   { symbol: 'AXS', pair: 'AXS-USDT', change24h: -2.91, vmr: 0.88, composite: 0.576, spark: [15, 14, 12, 11, 9, 7, 6] },
-// ];
-
 
 
 const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color }) => {
@@ -161,6 +86,7 @@ const Dashboard: React.FC = () => {
   const [weakCoins, setWeakCoins] = useState<EnhancedStrongWeakCoin[]>([]);
   const [coinsLoading, setCoinsLoading] = useState(false);
   const [coinAnalysisData, setCoinAnalysisData] = useState<CoinAnalysisTableItem[]>([]);
+  const [coinAnalysisFullData, setCoinAnalysisFullData] = useState<CoinAnalysisTableItem[]>([]);
   const [coinAnalysisLoading, setCoinAnalysisLoading] = useState(false);
   const [coinAnalysisPagination, setCoinAnalysisPagination] = useState({
     page: 1,
@@ -170,6 +96,10 @@ const Dashboard: React.FC = () => {
     has_previous: false,
     has_next: false
   });
+  const [coinAnalysisSort, setCoinAnalysisSort] = useState<{
+    field?: string;
+    order?: 'ascend' | 'descend';
+  }>({});
 
   const fetchDashboardData = useCallback(async () => {
     setRefreshing(true);
@@ -177,26 +107,22 @@ const Dashboard: React.FC = () => {
     setCoinAnalysisLoading(true);
     
     try {
-      // 并行获取Dashboard汇总数据、增强版强势弱势币种数据和原始市场情绪数据
-      const [dashboardSummary, enhancedCoinsData, marketBaseScore] = await Promise.all([
-        getDashboardSummary(),
-        getEnhancedStrongWeakCoins(),
-        getMarketBaseScore()
-      ]);
+      // 只调用汇总接口，避免冗余调用
+      const dashboardSummary = await getDashboardSummary();
       
-      // 设置市场情绪数据 - 使用原始数据API获取的数据
+      // 设置市场情绪数据 - 使用汇总接口中的市场情绪数据
       setMarketMetrics({
-        bullBearScore: marketBaseScore.bull_bear.score,
-        bullBearPhase: marketBaseScore.bull_bear.phase,
-        bullBearUpdatedAt: marketBaseScore.bull_bear.updated_at,
-        fearGreedValue: marketBaseScore.fear_greed.value,
-        fearGreedClassification: marketBaseScore.fear_greed.classification,
-        fearGreedUpdatedAt: marketBaseScore.fear_greed.updated_at,
+        bullBearScore: dashboardSummary.market_sentiment.bull_bear_score,
+        bullBearPhase: getBullBearPhase(dashboardSummary.market_sentiment.bull_bear_score),
+        bullBearUpdatedAt: dashboardSummary.market_sentiment.last_updated,
+        fearGreedValue: dashboardSummary.market_sentiment.fear_greed_index,
+        fearGreedClassification: getFearGreedClassification(dashboardSummary.market_sentiment.fear_greed_index),
+        fearGreedUpdatedAt: dashboardSummary.market_sentiment.last_updated,
       });
       
-      // 使用增强版API数据设置强势弱势币种数据（包含小时数据用于缩略图）
-      const top5StrongCoins: EnhancedStrongWeakCoin[] = enhancedCoinsData.strong_coins.slice(0, 5);
-      const top5WeakCoins: EnhancedStrongWeakCoin[] = enhancedCoinsData.weak_coins.slice(0, 5);
+      // 使用汇总接口数据设置强势弱势币种数据
+      const top5StrongCoins: EnhancedStrongWeakCoin[] = dashboardSummary.strong_coins.slice(0, 5);
+      const top5WeakCoins: EnhancedStrongWeakCoin[] = dashboardSummary.weak_coins.slice(0, 5);
       
       setStrongCoins(top5StrongCoins || []);
       setWeakCoins(top5WeakCoins || []);
@@ -208,14 +134,21 @@ const Dashboard: React.FC = () => {
         ve: coin.ve_value // 映射ve_value到ve
       }));
       
-      setCoinAnalysisData(tableData || []);
+      // 限制总记录数不超过300
+      const limitedData = tableData.slice(0, 300);
+      
+      setCoinAnalysisFullData(limitedData || []);
+      
+      // 初始显示前10条数据
+      const initialDisplayData = limitedData.slice(0, 10);
+      setCoinAnalysisData(initialDisplayData || []);
       setCoinAnalysisPagination({
         page: 1,
         page_size: 10,
-        total_count: dashboardSummary.coin_analysis.length,
-        total_pages: Math.ceil(dashboardSummary.coin_analysis.length / 10),
+        total_count: limitedData.length,
+        total_pages: Math.ceil(limitedData.length / 10),
         has_previous: false,
-        has_next: dashboardSummary.coin_analysis.length > 10
+        has_next: limitedData.length > 10
       });
       
     } catch (error) {
@@ -262,45 +195,110 @@ const Dashboard: React.FC = () => {
       render: (value) => <span className={styles.tableValue}>{value.toLocaleString()}</span>,
     },
     {
-      title: 'VMR ↑',
-      dataIndex: 'vmr_total',
-      key: 'vmr_total',
+      title: ({ sortOrder }) => {
+        const arrow = sortOrder === 'ascend' ? '↑' : sortOrder === 'descend' ? '↓' : '↕';
+        return `24h VMR ${arrow}`;
+      },
+      dataIndex: 'vmr',
+      key: 'vmr',
+      sorter: (a, b) => (a.vmr || 0) - (b.vmr || 0),
+      sortDirections: ['descend', 'ascend'],
       render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
     {
-      title: 'VE ↑',
+      title: ({ sortOrder }) => {
+        const arrow = sortOrder === 'ascend' ? '↑' : sortOrder === 'descend' ? '↓' : '↕';
+        return `VE ${arrow}`;
+      },
       dataIndex: 've_value',
       key: 've_value',
+      sorter: (a, b) => (a.ve_value || 0) - (b.ve_value || 0),
+      sortDirections: ['descend', 'ascend'],
       render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
     {
-      title: '复合分数',
+      title: ({ sortOrder }) => {
+        const arrow = sortOrder === 'ascend' ? '↑' : sortOrder === 'descend' ? '↓' : '↕';
+        return `复合分数 ${arrow}`;
+      },
       dataIndex: 'composite_score',
       key: 'composite_score',
+      sorter: (a, b) => (a.composite_score || 0) - (b.composite_score || 0),
+      sortDirections: ['descend', 'ascend'],
       render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
   ], []);
+
+  // 根据牛熊市分数获取对应的阶段描述
+  const getBullBearPhase = (score: number): string => {
+    if (score >= 5) return 'Strong Bull';
+    if (score >= 2) return 'Bull';
+    if (score >= -2) return 'Neutral';
+    if (score >= -5) return 'Bear';
+    return 'Strong Bear';
+  };
+
+  // 根据恐惧贪婪指数获取对应的分类描述
+  const getFearGreedClassification = (value: number): string => {
+    if (value >= 80) return 'Extreme Greed';
+    if (value >= 60) return 'Greed';
+    if (value >= 40) return 'Neutral';
+    if (value >= 20) return 'Fear';
+    return 'Extreme Fear';
+  };
 
   const handleRefresh = () => {
     fetchDashboardData();
   };
 
-  const handleCoinAnalysisTableChange = useCallback((page: number, pageSize: number) => {
-    // 由于使用汇总接口，分页在客户端处理
+  // 处理币种分析表排序
+  const handleCoinAnalysisTableSort = useCallback((field: string, order: 'ascend' | 'descend' | null) => {
+    setCoinAnalysisSort({
+      field: order ? field : undefined,
+      order: order || undefined
+    });
+  }, []);
+
+  // 处理币种分析表分页和排序
+  const handleCoinAnalysisTableChange = useCallback((page: number, pageSize: number, sorter?: any) => {
+    // 处理排序
+    if (sorter) {
+      const { field, order } = sorter;
+      handleCoinAnalysisTableSort(field, order);
+    }
+
+    // 由于使用汇总接口，分页和排序在客户端处理
+    let sortedData = [...coinAnalysisFullData];
+    
+    // 应用排序
+    if (coinAnalysisSort.field && coinAnalysisSort.order) {
+      sortedData.sort((a, b) => {
+        const aValue = a[coinAnalysisSort.field as keyof CoinAnalysisTableItem] as number || 0;
+        const bValue = b[coinAnalysisSort.field as keyof CoinAnalysisTableItem] as number || 0;
+        
+        if (coinAnalysisSort.order === 'ascend') {
+          return aValue - bValue;
+        } else {
+          return bValue - aValue;
+        }
+      });
+    }
+
+    // 分页处理
     const startIndex = (page - 1) * pageSize;
     const endIndex = startIndex + pageSize;
-    const paginatedData = coinAnalysisData.slice(startIndex, endIndex);
+    const paginatedData = sortedData.slice(startIndex, endIndex);
     
     setCoinAnalysisData(paginatedData);
     setCoinAnalysisPagination({
       page,
       page_size: pageSize,
-      total_count: coinAnalysisData.length,
-      total_pages: Math.ceil(coinAnalysisData.length / pageSize),
+      total_count: sortedData.length,
+      total_pages: Math.ceil(sortedData.length / pageSize),
       has_previous: page > 1,
-      has_next: page < Math.ceil(coinAnalysisData.length / pageSize)
+      has_next: page < Math.ceil(sortedData.length / pageSize)
     });
-  }, [coinAnalysisData]);
+  }, [coinAnalysisFullData, coinAnalysisSort]);
 
   // 将API返回的EnhancedStrongWeakCoin数据转换为前端需要的TrendCoin格式
   // 修复convertToTrendCoin函数中的类型错误
@@ -309,7 +307,7 @@ const Dashboard: React.FC = () => {
       symbol: coin.symbol,
       pair: coin.symbol + '-USDT',
       change24h: coin.gain_24h || 0, // 处理undefined情况
-      vmr: coin.vmr_total || 0, // 使用vmr_total字段作为VMR值
+      vmr: coin.vmr_total || 0, // 使用vmr_total字段作为VMR值（后端API返回vmr_total字段）
       composite: coin.composite_score || 0, // 使用composite_score字段作为复合分数
       spark: coin.hourly_data ? coin.hourly_data.map(item => item.close) : [coin.current_price || 0] // 使用小时数据作为sparkline
     };
@@ -459,12 +457,7 @@ const Dashboard: React.FC = () => {
           <div className={styles.trendHeader}>
             <div>
               <div className={styles.sectionTitle}>币种分析表</div>
-              <div className={styles.sectionDescription}>Top 300 币种 | 排除稳定币 | 市值 &gt; $100M | 支持多列排序与筛选</div>
-            </div>
-            <div className={styles.tableMeta}>
-              <span>实时样本: 32</span>
-              <span className={styles.separatorDot} />
-              <span>更新时间: 04:06</span>
+              <div className={styles.sectionDescription}>Top 300 币种 | 排除稳定币 | 市值 &gt; $100M | 支持VMR、VE、复合分数排序 | 分页显示</div>
             </div>
           </div>
           <div className={styles.tableWrapper}>
@@ -480,6 +473,13 @@ const Dashboard: React.FC = () => {
                 onChange: (page, pageSize) => {
                   handleCoinAnalysisTableChange(page, pageSize || coinAnalysisPagination.page_size);
                 },
+              }}
+              onChange={(pagination, _filters, sorter) => {
+                handleCoinAnalysisTableChange(
+                  pagination.current || 1,
+                  pagination.pageSize || coinAnalysisPagination.page_size,
+                  sorter
+                );
               }}
               loading={coinAnalysisLoading}
               size="small"
