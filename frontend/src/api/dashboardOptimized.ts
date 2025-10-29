@@ -99,7 +99,8 @@ export const getDashboardSummary = async (): Promise<DashboardSummary> => {
     ve_value: coin.ve_value,
     actual_volatility: coin.actual_volatility,
     composite_score: coin.composite_score,
-    rank: coin.rank
+    rank: coin.rank,
+    watch: coin.watch // 添加watch字段映射
   })) || [];
   
   return {

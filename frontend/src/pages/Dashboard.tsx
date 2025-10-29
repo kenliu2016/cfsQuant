@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Tag, Segmented, Progress, Table, message, Spin } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { SyncOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
+import { SyncOutlined, SettingOutlined, CloseOutlined, EyeOutlined, EyeInvisibleOutlined, LoadingOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
 import {
@@ -128,6 +128,7 @@ const Dashboard: React.FC = () => {
   const [vmrSeries, setVmrSeries] = useState<VmrSeriesResponse | null>(null);
   const [vmrLoading, setVmrLoading] = useState(false);
   const [closingSymbols, setClosingSymbols] = useState<Set<string>>(new Set()); // 正在关闭的symbol集合
+  const [togglingSymbols, setTogglingSymbols] = useState<Set<string>>(new Set()); // 正在切换watch状态的symbol集合
 
   const fetchDashboardData = useCallback(async () => {
     setRefreshing(true);
@@ -232,8 +233,8 @@ const Dashboard: React.FC = () => {
     try {
       // 调用后端API，将symbol的watch状态设置为false
       // 使用binance作为默认交易所，因为VMR数据中只包含symbol信息
-      await client.put(`/api/market/market_codes/binance`, { watch: false }, {
-        params: { symbol }
+      await client.put(`/api/market/market_codes`, { watch: false }, {
+        params: { exchange: 'binance', symbol }
       });
       
       message.success(`已移除 ${symbol} 的观察`);
@@ -252,6 +253,46 @@ const Dashboard: React.FC = () => {
         return newSet;
       });
     }
+  };
+
+  /**
+   * 处理watch/unwatch操作
+   * @param symbol 币种符号
+   * @param currentWatchStatus 当前watch状态
+   */
+  const handleWatchToggle = async (symbol: string, currentWatchStatus: boolean) => {
+    // 立即设置loading状态，让用户立即看到反馈
+    setTogglingSymbols(prev => new Set(prev).add(symbol));
+    
+    // 使用setTimeout确保UI立即更新，然后再执行API调用
+    setTimeout(async () => {
+      try {
+        // 调用后端API，切换symbol的watch状态
+        // 使用binance作为默认交易所
+        await client.put(`/api/market/market_codes`, { watch: !currentWatchStatus }, {
+          params: { exchange: 'binance', symbol }
+        });
+        
+        message.success(`${symbol} ${!currentWatchStatus ? '已添加到观察列表' : '已从观察列表移除'}`);
+        
+        // 重新加载币种分析表数据，确保数据与数据库同步
+        await fetchDashboardData();
+        
+        // 无论watch状态是变为true还是false，都重新加载VMR数据以保持图表同步
+        await fetchVmrData(vmrTimeframe);
+        
+      } catch (error) {
+        console.error('Failed to toggle watch status:', error);
+        message.error(`操作失败`);
+      } finally {
+        // 从正在切换的集合中移除，隐藏loading效果
+        setTogglingSymbols(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(symbol);
+          return newSet;
+        });
+      }
+    }, 0);
   };
 
   const biasScore = marketMetrics.bullBearScore ?? 0;
@@ -316,6 +357,29 @@ const Dashboard: React.FC = () => {
       sortDirections: ['descend', 'ascend'],
       render: (value) => <span className={styles.tableValue}>{value ? value.toFixed(6) : '0.000000'}</span>,
     },
+    {
+      title: 'watch',
+      dataIndex: 'watch',
+      key: 'watch',
+      width: 80,
+      render: (watch: boolean, record: CoinAnalysisTableItem) => (
+        <Button
+          type="text"
+          size="small"
+          icon={togglingSymbols.has(record.symbol) ? <LoadingOutlined /> : (watch ? <EyeOutlined /> : <EyeInvisibleOutlined />)}
+          onClick={() => handleWatchToggle(record.symbol, watch)}
+          style={{ 
+            color: togglingSymbols.has(record.symbol) ? '#8c8c8c' : (watch ? '#1890ff' : '#8c8c8c'),
+            border: 'none',
+            boxShadow: 'none',
+            transition: 'all 0.3s ease'
+          }}
+          className="watch-button"
+          title={togglingSymbols.has(record.symbol) ? '切换中...' : (watch ? '取消观察' : '添加观察')}
+          disabled={togglingSymbols.has(record.symbol)}
+        />
+      ),
+    },
   ], []);
 
   const vmrChartOption = useMemo(() => {
@@ -328,14 +392,21 @@ const Dashboard: React.FC = () => {
       };
     }
 
-    // 获取所有有数据的series，合并时间轴
-    const allDataPoints = vmrSeries.series.flatMap((item: any) => item.data || []);
-    
-    // 去重并排序时间点
-    const uniqueTimes = [...new Set(allDataPoints.map((point: any) => point.datetime))]
-      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-    
-    const xAxisData = uniqueTimes.map((datetime: string) =>
+    // 性能优化：简化时间轴处理逻辑
+    // 使用第一个有数据的series的时间轴作为基准，避免复杂的去重排序
+    const firstSeriesWithData = vmrSeries.series.find((item: any) => item.data && item.data.length > 0);
+    if (!firstSeriesWithData) {
+      return {
+        grid: { left: 50, right: 20, top: 50, bottom: 50 },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: [],
+      };
+    }
+
+    // 使用第一个series的时间轴作为基准
+    const baseTimePoints = firstSeriesWithData.data.map((point: any) => point.datetime);
+    const xAxisData = baseTimePoints.map((datetime: string) =>
       dayjs(datetime).format(vmrTimeframe === '1d' || vmrTimeframe === '3d' ? 'MM-DD' : 'MM-DD HH:mm')
     );
 
@@ -344,16 +415,19 @@ const Dashboard: React.FC = () => {
       legendData.push(item.symbol);
       const color = VMR_COLOR_PALETTE[index % VMR_COLOR_PALETTE.length];
       
-      // 将后端返回的data字段映射为前端期望的points格式
+      // 性能优化：简化数据对齐逻辑
       const points = item.data || [];
       
-      // 创建时间点映射，便于数据对齐
-      const pointMap = new Map(points.map((point: any) => [point.datetime, point]));
+      // 创建时间点到数据的快速映射
+      const pointMap = new Map();
+      points.forEach((point: any) => {
+        pointMap.set(point.datetime, point);
+      });
       
-      // 将数据对齐到统一的时间轴上
-      const alignedData = uniqueTimes.map((datetime: string) => {
-        const point = pointMap.get(datetime) as any;
-        return point ? Number((point.vmr * 100).toFixed(4)) : null; // 使用null表示缺失数据
+      // 直接使用基准时间轴，避免复杂的对齐计算
+      const alignedData = baseTimePoints.map((datetime: string) => {
+        const point = pointMap.get(datetime);
+        return point ? Number((point.vmr * 100).toFixed(4)) : null;
       });
       
       return {
@@ -361,12 +435,12 @@ const Dashboard: React.FC = () => {
         type: 'line',
         smooth: true,
         symbol: 'none',
-        color: color, // 添加color属性，确保tooltip和图例能正确获取颜色
+        color: color,
         lineStyle: { width: 2, color },
         emphasis: { focus: 'series' },
-        connectNulls: true, // 允许连接空值
+        connectNulls: true,
         data: alignedData,
-        // 添加区域渐变效果，增强视觉区分度
+        // 性能优化：简化区域渐变效果
         areaStyle: {
           color: {
             type: 'linear',
@@ -375,8 +449,8 @@ const Dashboard: React.FC = () => {
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: `${color}33` }, // 半透明
-              { offset: 1, color: `${color}0A` }, // 更透明
+              { offset: 0, color: `${color}33` },
+              { offset: 1, color: `${color}0A` },
             ],
           },
         },
@@ -394,33 +468,23 @@ const Dashboard: React.FC = () => {
           if (!params?.length || !vmrSeries?.series) return '';
           const axisLabel = params[0].axisValue;
           
-          // 按VMR值排序，便于查看
-          const sortedParams = [...params].sort((a, b) => Number(b.data) - Number(a.data));
-          
-          const lines = sortedParams
+          // 性能优化：简化tooltip格式化逻辑
+          // 直接使用params中已有的数据，避免复杂的查找
+          const lines = params
+            .filter(item => item.data !== null && item.data !== undefined)
+            .sort((a, b) => Number(b.data) - Number(a.data))
             .map((item) => {
-              // 获取对应的原始数据点，包含return_pct信息
-              const seriesIndex = vmrSeries.series.findIndex((s: any) => s.symbol === item.seriesName);
-              if (seriesIndex === -1) return '';
-              
-              // 通过时间点匹配找到对应的原始数据
-              const seriesData = vmrSeries.series[seriesIndex]?.data || [];
-              
-              // 直接通过时间戳匹配，避免作用域问题
-              const originalData = seriesData.find((point: any) => {
-                const pointTime = dayjs(point.datetime).format(vmrTimeframe === '1d' || vmrTimeframe === '3d' ? 'MM-DD' : 'MM-DD HH:mm');
-                return pointTime === axisLabel;
-              });
-              
-              if (!originalData) return '';
-              
-              const returnPct = originalData.return_pct || 0;
+              // 直接从params中获取数据，避免重复查找
+              const vmrValue = Number(item.data).toFixed(4);
+              const returnPct = item.dataIndex !== undefined && item.seriesIndex !== undefined 
+                ? (vmrSeries.series[item.seriesIndex]?.data?.[item.dataIndex]?.return_pct || 0)
+                : 0;
               
               return `<span style=\"display:inline-block;margin-right:8px;border-radius:4px;width:8px;height:8px;background:${
                 item.color
-              };\"></span>${item.seriesName}: <strong style=\"color:${item.color}\">${Number(item.data).toFixed(4)}</strong> (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%)`;
+              };\"></span>${item.seriesName}: <strong style=\"color:${item.color}\">${vmrValue}</strong> (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%)`;
             })
-            .filter(line => line !== '') // 过滤掉空行
+            .filter(line => line !== '')
             .join('<br/>');
           return `<div style=\"margin-bottom:8px;font-weight:bold;\">${axisLabel}</div>${lines}`;
         },

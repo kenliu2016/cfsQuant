@@ -44,7 +44,7 @@ class DashboardOptimizedService:
                     current_price,
                     gain_24h as gain_24h_pct,
                     vmr_24h,
-                    total_score as composite_score
+                    composite_score
                 FROM dashboard_strong_weak_coins
                 WHERE gain_24h IS NOT NULL
                 ORDER BY gain_24h DESC
@@ -151,18 +151,20 @@ class DashboardOptimizedService:
             币种分析表数据列表
         """
         try:
-            # 使用新的物化视图查询币种分析数据
+            # 使用新的物化视图查询币种分析数据，并关联market_codes表获取watch状态
             query = text("""
                 SELECT 
-                    symbol,
-                    current_price,
-                    market_cap,
-                    total_volume_24h as volume_24h,
-                    vmr_24h as vmr,
-                    ve_1h as ve_value,
-                    composite_score
-                FROM dashboard_coin_analysis
-                ORDER BY composite_score DESC
+                    ca.symbol,
+                    ca.current_price,
+                    ca.market_cap,
+                    ca.total_volume_24h as volume_24h,
+                    ca.vmr_24h as vmr,
+                    ca.ve_1h as ve_value,
+                    ca.composite_score,
+                    COALESCE(mc.watch, false) as watch
+                FROM dashboard_coin_analysis ca
+                LEFT JOIN market_codes mc ON ca.symbol = mc.symbol AND mc.quotecurrency = 'USDT'
+                ORDER BY ca.composite_score DESC
                 LIMIT :limit
             """)
             
@@ -180,6 +182,7 @@ class DashboardOptimizedService:
                     "vmr_24h": float(coin.vmr) if coin.vmr else 0.0,  # 添加vmr_24h字段，与vmr相同
                     "ve_value": float(coin.ve_value) if coin.ve_value else 0.0,
                     "composite_score": float(coin.composite_score) if coin.composite_score else 0.0,
+                    "watch": bool(coin.watch) if hasattr(coin, 'watch') else False,  # 添加watch字段
                     "rank": len(analysis_data) + 1
                 }
                 analysis_data.append(coin_data)
