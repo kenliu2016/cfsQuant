@@ -28,6 +28,10 @@ npm run dev
 启动队列
 celery -A config.celery_config.celery_app worker --loglevel=info --pool=solo -Q tuning,backtest
 
+
+# 调用手动刷新API
+curl -X POST http://localhost:8000/api/dashboard/refresh-materialized-views
+
 ## Multi-tenant Setup
 
 - Run the migration script `backend/dbscripts/202501_multi_tenant.sql` against your PostgreSQL instance before starting the upgraded backend.

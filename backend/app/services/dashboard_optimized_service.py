@@ -58,8 +58,12 @@ class DashboardOptimizedService:
             strong_coins = summary_data.strong_coins if summary_data.strong_coins else []
             weak_coins = summary_data.weak_coins if summary_data.weak_coins else []
             
-            # 为每个币种添加小时数据
-            for coin_list in [strong_coins, weak_coins]:
+            # 限制返回数量，只返回前20个币种（前端只需要显示前5个）
+            strong_coins = strong_coins[:20]
+            weak_coins = weak_coins[:20]
+            
+            # 为每个币种添加小时数据（只对前5个币种添加，避免过多查询）
+            for coin_list in [strong_coins[:5], weak_coins[:5]]:
                 for coin in coin_list:
                     if 'symbol' in coin:
                         coin['hourly_data'] = await self._get_hourly_data_for_coin(coin['symbol'])
@@ -394,6 +398,57 @@ class DashboardOptimizedService:
                 "symbols": symbols,
                 "total_count": 0,
                 "error": str(e)
+            }
+
+    async def refresh_coin_watch_status(self, symbol: str, watch_status: bool) -> Dict[str, Any]:
+        """
+        即时刷新指定币种的watch状态
+        
+        当用户在前端切换币种的watch状态时，调用此方法即时刷新物化视图中的watch状态
+        
+        Args:
+            symbol: 币种符号
+            watch_status: 新的watch状态
+            
+        Returns:
+            刷新结果信息
+        """
+        try:
+            # 1. 首先更新market_codes表中的watch状态（这已经在market.py中完成）
+            # 2. 即时刷新dashboard_summary_view物化视图，确保watch状态立即生效
+            
+            # 由于dashboard_summary_view依赖于dashboard_coin_analysis，
+            # 我们需要分别刷新dashboard_coin_analysis和dashboard_summary_view
+            
+            # 刷新dashboard_coin_analysis物化视图
+            refresh_coin_analysis_query = text("REFRESH MATERIALIZED VIEW dashboard_coin_analysis")
+            await self.db.execute(refresh_coin_analysis_query)
+            
+            # 刷新dashboard_summary_view物化视图
+            refresh_summary_view_query = text("REFRESH MATERIALIZED VIEW dashboard_summary_view")
+            await self.db.execute(refresh_summary_view_query)
+            
+            await self.db.commit()
+            
+            logger.info(f"币种{symbol}的watch状态即时刷新完成，新状态: {watch_status}")
+            
+            return {
+                "status": "success",
+                "message": f"币种{symbol}的watch状态已即时刷新",
+                "symbol": symbol,
+                "watch_status": watch_status,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"刷新币种{symbol}的watch状态失败: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"刷新币种{symbol}的watch状态失败: {str(e)}",
+                "symbol": symbol,
+                "watch_status": watch_status,
+                "timestamp": datetime.now().isoformat()
             }
 
 

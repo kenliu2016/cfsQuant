@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Button, Tag, Segmented, Progress, Table, message, Spin } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { SyncOutlined, SettingOutlined, CloseOutlined, EyeOutlined, EyeInvisibleOutlined, LoadingOutlined } from '@ant-design/icons';
@@ -98,6 +98,36 @@ const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color })
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const formatTimestamp = (value?: string) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '--');
 
+/**
+ * 根据牛熊分数获取牛熊阶段
+ * @param score 牛熊分数（-7到7）
+ * @returns 牛熊阶段描述
+ */
+const getBullBearPhase = (score: number): string => {
+  if (score >= 5) return '强牛市';
+  if (score >= 3) return '牛市';
+  if (score >= 1) return '偏牛市';
+  if (score <= -5) return '强熊市';
+  if (score <= -3) return '熊市';
+  if (score <= -1) return '偏熊市';
+  return '中性';
+};
+
+/**
+ * 根据恐惧贪婪指数获取分类
+ * @param index 恐惧贪婪指数（0-100）
+ * @returns 分类描述
+ */
+const getFearGreedClassification = (index: number): string => {
+  if (index >= 90) return '极度贪婪';
+  if (index >= 80) return '贪婪';
+  if (index >= 70) return '偏贪婪';
+  if (index <= 10) return '极度恐惧';
+  if (index <= 20) return '恐惧';
+  if (index <= 30) return '偏恐惧';
+  return '中性';
+};
+
 const Dashboard: React.FC = () => {
   const [marketMode, setMarketMode] = useState<'牛市' | '中性' | '熊市'>('中性');
   const [refreshing, setRefreshing] = useState(false);
@@ -127,13 +157,89 @@ const Dashboard: React.FC = () => {
   const [vmrTimeframe, setVmrTimeframe] = useState<'30m' | '1h' | '4h' | '1d' | '3d'>('1h');
   const [vmrSeries, setVmrSeries] = useState<VmrSeriesResponse | null>(null);
   const [vmrLoading, setVmrLoading] = useState(false);
-  const [, setClosingSymbols] = useState<Set<string>>(new Set()); // 正在关闭的symbol集合
+  const [closingSymbols, setClosingSymbols] = useState<Set<string>>(new Set()); // 正在关闭的symbol集合
   const [togglingSymbols, setTogglingSymbols] = useState<Set<string>>(new Set()); // 正在切换watch状态的symbol集合
+  
+  // 性能优化：添加防抖和节流引用
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const vmrFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // 性能优化：添加数据缓存
+  const dashboardDataCache = useRef<{
+    data: any;
+    timestamp: number;
+  } | null>(null);
+  const vmrDataCache = useRef<Map<string, { data: { series: any[]; timeframe: string; symbols: string[]; total_count: number }; timestamp: number }>>(new Map());
+  const CACHE_DURATION = 5 * 60 * 1000; // 5分钟缓存
+  
+  // 防止React严格模式下的重复调用
+  const hasInitializedRef = useRef(false);
 
-  const fetchDashboardData = useCallback(async () => {
+
+
+  const fetchDashboardData = useCallback(async (forceRefresh = false) => {
+    // 性能优化：检查缓存
+    const now = Date.now();
+    if (!forceRefresh && dashboardDataCache.current && 
+        now - dashboardDataCache.current.timestamp < CACHE_DURATION) {
+      const cachedData = dashboardDataCache.current.data;
+      setMarketMetrics({
+        bullBearScore: cachedData.market_sentiment.bull_bear_score,
+        bullBearPhase: getBullBearPhase(cachedData.market_sentiment.bull_bear_score),
+        bullBearUpdatedAt: cachedData.market_sentiment.last_updated,
+        fearGreedValue: cachedData.market_sentiment.fear_greed_index,
+        fearGreedClassification: getFearGreedClassification(cachedData.market_sentiment.fear_greed_index),
+        fearGreedUpdatedAt: cachedData.market_sentiment.last_updated,
+      });
+      
+      const top5StrongCoins: EnhancedStrongWeakCoin[] = cachedData.strong_coins.slice(0, 5);
+      const top5WeakCoins: EnhancedStrongWeakCoin[] = cachedData.weak_coins.slice(0, 5);
+      
+      setStrongCoins(top5StrongCoins || []);
+      setWeakCoins(top5WeakCoins || []);
+      
+      const tableData: CoinAnalysisTableItem[] = cachedData.coin_analysis.map((coin: any) => ({
+        ...coin,
+        quoteVolume: coin.volume_24h,
+        ve: coin.ve_value
+      }));
+      
+      const limitedData = tableData.slice(0, 300);
+      setCoinAnalysisFullData(limitedData || []);
+      
+      const initialDisplayData = limitedData.slice(0, 10);
+      setCoinAnalysisData(initialDisplayData || []);
+      setCoinAnalysisPagination({
+        page: 1,
+        page_size: 10,
+        total_count: limitedData.length,
+        total_pages: Math.ceil(limitedData.length / 10),
+        has_previous: false,
+        has_next: limitedData.length > 10
+      });
+      
+      message.success('使用缓存数据加载完成！');
+      return;
+    }
+    
     setRefreshing(true);
     setCoinsLoading(true);
     setCoinAnalysisLoading(true);
+    
+    // 用户体验优化：显示加载状态
+    setMarketMetrics({
+      bullBearScore: 0,
+      bullBearPhase: 'Neutral',
+      fearGreedValue: 0,
+    });
+    setStrongCoins([]);
+    setWeakCoins([]);
+    setCoinAnalysisFullData([]);
+    setCoinAnalysisData([]);
+    
+    // 显示加载提示
+    const loadingMessage = message.loading('正在加载Dashboard数据，可能需要较长时间...', 0);
     
     try {
       // 只调用汇总接口，避免冗余调用
@@ -157,7 +263,7 @@ const Dashboard: React.FC = () => {
       setWeakCoins(top5WeakCoins || []);
       
       // 设置币种分析表数据
-      const tableData: CoinAnalysisTableItem[] = dashboardSummary.coin_analysis.map(coin => ({
+      const tableData: CoinAnalysisTableItem[] = dashboardSummary.coin_analysis.map((coin: any) => ({
         ...coin,
         quoteVolume: coin.volume_24h, // 映射volume_24h到quoteVolume
         ve: coin.ve_value // 映射ve_value到ve
@@ -182,44 +288,152 @@ const Dashboard: React.FC = () => {
       
       // 不再需要设置vmrSelectedSymbols，后端会动态获取所有watch=true且quotecurrency=USDT的symbol
       
+      // 性能优化：缓存数据
+      dashboardDataCache.current = {
+        data: dashboardSummary,
+        timestamp: Date.now()
+      };
+      
+      // 成功加载后显示成功消息
+      message.success('Dashboard数据加载完成！');
+      
     } catch (error) {
       console.error('Failed to fetch dashboard data', error);
-      message.error('获取Dashboard数据失败');
+      // 用户体验优化：显示错误状态
+      setMarketMetrics({
+        bullBearScore: 0,
+        bullBearPhase: 'Neutral',
+        fearGreedValue: 0,
+      });
+      setStrongCoins([]);
+      setWeakCoins([]);
+      setCoinAnalysisFullData([]);
+      setCoinAnalysisData([]);
+      
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ECONNABORTED') {
+        message.error('Dashboard数据加载超时，请稍后重试或联系管理员优化查询性能');
+      } else {
+        message.error('获取Dashboard数据失败');
+      }
     } finally {
       setRefreshing(false);
       setCoinsLoading(false);
       setCoinAnalysisLoading(false);
+      // 关闭加载提示
+      loadingMessage();
     }
   }, []);
 
-  useEffect(() => {
-    fetchDashboardData();
-  }, [fetchDashboardData]);
-
-  const fetchVmrData = useCallback(async (timeframe: string) => {
+  const fetchVmrData = useCallback(async (timeframe: string, symbols?: string[]) => {
     setVmrLoading(true);
     try {
-      // 不传递symbols参数，后端会动态获取watch=true且quotecurrency=USDT的symbol
+      // 性能优化：检查缓存
+      const now = Date.now();
+      const cacheKey = symbols ? `${timeframe}_${symbols.join(',')}` : timeframe;
+      const cachedData = vmrDataCache.current.get(cacheKey);
+      if (cachedData && now - cachedData.timestamp < CACHE_DURATION) {
+        setVmrSeries(cachedData.data);
+        setVmrLoading(false);
+        message.success(`使用缓存数据加载VMR时间序列（${timeframe}）`);
+        return;
+      }
+      
+      // 用户体验优化：显示加载状态
+      setVmrSeries({
+        series: [],
+        timeframe: timeframe,
+        symbols: [],
+        total_count: 0
+      });
+      
+      // 根据是否传递symbols参数决定调用方式
       const response = await getVmrSeries(
         timeframe,
-        undefined, // 不传递symbols参数，让后端动态获取
+        symbols, // 传递symbols参数，或者undefined让后端动态获取
         100
       );
       setVmrSeries(response);
+      
+      // 性能优化：保存到缓存
+      vmrDataCache.current.set(cacheKey, {
+        data: response,
+        timestamp: now
+      });
     } catch (error) {
       console.error('Failed to fetch VMR time series', error);
       message.error('获取VMR时间序列失败');
+      // 用户体验优化：显示错误状态
+      setVmrSeries({
+        series: [],
+        timeframe: timeframe,
+        symbols: [],
+        total_count: 0
+      });
     } finally {
       setVmrLoading(false);
     }
   }, [message]);
 
+  // 预加载其他时间框架的VMR数据
+  const preloadVmrData = useCallback(async () => {
+    const timeframes = ['30m', '4h', '1d', '3d'];
+    
+    for (const timeframe of timeframes) {
+      if (timeframe !== vmrTimeframe) {
+        try {
+          const response = await getVmrSeries(timeframe);
+          // 直接缓存响应数据，因为VmrSeriesResponse没有success属性
+          vmrDataCache.current.set(timeframe, {
+            data: response,
+            timestamp: Date.now()
+          });
+        } catch (error) {
+          console.warn(`预加载VMR数据失败（${timeframe}）:`, error);
+        }
+      }
+    }
+  }, [vmrTimeframe]);
+
   useEffect(() => {
+    // 防止React严格模式下的重复调用
+    if (hasInitializedRef.current) {
+      return;
+    }
+    hasInitializedRef.current = true;
+    
+    fetchDashboardData();
     fetchVmrData(vmrTimeframe);
-  }, [vmrTimeframe, fetchVmrData]);
+    
+    // 延迟预加载其他时间框架数据
+    if (preloadTimeoutRef.current) {
+      clearTimeout(preloadTimeoutRef.current);
+    }
+    preloadTimeoutRef.current = setTimeout(() => {
+      preloadVmrData();
+    }, 2000); // 2秒后开始预加载
+    
+    // 设置自动更新定时器，每5分钟刷新一次数据
+    const autoRefreshInterval = setInterval(() => {
+      console.log('自动刷新Dashboard数据...');
+      fetchDashboardData(true); // 强制刷新，不使用缓存
+      fetchVmrData(vmrTimeframe);
+    }, 5 * 60 * 1000); // 5分钟
+    
+    // 组件卸载时清除定时器
+    return () => {
+      clearInterval(autoRefreshInterval);
+    };
+  }, []); // 空依赖数组，确保只在组件挂载时执行一次
 
   const handleVmrTimeframeChange = (value: string | number) => {
-    setVmrTimeframe(value as '30m' | '1h' | '4h' | '1d' | '3d');
+    // 性能优化：节流处理，避免频繁切换时间框架
+    if (vmrFetchTimeoutRef.current) {
+      clearTimeout(vmrFetchTimeoutRef.current);
+    }
+    
+    vmrFetchTimeoutRef.current = setTimeout(() => {
+      setVmrTimeframe(value as '30m' | '1h' | '4h' | '1d' | '3d');
+    }, 200);
   };
 
   /**
@@ -227,32 +441,65 @@ const Dashboard: React.FC = () => {
    * @param symbol 要关闭的币种符号
    */
   const handleCloseVmrCard = async (symbol: string) => {
-    // 添加到正在关闭的集合
+    // 立即设置loading状态，让用户立即看到反馈
     setClosingSymbols(prev => new Set(prev).add(symbol));
     
-    try {
-      // 调用后端API，将symbol的watch状态设置为false
-      // 使用binance作为默认交易所，因为VMR数据中只包含symbol信息
-      await client.put(`/api/market/market_codes`, { watch: false }, {
-        params: { exchange: 'binance', symbol }
-      });
-      
-      message.success(`已移除 ${symbol} 的观察`);
-      
-      // 重新加载VMR数据，刷新曲线图
-      await fetchVmrData(vmrTimeframe);
-      
-    } catch (error) {
-      console.error('Failed to close VMR card:', error);
-      message.error(`移除 ${symbol} 观察失败`);
-    } finally {
-      // 从正在关闭的集合中移除
-      setClosingSymbols(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(symbol);
-        return newSet;
-      });
-    }
+    // 立即更新前端本地状态，提供即时反馈
+    // 从VMR数据中移除该币种，提供即时视觉反馈
+    setVmrSeries(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        series: prev.series.filter(item => item.symbol !== symbol),
+        symbols: prev.symbols.filter(s => s !== symbol),
+        total_count: prev.total_count - 1
+      };
+    });
+    
+    // 使用setTimeout确保UI立即更新，然后再执行API调用
+    setTimeout(async () => {
+      try {
+        // 调用后端API，将symbol的watch状态设置为false
+        // 使用binance作为默认交易所，因为VMR数据中只包含symbol信息
+        await client.put(`/api/market/market_codes`, { watch: false }, {
+          params: { exchange: 'binance', symbol }
+        });
+        
+        message.success(`已移除 ${symbol} 的观察`);
+        
+        // 调用物化视图即时刷新API，确保后端数据同步
+        try {
+          await client.post(`/api/v1/dashboard/refresh-coin-watch`, null, {
+            params: { 
+              symbol, 
+              watch_status: false 
+            }
+          });
+        } catch (refreshError) {
+          console.warn('物化视图即时刷新失败，将在下次定时刷新时同步:', refreshError);
+        }
+        
+        // 重新加载VMR数据，刷新曲线图
+        // 从当前显示的币种列表中排除刚刚关闭的币种，避免重新获取
+        const currentSymbols = vmrSeries?.symbols?.filter(s => s !== symbol) || [];
+        await fetchVmrData(vmrTimeframe, currentSymbols.length > 0 ? currentSymbols : undefined);
+        
+      } catch (error) {
+        console.error('Failed to close VMR card:', error);
+        message.error(`移除 ${symbol} 观察失败`);
+        
+        // 如果API调用失败，回滚前端状态
+        // 重新加载VMR数据恢复原始状态
+        await fetchVmrData(vmrTimeframe);
+      } finally {
+        // 从正在关闭的集合中移除，隐藏loading效果
+        setClosingSymbols(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(symbol);
+          return newSet;
+        });
+      }
+    }, 0);
   };
 
   /**
@@ -264,26 +511,75 @@ const Dashboard: React.FC = () => {
     // 立即设置loading状态，让用户立即看到反馈
     setTogglingSymbols(prev => new Set(prev).add(symbol));
     
+    // 立即更新前端本地状态，提供即时反馈
+    const newWatchStatus = !currentWatchStatus;
+    
+    // 更新币种分析表的本地watch状态
+    setCoinAnalysisFullData(prevData => 
+      prevData.map(item => 
+        item.symbol === symbol ? { ...item, watch: newWatchStatus } : item
+      )
+    );
+    
+    // 更新当前显示的币种分析数据
+    setCoinAnalysisData(prevData => 
+      prevData.map(item => 
+        item.symbol === symbol ? { ...item, watch: newWatchStatus } : item
+      )
+    );
+    
     // 使用setTimeout确保UI立即更新，然后再执行API调用
     setTimeout(async () => {
       try {
         // 调用后端API，切换symbol的watch状态
         // 使用binance作为默认交易所
-        await client.put(`/api/market/market_codes`, { watch: !currentWatchStatus }, {
+        await client.put(`/api/market/market_codes`, { watch: newWatchStatus }, {
           params: { exchange: 'binance', symbol }
         });
         
-        message.success(`${symbol} ${!currentWatchStatus ? '已添加到观察列表' : '已从观察列表移除'}`);
+        message.success(`${symbol} ${newWatchStatus ? '已添加到观察列表' : '已从观察列表移除'}`);
         
-        // 重新加载币种分析表数据，确保数据与数据库同步
-        await fetchDashboardData();
+        // 调用物化视图即时刷新API，确保后端数据同步
+        try {
+          await client.post(`/api/v1/dashboard/refresh-coin-watch`, null, {
+            params: { 
+              symbol, 
+              watch_status: newWatchStatus 
+            }
+          });
+        } catch (refreshError) {
+          console.warn('物化视图即时刷新失败，将在下次定时刷新时同步:', refreshError);
+        }
         
-        // 无论watch状态是变为true还是false，都重新加载VMR数据以保持图表同步
-        await fetchVmrData(vmrTimeframe);
+        // 根据watch状态变化决定如何更新VMR数据
+        if (newWatchStatus) {
+          // 如果设置为watch=true，重新获取所有watch=true的币种数据
+          // 从当前币种分析数据中获取所有watch=true的币种
+          const watchedSymbols = coinAnalysisFullData
+            .filter(item => item.watch)
+            .map(item => item.symbol);
+          await fetchVmrData(vmrTimeframe, watchedSymbols.length > 0 ? watchedSymbols : undefined);
+        } else {
+          // 如果设置为watch=false，从现有VMR数据中移除该币种
+          const currentSymbols = vmrSeries?.symbols?.filter(s => s !== symbol) || [];
+          await fetchVmrData(vmrTimeframe, currentSymbols.length > 0 ? currentSymbols : undefined);
+        }
         
       } catch (error) {
         console.error('Failed to toggle watch status:', error);
         message.error(`操作失败`);
+        
+        // 如果API调用失败，回滚前端状态
+        setCoinAnalysisFullData(prevData => 
+          prevData.map(item => 
+            item.symbol === symbol ? { ...item, watch: currentWatchStatus } : item
+          )
+        );
+        setCoinAnalysisData(prevData => 
+          prevData.map(item => 
+            item.symbol === symbol ? { ...item, watch: currentWatchStatus } : item
+          )
+        );
       } finally {
         // 从正在切换的集合中移除，隐藏loading效果
         setTogglingSymbols(prev => {
@@ -383,12 +679,14 @@ const Dashboard: React.FC = () => {
   ], []);
 
   const vmrChartOption = useMemo(() => {
+    // 性能优化：添加图表渲染节流
     if (!vmrSeries || vmrSeries.series.length === 0) {
       return {
         grid: { left: 50, right: 20, top: 50, bottom: 50 },
         xAxis: { type: 'category', data: [] },
         yAxis: { type: 'value' },
         series: [],
+        animation: false, // 性能优化：禁用动画
       };
     }
 
@@ -401,11 +699,13 @@ const Dashboard: React.FC = () => {
         xAxis: { type: 'category', data: [] },
         yAxis: { type: 'value' },
         series: [],
+        animation: false, // 性能优化：禁用动画
       };
     }
 
-    // 使用第一个series的时间轴作为基准
-    const baseTimePoints = firstSeriesWithData.data.map((point: any) => point.datetime);
+    // 性能优化：限制数据点数量，避免渲染过多数据
+    const maxDataPoints = 100; // 最多显示100个数据点
+    const baseTimePoints = firstSeriesWithData.data.slice(-maxDataPoints).map((point: any) => point.datetime);
     const xAxisData = baseTimePoints.map((datetime: string) =>
       dayjs(datetime).format(vmrTimeframe === '1d' || vmrTimeframe === '3d' ? 'MM-DD' : 'MM-DD HH:mm')
     );
@@ -415,12 +715,12 @@ const Dashboard: React.FC = () => {
       legendData.push(item.symbol);
       const color = VMR_COLOR_PALETTE[index % VMR_COLOR_PALETTE.length];
       
-      // 性能优化：简化数据对齐逻辑
+      // 性能优化：使用Map创建时间点到数据的快速映射，并限制数据量
       const points = item.data || [];
+      const recentData = points.slice(-maxDataPoints);
       
-      // 创建时间点到数据的快速映射
       const pointMap = new Map();
-      points.forEach((point: any) => {
+      recentData.forEach((point: any) => {
         pointMap.set(point.datetime, point);
       });
       
@@ -493,7 +793,7 @@ const Dashboard: React.FC = () => {
         type: 'scroll',
         top: 0,
         icon: 'circle',
-        textStyle: { color: '#d7daff' },
+        textStyle: { color: '#d7daff', fontSize: 10 },
         data: legendData,
       },
       xAxis: {
@@ -501,7 +801,12 @@ const Dashboard: React.FC = () => {
         data: xAxisData,
         boundaryGap: false,
         axisLine: { lineStyle: { color: '#2f3a60' } },
-        axisLabel: { color: '#8b92b4' },
+        axisLabel: { 
+          color: '#8b92b4',
+          interval: Math.max(1, Math.ceil(xAxisData.length / 8)),
+          rotate: 45,
+          fontSize: 10,
+        },
         splitLine: { show: false },
       },
       yAxis: {
@@ -510,53 +815,31 @@ const Dashboard: React.FC = () => {
         axisLabel: {
           color: '#8b92b4',
           formatter: (value: number) => value.toFixed(2),
+          fontSize: 10,
         },
         splitLine: { lineStyle: { color: 'rgba(47,58,96,0.35)' } },
         name: 'VMR × 100',
         nameTextStyle: { color: '#8b92b4' },
       },
       series: seriesData,
+      animation: false,
+      animationDuration: 0,
+      animationEasing: 'linear',
+      animationDelayUpdate: 0,
     };
   }, [vmrSeries, vmrTimeframe]);
 
-  const vmrChangeLabel = useMemo(() => {
-    // 根据时间框架确定变化标签
-    switch (vmrTimeframe) {
-      case '30m':
-        return '30分钟';
-      case '1h':
-        return '1小时';
-      case '4h':
-        return '4小时';
-      case '1d':
-        return '1天';
-      case '3d':
-        return '3天';
-      default:
-        return '变化';
-    }
-  }, [vmrTimeframe]);
 
-  // 根据牛熊市分数获取对应的阶段描述
-  const getBullBearPhase = (score: number): string => {
-    if (score >= 5) return 'Strong Bull';
-    if (score >= 2) return 'Bull';
-    if (score >= -2) return 'Neutral';
-    if (score >= -5) return 'Bear';
-    return 'Strong Bear';
-  };
-
-  // 根据恐惧贪婪指数获取对应的分类描述
-  const getFearGreedClassification = (value: number): string => {
-    if (value >= 80) return 'Extreme Greed';
-    if (value >= 60) return 'Greed';
-    if (value >= 40) return 'Neutral';
-    if (value >= 20) return 'Fear';
-    return 'Extreme Fear';
-  };
 
   const handleRefresh = () => {
-    fetchDashboardData();
+    // 性能优化：防抖处理，避免频繁刷新
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current);
+    }
+    
+    refreshTimeoutRef.current = setTimeout(() => {
+      fetchDashboardData(true); // 强制刷新，不使用缓存
+    }, 300);
   };
 
   // 处理币种分析表排序
@@ -569,43 +852,50 @@ const Dashboard: React.FC = () => {
 
   // 处理币种分析表分页和排序
   const handleCoinAnalysisTableChange = useCallback((page: number, pageSize: number, sorter?: any) => {
-    // 处理排序
-    if (sorter) {
-      const { field, order } = sorter;
-      handleCoinAnalysisTableSort(field, order);
+    // 性能优化：防抖处理，避免频繁操作
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current);
     }
-
-    // 由于使用汇总接口，分页和排序在客户端处理
-    let sortedData = [...coinAnalysisFullData];
     
-    // 应用排序
-    if (coinAnalysisSort.field && coinAnalysisSort.order) {
-      sortedData.sort((a, b) => {
-        const aValue = a[coinAnalysisSort.field as keyof CoinAnalysisTableItem] as number || 0;
-        const bValue = b[coinAnalysisSort.field as keyof CoinAnalysisTableItem] as number || 0;
-        
-        if (coinAnalysisSort.order === 'ascend') {
-          return aValue - bValue;
-        } else {
-          return bValue - aValue;
-        }
+    refreshTimeoutRef.current = setTimeout(() => {
+      // 处理排序
+      if (sorter) {
+        const { field, order } = sorter;
+        handleCoinAnalysisTableSort(field, order);
+      }
+
+      // 由于使用汇总接口，分页和排序在客户端处理
+      let sortedData = [...coinAnalysisFullData];
+      
+      // 应用排序
+      if (coinAnalysisSort.field && coinAnalysisSort.order) {
+        sortedData.sort((a, b) => {
+          const aValue = a[coinAnalysisSort.field as keyof CoinAnalysisTableItem] as number || 0;
+          const bValue = b[coinAnalysisSort.field as keyof CoinAnalysisTableItem] as number || 0;
+          
+          if (coinAnalysisSort.order === 'ascend') {
+            return aValue - bValue;
+          } else {
+            return bValue - aValue;
+          }
+        });
+      }
+
+      // 性能优化：虚拟滚动 - 只加载当前页面的数据
+      const startIndex = (page - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      const paginatedData = sortedData.slice(startIndex, endIndex);
+      
+      setCoinAnalysisData(paginatedData);
+      setCoinAnalysisPagination({
+        page,
+        page_size: pageSize,
+        total_count: sortedData.length,
+        total_pages: Math.ceil(sortedData.length / pageSize),
+        has_previous: page > 1,
+        has_next: page < Math.ceil(sortedData.length / pageSize)
       });
-    }
-
-    // 分页处理
-    const startIndex = (page - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    const paginatedData = sortedData.slice(startIndex, endIndex);
-    
-    setCoinAnalysisData(paginatedData);
-    setCoinAnalysisPagination({
-      page,
-      page_size: pageSize,
-      total_count: sortedData.length,
-      total_pages: Math.ceil(sortedData.length / pageSize),
-      has_previous: page > 1,
-      has_next: page < Math.ceil(sortedData.length / pageSize)
-    });
+    }, 100);
   }, [coinAnalysisFullData, coinAnalysisSort]);
 
   // 将API返回的EnhancedStrongWeakCoin数据转换为前端需要的TrendCoin格式
@@ -831,7 +1121,16 @@ const Dashboard: React.FC = () => {
               <div style={{ marginTop: 16, color: '#8c8fa3' }}>加载VMR数据...</div>
             </div>
           ) : vmrSeries && vmrSeries.series.length ? (
-            <ReactECharts option={vmrChartOption} style={{ height: 360, width: '100%' }} />
+            <ReactECharts
+              option={vmrChartOption}
+              style={{ height: 360, width: '100%' }}
+              opts={{ 
+                renderer: 'canvas', // 性能优化：使用canvas渲染器
+                devicePixelRatio: window.devicePixelRatio > 1 ? 1 : window.devicePixelRatio, // 性能优化：限制像素比
+              }}
+              notMerge={true} // 性能优化：不合并配置
+              lazyUpdate={true} // 性能优化：延迟更新
+            />
           ) : (
             <div className={styles.emptyContainer}>
               <div className={styles.emptyText}>暂无可用的VMR数据，请尝试选择其他币种</div>
@@ -865,17 +1164,22 @@ const Dashboard: React.FC = () => {
                   <div className={styles.vmrSummaryHeader}>
                     <span className={styles.vmrBullet} style={{ backgroundColor: color }} />
                     <span>{item.symbol}</span>
-                    <CloseOutlined 
-                      className={styles.closeIcon}
-                      onClick={() => handleCloseVmrCard(item.symbol)}
-                    />
+                    {closingSymbols.has(item.symbol) ? (
+                      <LoadingOutlined className={styles.closeIcon} style={{ color: '#8c8c8c' }} />
+                    ) : (
+                      <CloseOutlined 
+                        className={styles.closeIcon}
+                        onClick={() => handleCloseVmrCard(item.symbol)}
+                        title="移除观察"
+                      />
+                    )}
                   </div>
                   <div className={styles.vmrSummaryMetric}>
                     <span>VMR × 100</span>
                     <span>{latestVmrScaled.toFixed(4)}</span>
-                </div>
+                  </div>
                   <div className={styles.vmrSummaryMetric}>
-                    <span>{vmrChangeLabel}</span>
+                    <span>24h涨跌幅</span>
                     <span className={changePositive ? styles.positiveChange : styles.negativeChange}>
                       {changePositive ? '+' : ''}
                       {changeRate.toFixed(2)}%

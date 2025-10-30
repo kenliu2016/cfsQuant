@@ -95,7 +95,7 @@ export const getDashboardSummary = async (): Promise<DashboardSummary> => {
     current_price: coin.current_price,
     market_cap: coin.market_cap,
     volume_24h: coin.volume_24h,
-    vmr: coin.vmr_24h,
+    vmr: coin.vmr, // 币种分析数据使用vmr字段（不是vmr_24h）
     ve_value: coin.ve_value,
     actual_volatility: coin.actual_volatility,
     composite_score: coin.composite_score,

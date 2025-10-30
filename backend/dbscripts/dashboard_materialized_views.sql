@@ -3,48 +3,35 @@
 -- 基于TimescaleDB连续聚合功能，提供实时优化的数据查询性能
 
 -- ============ Dashboard市场情绪物化视图 ============
-CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_market_sentiment
-WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
-WITH market_stats AS (
-    -- 获取24小时内币种涨跌统计
-    SELECT 
-        COUNT(*) as total_coins,
-        COUNT(CASE WHEN return_pct > 0 THEN 1 END) as rising_coins,
-        COUNT(CASE WHEN return_pct < 0 THEN 1 END) as falling_coins,
-        AVG(return_pct) as avg_gain_24h
-    FROM market_ohlcv_1d
-    WHERE bucket >= NOW() - INTERVAL '1 day'
-        AND market_cap > 100000000
-),
-bull_bear_data AS (
+CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_market_sentiment AS
+WITH bull_bear_data AS (
     -- 获取最新牛熊市指标
     SELECT 
         score as bull_bear_score,
-        updated_at
+        created_at
     FROM indecator_bull_bear
-    ORDER BY updated_at DESC
+    ORDER BY created_at DESC
     LIMIT 1
 ),
 fear_greed_data AS (
     -- 获取最新恐惧贪婪指数
     SELECT 
         value as fear_greed_index,
-        updated_at
+        created_at
     FROM indecator_fear_greed
-    ORDER BY updated_at DESC
+    ORDER BY created_at DESC
     LIMIT 1
 )
 SELECT 
-    ms.total_coins,
-    ms.rising_coins,
-    ms.falling_coins,
-    ms.avg_gain_24h,
-    COALESCE(bb.bull_bear_score, 0.0) as bull_bear_score,
-    COALESCE(fg.fear_greed_index, 50.0) as fear_greed_index,
-    GREATEST(bb.updated_at, fg.updated_at) as last_updated,
+    0 as total_coins,  -- 临时占位，后续从market_ohlcv_1d计算
+    0 as rising_coins,  -- 临时占位
+    0 as falling_coins,  -- 临时占位
+    0.0 as avg_gain_24h,  -- 临时占位
+    LEAST(7.0, GREATEST(-7.0, COALESCE(bb.bull_bear_score, 0.0))) as bull_bear_score,
+    LEAST(100.0, GREATEST(0.0, COALESCE(fg.fear_greed_index, 50.0))) as fear_greed_index,
+    GREATEST(bb.created_at, fg.created_at) as last_updated,
     NOW() as view_refresh_time
-FROM market_stats ms
-CROSS JOIN bull_bear_data bb
+FROM bull_bear_data bb
 CROSS JOIN fear_greed_data fg
 WITH DATA;
 
@@ -52,13 +39,13 @@ WITH DATA;
 CREATE INDEX IF NOT EXISTS idx_dashboard_market_sentiment_last_updated 
     ON dashboard_market_sentiment(last_updated DESC);
 
--- 添加连续聚合策略，每15分钟刷新一次
-SELECT add_continuous_aggregate_policy(
-    'dashboard_market_sentiment',
-    start_offset => INTERVAL '1 day',
-    end_offset => INTERVAL '0 minutes',
-    schedule_interval => INTERVAL '15 minutes'
-);
+-- 注释掉连续聚合策略（普通物化视图不支持）
+-- SELECT add_continuous_aggregate_policy(
+--     'dashboard_market_sentiment',
+--     start_offset => INTERVAL '1 day',
+--     end_offset => INTERVAL '0 minutes',
+--     schedule_interval => INTERVAL '15 minutes'
+-- );
 
 -- ============ Dashboard强势弱势币种物化视图 ============
 CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_strong_weak_coins AS
@@ -71,43 +58,9 @@ WITH hourly_data AS (
         open,
         quote_volume,
         market_cap,
-        vmr,
         ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
     FROM market_ohlcv_1h
     WHERE bucket >= NOW() - INTERVAL '24 hours'
-        AND market_cap > 100000000
-        AND close > 0
-),
-latest_15m AS (
-    -- 获取每个symbol的最新15分钟数据
-    SELECT 
-        symbol,
-        vmr as vmr_15m,
-        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
-    FROM market_ohlcv_15m
-    WHERE bucket >= NOW() - INTERVAL '1 hour'
-        AND market_cap > 100000000
-        AND close > 0
-),
-latest_1h AS (
-    -- 获取每个symbol的最新1小时数据
-    SELECT 
-        symbol,
-        vmr as vmr_1h,
-        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
-    FROM market_ohlcv_1h
-    WHERE bucket >= NOW() - INTERVAL '1 hour'
-        AND market_cap > 100000000
-        AND close > 0
-),
-latest_1d AS (
-    -- 获取每个symbol的最新1天数据
-    SELECT 
-        symbol,
-        vmr as vmr_1d,
-        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY bucket DESC) as rn
-    FROM market_ohlcv_1d
-    WHERE bucket >= NOW() - INTERVAL '1 day'
         AND market_cap > 100000000
         AND close > 0
 ),
@@ -116,30 +69,42 @@ coin_24h_stats AS (
     SELECT 
         hd.symbol,
         -- 24h_VMR计算：24小时内总成交量 / 期初市值
-        SUM(hd.quote_volume) / 
-        (SELECT market_cap FROM hourly_data 
-         WHERE symbol = hd.symbol AND rn = 24) as vmr_24h,
+        SUM(hd.quote_volume) / NULLIF(MIN(CASE WHEN hd.rn = 24 THEN hd.market_cap END), 0) as vmr_24h,
         
         -- 24h_gain计算：(当前收盘价 - 24小时前开盘价) / 24小时前开盘价
-        (MAX(CASE WHEN hd.rn = 1 THEN hd.close END) - 
-         MIN(CASE WHEN hd.rn = 24 THEN hd.open END)) / 
-         MIN(CASE WHEN hd.rn = 24 THEN hd.open END) as gain_24h,
+        (MAX(CASE WHEN hd.rn = 1 THEN hd.close END) - MIN(CASE WHEN hd.rn = 24 THEN hd.open END)) 
+        / NULLIF(MIN(CASE WHEN hd.rn = 24 THEN hd.open END), 0) as gain_24h,
         
         -- 获取当前价格
-        MAX(CASE WHEN hd.rn = 1 THEN hd.close END) as current_price,
-        
-        -- 获取24小时数据用于图表
-        JSON_AGG(
-            JSON_BUILD_OBJECT(
-                'bucket', hd.bucket,
-                'close', hd.close,
-                'quote_volume', hd.quote_volume
-            ) ORDER BY hd.bucket DESC
-        ) as hourly_chart_data
+        MAX(CASE WHEN hd.rn = 1 THEN hd.close END) as current_price
     FROM hourly_data hd
     WHERE hd.rn <= 24
     GROUP BY hd.symbol
     HAVING COUNT(*) = 24  -- 确保有完整的24小时数据
+       AND MIN(CASE WHEN hd.rn = 24 THEN hd.market_cap END) > 0
+       AND MIN(CASE WHEN hd.rn = 24 THEN hd.open END) IS NOT NULL
+),
+vmr_data AS (
+    -- 获取各时间粒度的最新VMR值
+    SELECT 
+        symbol,
+        MAX(CASE WHEN timeframe = '15m' THEN vmr END) as vmr_15m,
+        MAX(CASE WHEN timeframe = '1h' THEN vmr END) as vmr_1h,
+        MAX(CASE WHEN timeframe = '1d' THEN vmr END) as vmr_1d
+    FROM (
+        SELECT symbol, '15m' as timeframe, vmr, bucket
+        FROM market_ohlcv_15m
+        WHERE bucket >= NOW() - INTERVAL '1 hour'
+        UNION ALL
+        SELECT symbol, '1h' as timeframe, vmr, bucket
+        FROM market_ohlcv_1h
+        WHERE bucket >= NOW() - INTERVAL '1 hour'
+        UNION ALL
+        SELECT symbol, '1d' as timeframe, vmr, bucket
+        FROM market_ohlcv_1d
+        WHERE bucket >= NOW() - INTERVAL '1 day'
+    ) t
+    GROUP BY symbol
 ),
 combined_scores AS (
     -- 组合所有分数
@@ -148,18 +113,15 @@ combined_scores AS (
         cs.current_price,
         cs.vmr_24h,
         cs.gain_24h,
-        cs.hourly_chart_data,
-        COALESCE(l15.vmr_15m, 0) as vmr_15m,
-        COALESCE(l1h.vmr_1h, 0) as vmr_1h,
-        COALESCE(l1d.vmr_1d, 0) as vmr_1d,
-        -- 复合分数计算
-        (COALESCE(l15.vmr_15m, 0) * 0.1 + 
-         COALESCE(l1h.vmr_1h, 0) * 0.3 + 
-         COALESCE(l1d.vmr_1d, 0) * 0.6) as total_score
+        COALESCE(vd.vmr_15m, 0) as vmr_15m,
+        COALESCE(vd.vmr_1h, 0) as vmr_1h,
+        COALESCE(vd.vmr_1d, 0) as vmr_1d,
+        -- 复合分数计算：15分钟VMR * 0.1 + 1小时VMR * 0.3 + 1天VMR * 0.6
+        (COALESCE(vd.vmr_15m, 0) * 0.1 + 
+         COALESCE(vd.vmr_1h, 0) * 0.3 + 
+         COALESCE(vd.vmr_1d, 0) * 0.6) as total_score
     FROM coin_24h_stats cs
-    LEFT JOIN latest_15m l15 ON cs.symbol = l15.symbol AND l15.rn = 1
-    LEFT JOIN latest_1h l1h ON cs.symbol = l1h.symbol AND l1h.rn = 1
-    LEFT JOIN latest_1d l1d ON cs.symbol = l1d.symbol AND l1d.rn = 1
+    LEFT JOIN vmr_data vd ON cs.symbol = vd.symbol
     WHERE cs.current_price > 0
         AND cs.vmr_24h IS NOT NULL
         AND cs.gain_24h IS NOT NULL
@@ -175,7 +137,6 @@ ranked_coins AS (
         vmr_1h,
         vmr_1d,
         total_score,
-        hourly_chart_data,
         ROW_NUMBER() OVER (ORDER BY total_score DESC) as total_score_rank
     FROM combined_scores
     ORDER BY total_score DESC
@@ -199,7 +160,6 @@ final_result AS (
         rcg.vmr_1h,
         rcg.vmr_1d,
         rcg.total_score,
-        rcg.hourly_chart_data,
         rcg.total_score_rank,
         rcg.gain_rank,
         CASE 
@@ -225,76 +185,78 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_strong_weak_coins_total_score
 CREATE INDEX IF NOT EXISTS idx_dashboard_strong_weak_coins_gain_24h 
     ON dashboard_strong_weak_coins(gain_24h DESC);
 
--- 添加连续聚合策略，每15分钟刷新一次
-SELECT add_continuous_aggregate_policy(
-    'dashboard_strong_weak_coins',
-    start_offset => INTERVAL '1 day',
-    end_offset => INTERVAL '0 minutes',
-    schedule_interval => INTERVAL '15 minutes'
-);
+-- 注释掉连续聚合策略（普通物化视图不支持）
+-- SELECT add_continuous_aggregate_policy(
+--     'dashboard_strong_weak_coins',
+--     start_offset => INTERVAL '1 day',
+--     end_offset => INTERVAL '0 minutes',
+--     schedule_interval => INTERVAL '15 minutes'
+-- );
 
--- ============ Dashboard币种分析物化视图 ============
-CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_coin_analysis
-WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
-WITH market_data AS (
-    -- 获取市场数据
-    SELECT 
-        symbol,
-        close as current_price,
-        market_cap,
-        quote_volume as total_volume_24h,
-        vmr as vmr_24h,
-        bucket
-    FROM market_ohlcv_1d
-    WHERE bucket >= NOW() - INTERVAL '1 day'
-        AND market_cap > 100000000
+CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_coin_analysis AS
+WITH active_symbols AS (
+    SELECT symbol, watch
+    FROM market_codes
+    WHERE active = TRUE
+      AND quotecurrency = 'USDT'
 ),
-ve_data AS (
-    -- 获取VE指标数据
+hourly_snapshots AS (
     SELECT 
-        symbol,
-        ve as ve_1h,
-        actual_volatility,
-        volume_efficiency,
-        datetime
-    FROM indecator_ve
-    WHERE datetime >= NOW() - INTERVAL '1 day'
-        AND timeframe = '1h'
+        h.symbol,
+        h.bucket,
+        h.market_cap,
+        h.quote_volume,
+        h.close,
+        ROW_NUMBER() OVER (PARTITION BY h.symbol ORDER BY h.bucket DESC) AS rn
+    FROM market_ohlcv_1h h
+    JOIN active_symbols a ON h.symbol = a.symbol
+    WHERE h.bucket >= NOW() - INTERVAL '24 hours'
 ),
-combined_data AS (
-    -- 合并市场数据和VE指标
+symbol_aggregates AS (
     SELECT 
-        md.symbol,
-        md.current_price,
-        md.market_cap,
-        md.total_volume_24h,
-        md.vmr_24h,
-        vd.ve_1h,
-        vd.actual_volatility,
-        vd.volume_efficiency,
-        -- 综合评分：24h_vmr * 0.4 + 1h_ve * 0.6
-        (COALESCE(md.vmr_24h, 0) * 0.4 +
-         COALESCE(vd.ve_1h, 0) * 0.6) as composite_score,
-        ROW_NUMBER() OVER (PARTITION BY md.symbol ORDER BY md.bucket DESC, vd.datetime DESC) as rn
-    FROM market_data md
-    LEFT JOIN ve_data vd ON md.symbol = vd.symbol
+        hs.symbol,
+        MAX(CASE WHEN hs.rn = 1 THEN hs.close END) AS current_price,
+        MAX(CASE WHEN hs.rn = 1 THEN hs.market_cap END) AS market_cap,
+        SUM(CASE WHEN hs.rn <= 24 THEN hs.quote_volume END) AS total_volume_24h,
+        SUM(CASE WHEN hs.rn <= 24 THEN hs.quote_volume END) / NULLIF(MIN(CASE WHEN hs.rn = 24 THEN hs.market_cap END), 0) AS vmr_24h,
+        COUNT(*) FILTER (WHERE hs.rn <= 24) AS data_points
+    FROM hourly_snapshots hs
+    WHERE hs.rn <= 24
+    GROUP BY hs.symbol
+    HAVING COUNT(*) FILTER (WHERE hs.rn <= 24) = 24
+       AND MIN(CASE WHEN hs.rn = 24 THEN hs.market_cap END) > 0
+),
+ve_latest AS (
+    SELECT symbol, ve as ve_1h
+    FROM (
+        SELECT 
+            symbol,
+            ve,
+            ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY datetime DESC) AS rn
+        FROM indecator_ve
+        WHERE timeframe = '1h'
+    ) t
+    WHERE rn = 1
 )
 SELECT 
-    symbol,
-    current_price,
-    market_cap,
-    total_volume_24h,
-    vmr_24h,
-    ve_1h,
-    actual_volatility,
-    volume_efficiency,
-    composite_score,
-    ROW_NUMBER() OVER (ORDER BY composite_score DESC) as rank,
-    NOW() as view_refresh_time
-FROM combined_data
-WHERE rn = 1
-    AND current_price > 0
-    AND market_cap > 0
+    sa.symbol,
+    sa.current_price,
+    sa.market_cap,
+    sa.total_volume_24h,
+    sa.vmr_24h,
+    COALESCE(v.ve_1h, 0) AS ve_1h,
+    -- 综合评分：24_vmr * 0.4 + 1h_ve * 0.6
+    (COALESCE(sa.vmr_24h, 0) * 0.4 + COALESCE(v.ve_1h, 0) * 0.6) AS composite_score,
+    ROW_NUMBER() OVER (
+        ORDER BY (COALESCE(sa.vmr_24h, 0) * 0.4 + COALESCE(v.ve_1h, 0) * 0.6) DESC
+    ) AS rank,
+    COALESCE(a.watch, false) AS watch,
+    NOW() AS view_refresh_time
+FROM symbol_aggregates sa
+LEFT JOIN ve_latest v ON sa.symbol = v.symbol
+LEFT JOIN active_symbols a ON sa.symbol = a.symbol
+WHERE sa.current_price > 0
+  AND sa.market_cap > 0
 WITH DATA;
 
 -- 创建索引以优化查询性能
@@ -304,13 +266,13 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_coin_analysis_composite_score
 CREATE INDEX IF NOT EXISTS idx_dashboard_coin_analysis_market_cap 
     ON dashboard_coin_analysis(market_cap DESC);
 
--- 添加连续聚合策略，每15分钟刷新一次
-SELECT add_continuous_aggregate_policy(
-    'dashboard_coin_analysis',
-    start_offset => INTERVAL '1 day',
-    end_offset => INTERVAL '0 minutes',
-    schedule_interval => INTERVAL '15 minutes'
-);
+-- 注释掉连续聚合策略（普通物化视图不支持）
+-- SELECT add_continuous_aggregate_policy(
+--     'dashboard_coin_analysis',
+--     start_offset => INTERVAL '1 day',
+--     end_offset => INTERVAL '0 minutes',
+--     schedule_interval => INTERVAL '15 minutes'
+-- );
 
 -- ============ Dashboard汇总物化视图 ============
 CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_summary_view AS
@@ -327,11 +289,11 @@ strong_coins AS (
         current_price,
         gain_24h,
         vmr_24h,
-        total_score as composite_score
+        total_score as composite_score,
+        gain_rank
     FROM dashboard_strong_weak_coins
-    WHERE gain_24h > 0
-    ORDER BY gain_24h DESC
-    LIMIT 20
+    WHERE gain_rank <= 5
+    ORDER BY gain_rank ASC
 ),
 weak_coins AS (
     -- 获取弱势币种（涨跌幅后20）
@@ -340,14 +302,14 @@ weak_coins AS (
         current_price,
         gain_24h,
         vmr_24h,
-        total_score as composite_score
+        total_score as composite_score,
+        gain_rank
     FROM dashboard_strong_weak_coins
-    WHERE gain_24h < 0
-    ORDER BY gain_24h ASC
-    LIMIT 20
+    WHERE gain_rank BETWEEN 16 AND 20
+    ORDER BY gain_rank DESC
 ),
 coin_analysis AS (
-    -- 获取币种分析数据（综合评分前30）
+    -- 获取币种分析数据（综合评分前300）
     SELECT 
         symbol,
         current_price,
@@ -355,8 +317,6 @@ coin_analysis AS (
         total_volume_24h,
         vmr_24h,
         ve_1h as ve_value,
-        actual_volatility,
-        volume_efficiency,
         composite_score,
         rank
     FROM dashboard_coin_analysis
@@ -372,29 +332,30 @@ SELECT
     ms.bull_bear_score,
     ms.fear_greed_index,
     
-    -- 强势弱势币种数据
-    COALESCE(JSON_AGG(
+    -- 强势币种数据（直接从strong_coins CTE获取）
+    (SELECT COALESCE(JSON_AGG(
         JSON_BUILD_OBJECT(
             'symbol', sc.symbol,
             'current_price', sc.current_price,
             'gain_24h', sc.gain_24h,
             'vmr_24h', sc.vmr_24h,
             'composite_score', sc.composite_score
-        ) ORDER BY sc.gain_24h DESC
-    ) FILTER (WHERE sc.symbol IS NOT NULL), '[]'::json) as strong_coins,
+        ) ORDER BY sc.gain_rank ASC
+    ), '[]'::json) FROM strong_coins sc) as strong_coins,
     
-    COALESCE(JSON_AGG(
+    -- 弱势币种数据（直接从weak_coins CTE获取）
+    (SELECT COALESCE(JSON_AGG(
         JSON_BUILD_OBJECT(
             'symbol', wc.symbol,
             'current_price', wc.current_price,
             'gain_24h', wc.gain_24h,
             'vmr_24h', wc.vmr_24h,
             'composite_score', wc.composite_score
-        ) ORDER BY wc.gain_24h ASC
-    ) FILTER (WHERE wc.symbol IS NOT NULL), '[]'::json) as weak_coins,
+        ) ORDER BY wc.gain_rank DESC
+    ), '[]'::json) FROM weak_coins wc) as weak_coins,
     
-    -- 币种分析数据
-    COALESCE(JSON_AGG(
+    -- 币种分析数据（直接从coin_analysis CTE获取）
+    (SELECT COALESCE(JSON_AGG(
         JSON_BUILD_OBJECT(
             'symbol', ca.symbol,
             'current_price', ca.current_price,
@@ -402,22 +363,16 @@ SELECT
             'volume_24h', ca.total_volume_24h,
             'vmr', ca.vmr_24h,
             've_value', ca.ve_value,
-            'actual_volatility', ca.actual_volatility,
             'composite_score', ca.composite_score,
-            'rank', ca.rank
+            'rank', ca.rank,
+            'watch', ca.watch
         ) ORDER BY ca.composite_score DESC
-    ) FILTER (WHERE ca.symbol IS NOT NULL), '[]'::json) as coin_analysis,
+    ), '[]'::json) FROM coin_analysis ca) as coin_analysis,
     
     -- 元数据
     NOW() as last_updated,
     'materialized_view' as data_source
 FROM market_sentiment ms
-LEFT JOIN strong_coins sc ON true
-LEFT JOIN weak_coins wc ON true
-LEFT JOIN coin_analysis ca ON true
-GROUP BY 
-    ms.total_coins, ms.rising_coins, ms.falling_coins, ms.avg_gain_24h,
-    ms.bull_bear_score, ms.fear_greed_index
 WITH DATA;
 
 -- 创建索引以优化查询性能
@@ -475,10 +430,10 @@ COMMENT ON COLUMN dashboard_summary_view.coin_analysis IS '币种分析列表（
 CREATE OR REPLACE FUNCTION refresh_all_dashboard_views()
 RETURNS VOID AS $$
 BEGIN
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_market_sentiment;
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_strong_weak_coins;
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_coin_analysis;
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_summary_view;
+    REFRESH MATERIALIZED VIEW dashboard_market_sentiment;
+    REFRESH MATERIALIZED VIEW dashboard_strong_weak_coins;
+    REFRESH MATERIALIZED VIEW dashboard_coin_analysis;
+    REFRESH MATERIALIZED VIEW dashboard_summary_view;
     RAISE NOTICE '所有Dashboard物化视图已刷新';
 END;
 $$ LANGUAGE plpgsql;

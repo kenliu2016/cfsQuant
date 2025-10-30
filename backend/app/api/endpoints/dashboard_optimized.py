@@ -105,3 +105,31 @@ async def refresh_dashboard_materialized_views(
         await db.rollback()
         logger.error(f"刷新Dashboard物化视图失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"刷新物化视图失败: {str(e)}")
+
+
+@router.post("/dashboard/refresh-coin-watch")
+async def refresh_coin_watch_status(
+    symbol: str = Query(..., description="币种符号"),
+    watch_status: bool = Query(..., description="新的watch状态"),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    即时刷新指定币种的watch状态
+    
+    当用户在前端切换币种的watch状态时，调用此接口即时刷新物化视图中的watch状态
+    确保前端眼睛图标状态与实际watch状态保持一致
+    
+    Args:
+        symbol: 币种符号
+        watch_status: 新的watch状态
+        
+    Returns:
+        刷新结果信息
+    """
+    try:
+        service = DashboardOptimizedService(db)
+        result = await service.refresh_coin_watch_status(symbol, watch_status)
+        return result
+    except Exception as e:
+        logger.error(f"即时刷新币种{symbol}的watch状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"刷新币种watch状态失败: {str(e)}")
