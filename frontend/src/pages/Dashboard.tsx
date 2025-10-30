@@ -316,13 +316,13 @@ const Dashboard: React.FC = () => {
       title: '市值',
       dataIndex: 'market_cap',
       key: 'market_cap',
-      render: (value) => <span className={styles.tableValue}>{value.toLocaleString()}</span>,
+      render: (value) => <span className={styles.tableValue}>{value ? value.toLocaleString() : '0'}</span>,
     },
     {
       title: '24h 成交量',
       dataIndex: 'volume_24h',
       key: 'volume_24h',
-      render: (value) => <span className={styles.tableValue}>{value.toLocaleString()}</span>,
+      render: (value) => <span className={styles.tableValue}>{value ? value.toLocaleString() : '0'}</span>,
     },
     {
       title: ({ sortOrder }) => {

@@ -3,12 +3,17 @@ Dashboard优化API接口
 基于物化视图提供高性能的dashboard数据查询
 """
 
+import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from typing import Dict, Any, List
 
 from common.db import get_async_session as get_db
 from app.services.dashboard_optimized_service import DashboardOptimizedService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -69,3 +74,34 @@ async def get_vmr_series(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取VMR时间序列数据失败: {str(e)}")
+
+
+@router.post("/dashboard/refresh-materialized-views")
+async def refresh_dashboard_materialized_views(
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    手动刷新Dashboard物化视图
+    
+    强制刷新所有Dashboard相关的物化视图，获取最新数据
+    
+    Returns:
+        刷新结果信息
+    """
+    try:
+        # 执行手动刷新物化视图的SQL命令
+        refresh_query = text("CALL manual_refresh_dashboard_views()")
+        await db.execute(refresh_query)
+        await db.commit()
+        
+        logger.info("Dashboard物化视图手动刷新完成")
+        
+        return {
+            "status": "success",
+            "message": "Dashboard物化视图刷新成功",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"刷新Dashboard物化视图失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"刷新物化视图失败: {str(e)}")
